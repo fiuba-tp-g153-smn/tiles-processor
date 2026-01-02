@@ -1,0 +1,1 @@
+GOES19_BUCKET_NAME = "noaa-goes19"
