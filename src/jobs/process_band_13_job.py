@@ -1,8 +1,15 @@
+from datetime import datetime, UTC
+import logging
 from pathlib import Path
 
 from constants import constants
 from clients import s3_client
-from datetime import datetime, UTC
+from services.compute_brightness_temperatures import (
+    ComputeBrightnessTemperaturesService,
+)
+from services.setup_goes_georreferencing import SetupGOESGeorreferencingService
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessBand13Job:
@@ -15,7 +22,7 @@ class ProcessBand13Job:
         )
 
     async def run(self):
-        output_dir = Path(__file__).parent / "test_files"
+        output_dir = Path.cwd() / ".tmp" / "band_13" / "nc_files"
         output_dir.mkdir(parents=True, exist_ok=True)
         current_time = datetime.now(UTC)
 
@@ -23,6 +30,15 @@ class ProcessBand13Job:
             self._last_timestamp_directory(current_time),
             file_pattern=self._product_base_file_pattern,
         )
+        georreferenced_data = await SetupGOESGeorreferencingService(
+            downloaded_files
+        ).run()
+        logger.info("Georreferencing completed.")
+        brightness_temperature_data = await ComputeBrightnessTemperaturesService(
+            georreferenced_data
+        ).run()
+        logger.info("Brightness temperature computation completed.")
+
         for file_path, content in downloaded_files.items():
             dest_path = output_dir / Path(file_path).name
             with open(dest_path, "wb") as dest_file:
