@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "tiles-processor"
+version = "0.1.0"
+description = "GOES-19 Tiles Processor"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.12.3"
+numpy = "^1.26.0"
+xarray = "^2025.12.0"
+rioxarray = "^0.15.0"
+aioboto3 = "^15.5.0"
+h5netcdf = "^1.7.3"
+pyproj = "^3.7.2"
+scipy = "^1.16.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

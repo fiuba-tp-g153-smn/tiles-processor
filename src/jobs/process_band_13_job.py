@@ -50,4 +50,4 @@ class ProcessBand13Job:
         logger.info("Tiles generation completed.")
 
     def _last_timestamp_directory(self, current_time):
-        return f"{self._l1b_products_path}/{current_time.strftime("%Y/%j/%H")}"
+        return f"{self._l1b_products_path}/{current_time.strftime('%Y/%j/%H')}"

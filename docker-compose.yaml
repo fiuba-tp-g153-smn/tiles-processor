@@ -1,0 +1,10 @@
+services:
+  tiles-processor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tiles-processor:latest
+    container_name: tiles-processor
+    volumes:
+      - ./.tmp:/app/.tmp
+    command: python3 src/main.py process_band_13
