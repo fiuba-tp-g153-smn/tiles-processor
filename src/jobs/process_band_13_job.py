@@ -7,6 +7,8 @@ from clients import s3_client
 from services.compute_brightness_temperatures import (
     ComputeBrightnessTemperaturesService,
 )
+from services.generate_geotiff_files import GenerateGeoTIFFFilesService
+from services.generate_tiles import GenerateTilesService
 from services.setup_goes_georreferencing import SetupGOESGeorreferencingService
 
 logger = logging.getLogger(__name__)
@@ -22,8 +24,6 @@ class ProcessBand13Job:
         )
 
     async def run(self):
-        output_dir = Path.cwd() / ".tmp" / "band_13" / "nc_files"
-        output_dir.mkdir(parents=True, exist_ok=True)
         current_time = datetime.now(UTC)
 
         downloaded_files = await self._s3_client.download_folder(
@@ -39,10 +39,15 @@ class ProcessBand13Job:
         ).run()
         logger.info("Brightness temperature computation completed.")
 
-        for file_path, content in downloaded_files.items():
-            dest_path = output_dir / Path(file_path).name
-            with open(dest_path, "wb") as dest_file:
-                dest_file.write(content)
+        geotiff_output_dir = Path.cwd() / ".tmp" / "band_13" / "geotiff"
+        geotiff_files = await GenerateGeoTIFFFilesService(
+            brightness_temperature_data, geotiff_output_dir
+        ).run()
+        logger.info("GeoTIFF generation completed.")
+
+        tiles_output_dir = Path.cwd() / ".tmp" / "band_13" / "tiles"
+        await GenerateTilesService(geotiff_files, tiles_output_dir).run()
+        logger.info("Tiles generation completed.")
 
     def _last_timestamp_directory(self, current_time):
         return f"{self._l1b_products_path}/{current_time.strftime("%Y/%j/%H")}"

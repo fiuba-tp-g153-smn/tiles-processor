@@ -1,0 +1,396 @@
+import asyncio
+import gc
+import logging
+import uuid
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import numpy as np
+import xarray as xr
+import rioxarray
+
+# Note: Ensure you have rioxarray installed to use the rio accessor
+
+logger = logging.getLogger(__name__)
+
+
+class GenerateGeoTIFFFilesService:
+    COLOR_PALETTE = [
+        "#ffffff",
+        "#f2f2f2",
+        "#e5e5e5",
+        "#d7d7d7",
+        "#cacaca",
+        "#bcbcbc",
+        "#afafaf",
+        "#a2a2a2",
+        "#949494",
+        "#878787",
+        "#797979",
+        "#6c6c6c",
+        "#5e5e5e",
+        "#515151",
+        "#444444",
+        "#363636",
+        "#292929",
+        "#1b1b1b",
+        "#000000",
+        "#110000",
+        "#220000",
+        "#330000",
+        "#440000",
+        "#550000",
+        "#660000",
+        "#770000",
+        "#880000",
+        "#990000",
+        "#aa0000",
+        "#bb0000",
+        "#cc0000",
+        "#dd0000",
+        "#ee0000",
+        "#ff0b00",
+        "#ff1600",
+        "#ff2100",
+        "#ff2c00",
+        "#ff3700",
+        "#ff4200",
+        "#ff4d00",
+        "#ff5800",
+        "#ff6300",
+        "#ff6e00",
+        "#ff7900",
+        "#ff8500",
+        "#ff9000",
+        "#ff9b00",
+        "#ffa600",
+        "#ffb100",
+        "#ffbc00",
+        "#ffc700",
+        "#ffd200",
+        "#ffdd00",
+        "#ffe800",
+        "#fff300",
+        "#f0ff00",
+        "#e0ff00",
+        "#d0ff00",
+        "#c0ff00",
+        "#b0ff00",
+        "#a0ff00",
+        "#90ff00",
+        "#80ff00",
+        "#70ff00",
+        "#60ff00",
+        "#50ff00",
+        "#40ff00",
+        "#30ff00",
+        "#20ff00",
+        "#10ff00",
+        "#00f007",
+        "#00e00e",
+        "#00d015",
+        "#00c01c",
+        "#00b023",
+        "#00a02b",
+        "#009032",
+        "#008039",
+        "#007040",
+        "#006047",
+        "#00504f",
+        "#004056",
+        "#00305d",
+        "#002064",
+        "#00106b",
+        "#000b79",
+        "#00177f",
+        "#002286",
+        "#002e8c",
+        "#003992",
+        "#004599",
+        "#00519f",
+        "#005ca5",
+        "#0068ac",
+        "#0073b2",
+        "#007fb9",
+        "#008bbf",
+        "#0096c5",
+        "#00a2cc",
+        "#00add2",
+        "#00b9d8",
+        "#00c5df",
+        "#00d0e5",
+        "#00dceb",
+        "#00e7f2",
+        "#00f3f8",
+        "#fafafa",
+        "#f8f8f8",
+        "#f7f7f7",
+        "#f5f5f5",
+        "#f3f3f3",
+        "#f2f2f2",
+        "#f0f0f0",
+        "#eeeeee",
+        "#ededed",
+        "#ebebeb",
+        "#e9e9e9",
+        "#e8e8e8",
+        "#e6e6e6",
+        "#e4e4e4",
+        "#e2e2e2",
+        "#e1e1e1",
+        "#dfdfdf",
+        "#dddddd",
+        "#dcdcdc",
+        "#dadada",
+        "#d8d8d8",
+        "#d7d7d7",
+        "#d5d5d5",
+        "#d3d3d3",
+        "#d2d2d2",
+        "#d0d0d0",
+        "#cecece",
+        "#cdcdcd",
+        "#cbcbcb",
+        "#c9c9c9",
+        "#c8c8c8",
+        "#c6c6c6",
+        "#c4c4c4",
+        "#c3c3c3",
+        "#c1c1c1",
+        "#bfbfbf",
+        "#bebebe",
+        "#bcbcbc",
+        "#bababa",
+        "#b9b9b9",
+        "#b7b7b7",
+        "#b5b5b5",
+        "#b4b4b4",
+        "#b2b2b2",
+        "#b0b0b0",
+        "#aeaeae",
+        "#adadad",
+        "#ababab",
+        "#a9a9a9",
+        "#a8a8a8",
+        "#a6a6a6",
+        "#a4a4a4",
+        "#a3a3a3",
+        "#a1a1a1",
+        "#9f9f9f",
+        "#9e9e9e",
+        "#9c9c9c",
+        "#9a9a9a",
+        "#999999",
+        "#979797",
+        "#959595",
+        "#949494",
+        "#929292",
+        "#909090",
+        "#8f8f8f",
+        "#8d8d8d",
+        "#8b8b8b",
+        "#8a8a8a",
+        "#888888",
+        "#868686",
+        "#858585",
+        "#838383",
+        "#818181",
+        "#808080",
+        "#7e7e7e",
+        "#7c7c7c",
+        "#7a7a7a",
+        "#797979",
+        "#777777",
+        "#757575",
+        "#747474",
+        "#727272",
+        "#707070",
+        "#6f6f6f",
+        "#6d6d6d",
+        "#6b6b6b",
+        "#6a6a6a",
+        "#686868",
+        "#666666",
+        "#656565",
+        "#636363",
+        "#616161",
+        "#606060",
+        "#5e5e5e",
+        "#5c5c5c",
+        "#5b5b5b",
+        "#595959",
+        "#575757",
+        "#565656",
+        "#545454",
+        "#525252",
+        "#515151",
+        "#4f4f4f",
+        "#4d4d4d",
+        "#4b4b4b",
+        "#4a4a4a",
+        "#484848",
+        "#464646",
+        "#454545",
+        "#434343",
+        "#414141",
+        "#404040",
+        "#3e3e3e",
+        "#3c3c3c",
+        "#3b3b3b",
+        "#393939",
+        "#373737",
+        "#363636",
+        "#343434",
+        "#323232",
+        "#313131",
+        "#2f2f2f",
+        "#2d2d2d",
+        "#2c2c2c",
+        "#2a2a2a",
+        "#282828",
+        "#272727",
+        "#252525",
+        "#232323",
+        "#222222",
+        "#202020",
+        "#1e1e1e",
+        "#1d1d1d",
+        "#1b1b1b",
+        "#191919",
+        "#171717",
+        "#161616",
+        "#141414",
+        "#121212",
+        "#111111",
+        "#0f0f0f",
+        "#0d0d0d",
+        "#0c0c0c",
+        "#0a0a0a",
+        "#080808",
+        "#070707",
+        "#050505",
+        "#030303",
+        "#020202",
+        "#000000",
+    ]
+
+    def __init__(
+        self, brightness_temperatures: Dict[str, xr.DataArray], output_dir: Path
+    ):
+        self._brightness_temperatures = brightness_temperatures
+        self._output_dir = output_dir
+
+    async def run(self) -> List[Path]:
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        tasks = []
+
+        for file_name, dataset in self._brightness_temperatures.items():
+            tasks.append(asyncio.to_thread(self._generate_geotiff, file_name, dataset))
+
+        return await asyncio.gather(*tasks)
+
+    def _generate_geotiff(self, file_name: str, c13_data: xr.DataArray) -> Path:
+        # Remove grid_mapping if present
+        if "grid_mapping" in c13_data.attrs:
+            del c13_data.attrs["grid_mapping"]
+
+        # 1. Reproject to EPSG:4326
+        # Use rioxarray's reproject method. Ensure rioxarray is installed and imported through xarray accessor
+        c13_reproj = c13_data.rio.reproject("EPSG:4326")
+
+        # Get coordinates for later use
+        coords_x = c13_reproj["x"]
+        coords_y = c13_reproj["y"]
+
+        # 2. Normalize and apply custom palette (Cloud Tops logic)
+        # vmin=183.15, vmax=323.15 from legacy code
+        r, g, b, a = self._normalize_with_custom_palette(
+            c13_reproj, vmin=183.15, vmax=323.15
+        )
+
+        # Free memory
+        del c13_reproj
+        gc.collect()
+
+        # 3. Create RGBA DataArray
+        rgb = xr.DataArray(
+            np.stack([r, g, b, a]),
+            dims=["band", "y", "x"],
+            coords={"band": [1, 2, 3, 4], "x": coords_x, "y": coords_y},
+            name="Cloud_Tops",
+        )
+
+        # Free memory
+        del r, g, b, a
+        # 4. Set CRS and spatial dims
+        rgb.rio.write_crs("EPSG:4326", inplace=True)
+        rgb.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+
+        # 5. Save to GeoTIFF
+        # Construct output path, ensuring .tif extension
+        output_filename = f"{Path(file_name).stem}.tif"
+        output_path = self._output_dir / output_filename
+
+        # Atomic write
+        tmp_output_path = self._output_dir / f"{str(uuid.uuid4())}.tif"
+        try:
+            rgb.rio.to_raster(tmp_output_path)
+            tmp_output_path.rename(output_path)
+            logger.info(f"Generated GeoTIFF: {output_path}")
+        except Exception as e:
+            logger.error(f"Failed to generate GeoTIFF for {file_name}: {e}")
+            if tmp_output_path.exists():
+                tmp_output_path.unlink()
+            raise
+
+        del rgb
+        gc.collect()
+
+        return output_path
+
+    def _normalize_with_custom_palette(
+        self, array: xr.DataArray, vmin: float, vmax: float
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Normalize an array and apply the custom color palette.
+        Returns: R, G, B, A (uint8 arrays)
+        """
+        arr = np.asarray(
+            array.values if hasattr(array, "values") else array, dtype=np.float32
+        )
+
+        nan_mask = np.isnan(arr)
+
+        # Create alpha channel: 0 where NaN, 255 otherwise
+        alpha = np.where(nan_mask, 0, 255).astype(np.uint8)
+
+        normalized = (arr - vmin) / (vmax - vmin)
+        normalized = np.clip(normalized, 0, 1)
+        normalized = np.nan_to_num(normalized, nan=0.0)
+        del arr
+
+        indices = (normalized * 255).astype(np.uint8)
+        del normalized
+
+        rgb_palette = np.zeros((256, 3), dtype=np.uint8)
+        for i, hex_color in enumerate(self.COLOR_PALETTE):
+            hex_color = hex_color.lstrip("#")
+            rgb_palette[i, 0] = int(hex_color[0:2], 16)
+            rgb_palette[i, 1] = int(hex_color[2:4], 16)
+            rgb_palette[i, 2] = int(hex_color[4:6], 16)
+
+        colored = rgb_palette[indices]
+        del indices
+
+        # We don't strictly need to set colored[nan_mask] to a specific color
+        # because alpha will be 0, but keeping it black/white is fine.
+        colored[nan_mask] = rgb_palette[0]
+        del nan_mask
+        gc.collect()
+
+        # Extract channels
+        red = colored[..., 0]
+        green = colored[..., 1]
+        blue = colored[..., 2]
+
+        return red, green, blue, alpha
