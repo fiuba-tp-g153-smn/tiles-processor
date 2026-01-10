@@ -3,7 +3,7 @@ import asyncio
 from botocore import UNSIGNED
 from botocore.config import Config as BotoConfig
 import logging
-from typing import Dict, List
+from typing import Callable, Dict, List
 
 
 logger = logging.getLogger(__name__)
@@ -57,12 +57,35 @@ class S3Client:
                 await asyncio.sleep(1)
 
     async def download_folder(
-        self, folder_path: str, file_pattern: str = ""
+        self,
+        folder_path: str,
+        file_pattern: str = "",
+        file_filter: Callable[[str], bool] = None,
     ) -> Dict[str, bytes]:
+        """
+        Download files from a folder.
+
+        Args:
+            folder_path: S3 folder path
+            file_pattern: Pattern to match in file names
+            file_filter: Optional function to filter file paths before downloading
+        """
         file_paths = await self._get_folder_file_paths(folder_path, file_pattern)
-        logger.info(f"Found {len(file_paths)} files in {folder_path}")
+        
+        logger.info(f"Found {len(file_paths)} files matching pattern '{file_pattern}' in {folder_path}")
+        
+        # Aplicar filtro adicional si se proporciona
+        if file_filter is not None:
+            original_count = len(file_paths)
+            file_paths = [fp for fp in file_paths if file_filter(fp)]
+            logger.info(f"After applying filter: {len(file_paths)}/{original_count} files to download")
+        
+        logger.info(f"Files to download: {file_paths}")
 
         files = {}
+        if not file_paths:
+            return files
+            
         async with self._session.client(
             "s3",
             endpoint_url=self._endpoint_url,
@@ -90,13 +113,23 @@ class S3Client:
                 endpoint_url=self._endpoint_url,
                 config=BotoConfig(signature_version=UNSIGNED),
             ) as s3_client:
-                response = await s3_client.list_objects_v2(
+                logger.debug(f"Listing objects in bucket '{self._bucket_name}' with prefix '{folder_path}'")
+                
+                # Usar paginator para manejar más de 1000 objetos
+                paginator = s3_client.get_paginator("list_objects_v2")
+                async for page in paginator.paginate(
                     Bucket=self._bucket_name, Prefix=folder_path
-                )
-                for obj in response.get("Contents", []):
-                    key = obj["Key"]
-                    if not key.endswith("/") and file_pattern in key:
-                        file_paths.append(key)
+                ):
+                    contents = page.get("Contents", [])
+                    logger.debug(f"Page returned {len(contents)} objects")
+                    
+                    for obj in contents:
+                        key = obj["Key"]
+                        if not key.endswith("/") and file_pattern in key:
+                            file_paths.append(key)
+                            
+                logger.debug(f"Total files found with pattern '{file_pattern}': {len(file_paths)}")
+                
         except Exception as e:
             logger.error(f"Error getting file paths in {folder_path}: {str(e)}")
             raise e
