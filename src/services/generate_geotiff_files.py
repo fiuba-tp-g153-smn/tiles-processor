@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 
 
 class GenerateGeoTIFFFilesService:
+    # Argentina bounding box (with some margin)
+    ARGENTINA_BOUNDS = {
+        "minx": -75.0,  # Oeste (con margen para incluir toda la cordillera)
+        "miny": -56.0,  # Sur (Tierra del Fuego)
+        "maxx": -53.0,  # Este (con margen para el Atlántico)
+        "maxy": -21.0,  # Norte (Jujuy)
+    }
+
     COLOR_PALETTE = [
         "#ffffff", "#f2f2f2", "#e5e5e5", "#d7d7d7", "#cacaca", "#bcbcbc", "#afafaf", "#a2a2a2",
         "#949494", "#878787", "#797979", "#6c6c6c", "#5e5e5e", "#515151", "#444444", "#363636",
@@ -74,18 +82,33 @@ class GenerateGeoTIFFFilesService:
         # Use rioxarray's reproject method. Ensure rioxarray is installed and imported through xarray accessor
         c13_reproj = c13_data.rio.reproject("EPSG:4326")
 
-        # Get coordinates for later use
-        coords_x = c13_reproj["x"]
-        coords_y = c13_reproj["y"]
+        # Fix nodata value before clipping (original value is too large for float32)
+        c13_reproj = c13_reproj.rio.write_nodata(np.nan, inplace=False)
 
-        # 2. Normalize and apply custom palette (Cloud Tops logic)
+        # 2. Clip to Argentina bounds to reduce processing area
+        c13_clipped = c13_reproj.rio.clip_box(
+            minx=self.ARGENTINA_BOUNDS["minx"],
+            miny=self.ARGENTINA_BOUNDS["miny"],
+            maxx=self.ARGENTINA_BOUNDS["maxx"],
+            maxy=self.ARGENTINA_BOUNDS["maxy"],
+        )
+
+        # Free memory from full reprojection
+        del c13_reproj
+        gc.collect()
+
+        # Get coordinates for later use
+        coords_x = c13_clipped["x"]
+        coords_y = c13_clipped["y"]
+
+        # 3. Normalize and apply custom palette (Cloud Tops logic)
         # vmin=183.15, vmax=323.15 from legacy code
         r, g, b, a = self._normalize_with_custom_palette(
-            c13_reproj, vmin=183.15, vmax=323.15
+            c13_clipped, vmin=183.15, vmax=323.15
         )
 
         # Free memory
-        del c13_reproj
+        del c13_clipped
         gc.collect()
 
         # 3. Create RGBA DataArray

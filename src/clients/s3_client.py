@@ -14,7 +14,7 @@ class S3Client:
         self,
         bucket_name: str,
         endpoint_url: str = None,
-        max_concurrent_downloads: int = 5,
+        max_concurrent_downloads: int = 6,
     ):
         """
         Initialize S3 client.

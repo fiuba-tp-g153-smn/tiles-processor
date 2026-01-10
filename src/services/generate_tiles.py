@@ -11,18 +11,28 @@ logger = logging.getLogger(__name__)
 
 
 class GenerateTilesService:
+    # Limit concurrent tile generation to avoid CPU/memory saturation
+    MAX_CONCURRENT_TILES = 2
+    # Processes per gdal2tiles job
+    GDAL_PROCESSES = 2
+
     def __init__(self, geotiff_files: List[Path], output_dir: Path):
         self._geotiff_files = geotiff_files
         self._output_dir = output_dir
+        self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_TILES)
 
     async def run(self):
         self._output_dir.mkdir(parents=True, exist_ok=True)
         tasks = []
 
         for geotiff_path in self._geotiff_files:
-            tasks.append(asyncio.to_thread(self._generate_tiles, geotiff_path))
+            tasks.append(self._generate_tiles_with_limit(geotiff_path))
 
         await asyncio.gather(*tasks)
+
+    async def _generate_tiles_with_limit(self, geotiff_path: Path):
+        async with self._semaphore:
+            await asyncio.to_thread(self._generate_tiles, geotiff_path)
 
     def _generate_tiles(self, geotiff_path: Path):
         # 1. Define tile output directory
@@ -42,7 +52,7 @@ class GenerateTilesService:
                 "-w",
                 "leaflet",
                 "--tiledriver=WEBP",
-                "--processes=2",  # Adjust based on available cores per job
+                f"--processes={self.GDAL_PROCESSES}",
                 str(geotiff_path),
                 str(tmp_tiles_dir),
             ]

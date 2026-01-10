@@ -20,7 +20,7 @@ class ProcessBand13Job:
         self._l1b_products_path = "ABI-L1b-RadF"
         self._product_base_file_pattern = "C13_G19"
         self._s3_client = s3_client.S3Client(
-            self._bucket_name, max_concurrent_downloads=5
+            self._bucket_name, max_concurrent_downloads=6
         )
 
     async def run(self):
