@@ -78,9 +78,6 @@ class S3Client:
         if file_filter is not None:
             original_count = len(file_paths)
             file_paths = [fp for fp in file_paths if file_filter(fp)]
-            logger.info(f"After applying filter: {len(file_paths)}/{original_count} files to download")
-        
-        logger.info(f"Files to download: {file_paths}")
 
         files = {}
         if not file_paths:

@@ -50,55 +50,66 @@ class ProcessBand13Job:
 
     async def _download_last_hour_files(self, current_time: datetime) -> dict[str, bytes]:
         """
-        Descarga los últimos 6 archivos (última hora).
-        Ejemplo para 14:25 UTC:
-          - Carpeta 14h: 10, 00
-          - Carpeta 13h: 50, 40, 30, 20
+        Descarga las últimas 24 imágenes (4 horas de datos, 1 imagen cada 10 minutos).
+        Ejemplo para 13:23 UTC:
+          - Carpeta 13h: 10, 00
+          - Carpeta 12h: 50, 40, 30, 20, 10, 00
+          - Carpeta 11h: 50, 40, 30, 20, 10, 00
+          - Carpeta 10h: 50, 40, 30, 20, 10, 00
+          - Carpeta 9h: 50, 40, 30, 20
         """
+        TARGET_FILES = 24
         all_files = {}
+        hours_back = 0
         
-        # 1. Descargar todos los disponibles de la hora actual
-        current_hour_path = self._build_directory_path(current_time)
-        logger.info(f"Downloading from current hour: {current_hour_path} (time: {current_time.isoformat()})")
-        
-        current_hour_files = await self._s3_client.download_folder(
-            current_hour_path,
-            file_pattern=self._product_base_file_pattern,
-        )
-        all_files.update(current_hour_files)
-        files_from_current_hour = len(current_hour_files)
-        logger.info(f"Downloaded {files_from_current_hour} files from current hour folder")
-        
-        # 2. Calcular cuántos archivos faltan de la hora anterior
-        files_needed_from_previous = 6 - files_from_current_hour
-        
-        if files_needed_from_previous > 0:
-            # Hora anterior (puede ser día anterior si current_time.hour == 0)
-            previous_hour_time = current_time - timedelta(hours=1)
-            previous_hour_path = self._build_directory_path(previous_hour_time)
+        while len(all_files) < TARGET_FILES:
+            # Calcular la hora a buscar
+            search_time = current_time - timedelta(hours=hours_back)
+            search_path = self._build_directory_path(search_time)
             
-            logger.info(f"Downloading from previous hour: {previous_hour_path} (time: {previous_hour_time.isoformat()})")
+            files_still_needed = TARGET_FILES - len(all_files)
             
-            # Calcular el minuto mínimo a descargar de la hora anterior
-            min_minute_previous = 60 - (files_needed_from_previous * 10)
+            if hours_back == 0:
+                # Hora actual: descargar todos los disponibles
+                logger.info(f"Downloading from current hour: {search_path} (time: {search_time.isoformat()})")
+                hour_files = await self._s3_client.download_folder(
+                    search_path,
+                    file_pattern=self._product_base_file_pattern,
+                )
+            else:
+                # Horas anteriores: filtrar por minutos si es necesario
+                logger.info(f"Downloading from hour -{hours_back}: {search_path} (time: {search_time.isoformat()})")
+                
+                # Si necesitamos menos de 6 archivos de esta hora, filtrar por minuto
+                if files_still_needed < 6:
+                    min_minute = 60 - (files_still_needed * 10)
+                    logger.info(f"Need {files_still_needed} files, filtering minutes >= {min_minute}")
+                    
+                    def minute_filter(file_path: str) -> bool:
+                        file_minute = self._extract_minute_from_filename(file_path)
+                        return file_minute is not None and file_minute >= min_minute
+                    
+                    hour_files = await self._s3_client.download_folder(
+                        search_path,
+                        file_pattern=self._product_base_file_pattern,
+                        file_filter=minute_filter,
+                    )
+                else:
+                    # Necesitamos todos los archivos de esta hora
+                    hour_files = await self._s3_client.download_folder(
+                        search_path,
+                        file_pattern=self._product_base_file_pattern,
+                    )
             
-            logger.info(f"Need {files_needed_from_previous} files from previous hour, filtering minutes >= {min_minute_previous}")
+            all_files.update(hour_files)
+            logger.info(f"Downloaded {len(hour_files)} files from hour -{hours_back}. Total so far: {len(all_files)}")
             
-            # Crear filtro para descargar solo archivos con minuto >= min_minute_previous
-            def minute_filter(file_path: str) -> bool:
-                file_minute = self._extract_minute_from_filename(file_path)
-                passes = file_minute is not None and file_minute >= min_minute_previous
-                logger.info(f"Filter check: {file_path} -> minute: {file_minute}, passes: {passes}")
-                return passes
+            hours_back += 1
             
-            previous_hour_files = await self._s3_client.download_folder(
-                previous_hour_path,
-                file_pattern=self._product_base_file_pattern,
-                file_filter=minute_filter,
-            )
-            all_files.update(previous_hour_files)
-            
-            logger.info(f"Downloaded {len(previous_hour_files)} files from previous hour folder (minutes >= {min_minute_previous})")
+            # Límite de seguridad para evitar loops infinitos (máximo 5 horas atrás)
+            if hours_back > 5:
+                logger.warning(f"Reached maximum hours back limit. Downloaded {len(all_files)}/{TARGET_FILES} files.")
+                break
         
         logger.info(f"Total files downloaded: {len(all_files)}")
         return all_files
