@@ -11,6 +11,10 @@ class Config:
     # General
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
     
+    # Timezone (defaults to UTC)
+    # Examples: "UTC", "America/New_York", "Europe/London", "Asia/Tokyo", "America/Argentina/Buenos_Aires"
+    TIMEZONE: str = os.getenv("TZ", "UTC")
+    
     # Scheduler
     # Format: Full cron expression (e.g. "*/10 * * * *")
     # Examples:
@@ -21,9 +25,6 @@ class Config:
     #   "0 0 1,15 * *"  -> On the 1st and 15th of every month at 00:00 UTC
     BAND_13_SCHEDULE_CRON: str = get_required_env("BAND_13_SCHEDULE_CRON")
     BAND_9_SCHEDULE_CRON: str = get_required_env("BAND_9_SCHEDULE_CRON")
-
-    # Paths (if needed later)
-    # TMP_DIR = ...
 
     @classmethod
     def get_job_schedules(cls) -> Dict[str, str]:

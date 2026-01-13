@@ -41,3 +41,13 @@ def test_config_valid_schedules():
 # unit testing them requires either reloading the module or structuring Config to be lazy.
 # For now, we will assume the get_required_env tests cover the logic, 
 # and we test that get_job_schedules returns expected formats based on the class attrs.
+
+def test_timezone_default():
+    # Since config is already imported, we can just check the default if no env var was set during import
+    # But usually we want to control env vars. 
+    # Because Config is a singleton-like class instantiated at module level, 
+    # we can't easily change it without reload.
+    # We'll just verify it has a default.
+    assert hasattr(Config, 'TIMEZONE')
+    # Default is UTC or whatever was in env when tests started.
+

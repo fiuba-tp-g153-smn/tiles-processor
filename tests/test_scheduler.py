@@ -26,57 +26,62 @@ async def test_start_scheduler_registers_jobs(mock_config):
         "job_a": "*/10 * * * *",
         "job_b": "0 0 * * *"
     }
-    
-    mock_job_a = MagicMock()
-    mock_job_a.__name__ = "JobA"
-    mock_job_b = MagicMock()
-    mock_job_b.__name__ = "JobB"
-    
-    job_registry = {
-        "job_a": mock_job_a,
-        "job_b": mock_job_b
-    }
 
-    # Mock APScheduler
-    with mock.patch('scheduler.AsyncIOScheduler') as MockScheduler:
-        scheduler_instance = MockScheduler.return_value
-        scheduler_instance.start = MagicMock()
-        scheduler_instance.shutdown = MagicMock()
-        scheduler_instance.get_jobs.return_value = [1, 2] # just for the logging count
-
-        # We need to interrupt the infinite wait in start_scheduler
-        # start_scheduler waits on `stop_event.wait()`
-        # We can mock asyncio.Event to return immediately or throw CancelledError
+    # Mock config.TIMEZONE
+    with mock.patch('scheduler.config.TIMEZONE', 'America/New_York'):
+        mock_job_a = MagicMock()
+        mock_job_a.__name__ = "JobA"
+        mock_job_b = MagicMock()
+        mock_job_b.__name__ = "JobB"
         
-        with mock.patch('asyncio.Event') as MockEvent:
-            event_instance = MockEvent.return_value
-            # Make wait() raise CancelledError immediately to exit the loop
-            event_instance.wait = AsyncMock(side_effect=asyncio.CancelledError)
+        job_registry = {
+            "job_a": mock_job_a,
+            "job_b": mock_job_b
+        }
 
-            await start_scheduler(job_registry)
+        # Mock APScheduler
+        with mock.patch('scheduler.AsyncIOScheduler') as MockScheduler:
+            scheduler_instance = MockScheduler.return_value
+            scheduler_instance.start = MagicMock()
+            scheduler_instance.shutdown = MagicMock()
+            scheduler_instance.get_jobs.return_value = [1, 2] # just for the logging count
 
-            # Verification
-            assert scheduler_instance.add_job.call_count == 2
+            # We need to interrupt the infinite wait in start_scheduler
+            # start_scheduler waits on `stop_event.wait()`
+            # We can mock asyncio.Event to return immediately or throw CancelledError
             
-            # Verify triggers
-            calls = scheduler_instance.add_job.call_args_list
-            from apscheduler.triggers.cron import CronTrigger
-            
-            # Check job_a (*/10 * * * *)
-            job_a_call = next(c for c in calls if c.kwargs['id'] == 'job_a')
-            trigger_a = job_a_call.kwargs['trigger']
-            assert isinstance(trigger_a, CronTrigger)
-            # APScheduler 3.x CronTrigger fields are objects, we can check string representation or specific fields
-            # For "*/10 * * * *", minute should be a specific expression
-            # Use str(trigger) or check fields if accessible. 
-            # str(CronTrigger) usually gives the readable form.
-            assert "minute='*/10'" in str(trigger_a) 
+            with mock.patch('asyncio.Event') as MockEvent:
+                event_instance = MockEvent.return_value
+                # Make wait() raise CancelledError immediately to exit the loop
+                event_instance.wait = AsyncMock(side_effect=asyncio.CancelledError)
 
-            # Check job_b (0 0 * * *)
-            job_b_call = next(c for c in calls if c.kwargs['id'] == 'job_b')
-            trigger_b = job_b_call.kwargs['trigger']
-            assert isinstance(trigger_b, CronTrigger)
-            assert "hour='0', minute='0'" in str(trigger_b)
+                await start_scheduler(job_registry)
+                
+                # Check Scheduler init timezone
+                MockScheduler.assert_called_with(timezone='America/New_York')
+
+                # Verification
+                assert scheduler_instance.add_job.call_count == 2
+                
+                # Verify triggers
+                calls = scheduler_instance.add_job.call_args_list
+                from apscheduler.triggers.cron import CronTrigger
+                
+                # Check job_a (*/10 * * * *)
+                job_a_call = next(c for c in calls if c.kwargs['id'] == 'job_a')
+                trigger_a = job_a_call.kwargs['trigger']
+                assert isinstance(trigger_a, CronTrigger)
+                assert "minute='*/10'" in str(trigger_a) 
+                # assert trigger timezone. APScheduler converts string to tzinfo.
+                # checking str(trigger_a.timezone) should be enough or str(trigger_a) contains 'America/New_York'
+                assert str(trigger_a.timezone) == 'America/New_York'
+
+                # Check job_b (0 0 * * *)
+                job_b_call = next(c for c in calls if c.kwargs['id'] == 'job_b')
+                trigger_b = job_b_call.kwargs['trigger']
+                assert isinstance(trigger_b, CronTrigger)
+                assert "hour='0', minute='0'" in str(trigger_b)
+                assert str(trigger_b.timezone) == 'America/New_York'
             
             scheduler_instance.start.assert_called_once()
             scheduler_instance.shutdown.assert_called_once()

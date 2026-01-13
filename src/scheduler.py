@@ -29,7 +29,7 @@ async def start_scheduler(job_registry: Dict[str, Type]):
     Start APScheduler with jobs defined in the registry.
     Schedules are pulled from config.py based on the job name.
     """
-    scheduler = AsyncIOScheduler(timezone=timezone.utc)
+    scheduler = AsyncIOScheduler(timezone=config.TIMEZONE)
     schedules = config.get_job_schedules()
 
     for job_name, job_cls in job_registry.items():
@@ -47,7 +47,7 @@ async def start_scheduler(job_registry: Dict[str, Type]):
         
         scheduler.add_job(
             callback,
-            trigger=CronTrigger.from_crontab(schedule_cron, timezone=timezone.utc),
+            trigger=CronTrigger.from_crontab(schedule_cron, timezone=config.TIMEZONE),
             id=job_name,
             replace_existing=True
         )
