@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: tiles-processor:latest
-    container_name: tiles-processor
+    image: tiles-processor
+    container_name: tiles-processor-container
     volumes:
       - ./.tmp:/app/.tmp
     # Options: process_band_13 or process_band_9

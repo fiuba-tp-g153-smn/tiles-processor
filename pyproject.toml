@@ -1,10 +1,18 @@
-[tool.poetry]
+[project]
 name = "tiles-processor"
 version = "0.1.0"
 description = "GOES-19 Tiles Processor"
-authors = ["Your Name <you@example.com>"]
-readme = "README.md"
-packages = [{include = "src"}]
+authors = [
+    { name = "Agustín Altamirano", email = " aaltamirano@fi.uba.ar" },
+    { name = "Gabriel Diem", email = "wdiem@fi.uba.ar" },
+    { name = "Máximo Gismondi", email = "magismondi@fi.uba.ar" },
+    { name = "Matías Valeriani", email = "mvaleriani@fi.uba.ar" },
+]
+readme = {file = "README.md", content-type = "text/markdown"}
+
+[tool.poetry]
+packages = [{ include = "src" }]
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.12.3"
