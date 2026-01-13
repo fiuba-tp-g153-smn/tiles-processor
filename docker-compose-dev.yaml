@@ -1,7 +1,6 @@
 services:
   tiles-processor:
-    image: tiles-processor
-    container_name: tiles-processor-container
+    container_name: tiles-processor-dev-container
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,10 +8,6 @@ services:
       - ./.tmp:/app/.tmp
     # Options: process_band_13 or process_band_9
     command: python3 src/main.py process_band_13
-    args:
-      - LOG_LEVEL=${LOG_LEVEL}
-      - BAND_13_SCHEDULE_CRON=${BAND_13_SCHEDULE_CRON}
-      - BAND_9_SCHEDULE_CRON=${BAND_9_SCHEDULE_CRON}
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - BAND_13_SCHEDULE_CRON=${BAND_13_SCHEDULE_CRON}

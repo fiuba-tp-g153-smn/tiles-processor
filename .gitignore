@@ -5,3 +5,4 @@ output_radar/
 RMA*
 .venv
 __pycache__/
+.env

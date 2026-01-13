@@ -39,5 +39,14 @@ COPY src/ ./src/
 # Set PYTHONPATH
 ENV PYTHONPATH=/app/src
 
+# Build arguments for environment variables
+ARG LOG_LEVEL
+ARG BAND_13_SCHEDULE_CRON
+ARG BAND_9_SCHEDULE_CRON
+
+ENV LOG_LEVEL=$LOG_LEVEL
+ENV BAND_13_SCHEDULE_CRON=$BAND_13_SCHEDULE_CRON
+ENV BAND_9_SCHEDULE_CRON=$BAND_9_SCHEDULE_CRON
+
 # Default command
 CMD ["python3", "src/main.py", "process_band_13"]
