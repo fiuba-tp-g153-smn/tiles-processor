@@ -4,39 +4,44 @@ This project is a Python-based scheduler application designed to process GOES-19
 
 ## Features
 
-- **Automated Scheduling**: Uses `APScheduler` to run processing jobs at defined intervals (cron).
-- **Data Products**:
+
+- **Satellite Data Processing**: Automatically downloads and processes GOES-19 satellite imagery.
     - **Band 13 (Clean IR Window)**: Processes Channel 13 (10.33 µm) for Cloud Top monitoring.
     - **Band 9 (Mid-Level Water Vapor)**: Processes Channel 9 (6.93 µm) for Water Vapor analysis.
+- **Job Management**:
+    - **Queuing System**: Jobs are triggered by CRON schedules but are added to a processing queue. A background worker processes jobs sequentially to prevent resource overload.
+    - **Feature Toggles**: Specific job types (Band 13, Band 9) can be enabled or disabled via configuration.
+- **Safety Limits**: Prevents job execution if the temporary directory size exceeds 10GB (`MAX_TMP_DIR_SIZE_BYTES`) to avoid disk overflow.
 - **Processing Pipeline**:
     1.  Downloads raw NetCDF/H5 files from S3.
     2.  Geferences the satellite data.
     3.  Computes brightness temperatures.
     4.  Generates colorized GeoTIFFs.
     5.  Produces XYZ tiles for web mapping.
-- **Radar Tools**: Includes standalone scripts (`radar_to_tiles.py`) for processing radar data (H5) into tiles.
+- **Dockerized**: Fully containerized environment for easy deployment.
+- **Scheduler**: Uses `APScheduler` for precise job scheduling (cron-based).
 
 ## Commands
 
-The project uses a `Makefile` to simplify common operations:
-
-- `make up`: Starts the application in development mode using Docker Compose.
-- `make down`: Stops and removes the application containers.
-- `make prod`: Starts the application in production mode.
-- `make test`: Runs the test suite using `pytest` with coverage reporting.
+| Command | Description |
+| :--- | :--- |
+| `make up` | Start the application in detached mode. |
+| `make down` | Stop the application. |
+| `make prod` | Build and start the application in production mode. |
+| `make test` | Run unit tests. |
 
 ## Environment Variables
 
-Configuration is managed via environment variables. Copy `.env.example` to `.env` and adjust as needed:
-
-| Variable | Description | Example |
-|bound|---|---|
-| `LOG_LEVEL` | Logging verbosity level. | `INFO` |
-| `BAND_13_SCHEDULE_CRON` | Cron schedule for the Band 13 processing job. | `*/10 * * * *` |
-| `BAND_9_SCHEDULE_CRON` | Cron schedule for the Band 9 processing job. | `*/10 * * * *` |
-| `TZ` | Timezone for the scheduler. | `America/Argentina/Buenos_Aires` |
-| `TMP_DIR_HOST` | Local path for temporary processing files. | `./.tmp` |
-| `TMP_DIR_CONTAINER` | Container path for temporary processing files. | `/app/.tmp` |
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `LOG_LEVEL` | Logging verbosity (DEBUG, INFO, WARNING, ERROR). | `INFO` |
+| `TZ` | Timezone for the scheduler. | `UTC` |
+| `BAND_13_SCHEDULE_CRON` | Cron expression for Band 13 job. | Required |
+| `BAND_9_SCHEDULE_CRON` | Cron expression for Band 9 job. | Required |
+| `ENABLE_BAND_13` | Enable/Disable Band 13 processing (`true`/`false`). | `true` |
+| `ENABLE_BAND_9` | Enable/Disable Band 9 processing (`true`/`false`). | `true` |
+| `TMP_DIR_HOST` | Local path for temporary files (host). | `./.tmp` |
+| `TMP_DIR_CONTAINER` | Container path for temporary files. | `/app/.tmp` |
 
 ## Radar Processing
 

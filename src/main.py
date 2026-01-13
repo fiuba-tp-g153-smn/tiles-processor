@@ -32,7 +32,20 @@ async def main():
     target_jobs = {}
     if job_name == "scheduler":
         logger.info("Starting scheduler mode for ALL jobs")
-        target_jobs = AVAILABLE_JOBS
+        # Filter jobs based on configuration
+        if config.ENABLE_BAND_13:
+             target_jobs["process_band_13"] = AVAILABLE_JOBS["process_band_13"]
+        else:
+             logger.warning("Band 13 processing is DISABLED in config.")
+
+        if config.ENABLE_BAND_9:
+             target_jobs["process_band_9"] = AVAILABLE_JOBS["process_band_9"]
+        else:
+             logger.warning("Band 9 processing is DISABLED in config.")
+        
+        if not target_jobs:
+            logger.error("No jobs are enabled. Exiting.")
+            return
     else:
         job_class = AVAILABLE_JOBS.get(job_name)
         if not job_class:

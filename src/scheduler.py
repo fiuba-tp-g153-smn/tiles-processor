@@ -52,6 +52,26 @@ async def _run_job(job_cls):
         logger.exception("Job %s failed", job_cls.__name__)
 
 
+
+async def _worker(queue: asyncio.Queue):
+    """
+    Worker coroutine that processes jobs one by one from the queue.
+    """
+    while True:
+        job_func, job_name = await queue.get()
+        try:
+            # Re-check or check size limit here?
+            # It's safer to check it right before execution in case the queue is long
+            # But the _run_job already has the check.
+            # We just need to call the function.
+            logger.info("Worker picked up job: %s", job_name)
+            await job_func()
+        except Exception:
+            logger.exception("Worker failed to process job: %s", job_name)
+        finally:
+            queue.task_done()
+
+
 async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Event = None):
     """
     Start APScheduler with jobs defined in the registry.
@@ -59,6 +79,9 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
     """
     scheduler = AsyncIOScheduler(timezone=config.TIMEZONE)
     schedules = config.get_job_schedules()
+    
+    # Initialize Queue
+    job_queue = asyncio.Queue()
 
     for job_name, job_cls in job_registry.items():
         schedule_cron = schedules.get(job_name)
@@ -66,12 +89,8 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
             logger.warning(f"No schedule found for job '{job_name}' in config. Skipping.")
             continue
 
-        # We need to capture job_cls correctly in the closure
-        # A common way is to use a default argument or a factory, but here
-        # we can define a wrapper inside the loop if we are careful,
-        # or better: use a helper function to generate the callback.
-        
-        callback = _create_job_callback(job_cls)
+        # Create callback that enqueues the job instead of running it immediately
+        callback = _create_enqueue_callback(job_queue, job_cls, job_name)
         
         scheduler.add_job(
             callback,
@@ -84,6 +103,10 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
     logger.info("Starting scheduler with %d jobs", len(scheduler.get_jobs()))
     scheduler.start()
 
+    # Start Worker
+    worker_task = asyncio.create_task(_worker(job_queue))
+    logger.info("Worker task started")
+
     # Keep the scheduler running until cancelled
     if stop_event is None:
         stop_event = asyncio.Event()
@@ -94,15 +117,28 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         logger.info("Scheduler cancelled, shutting down")
     finally:
         scheduler.shutdown(wait=False)
+        # Cancel worker
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
 
 
-def _create_job_callback(job_cls):
+
+
+def _create_enqueue_callback(queue: asyncio.Queue, job_cls, job_name: str):
     """
-    Helper to create a coroutine function for a specific job class.
-    This avoids closure binding issues in loops.
+    Helper to create a callback that puts the job into the queue.
     """
-    async def run_specific_job():
-        await _run_job(job_cls)
-    # Set a nice name for debugging
-    run_specific_job.__name__ = f"run_{job_cls.__name__}"
-    return run_specific_job
+    async def enqueue_job():
+        # define the actual run coroutine
+        async def run_specific_job():
+             await _run_job(job_cls)
+        
+        logger.info(f"Enqueuing job: {job_name}")
+        await queue.put((run_specific_job, job_name))
+        
+    enqueue_job.__name__ = f"enqueue_{job_name}"
+    return enqueue_job
+

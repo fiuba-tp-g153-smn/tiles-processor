@@ -26,6 +26,11 @@ class Config:
     BAND_13_SCHEDULE_CRON: str = get_required_env("BAND_13_SCHEDULE_CRON")
     BAND_9_SCHEDULE_CRON: str = get_required_env("BAND_9_SCHEDULE_CRON")
     
+    # Feature Toggles
+    # Default to True to maintain backward compatibility if env vars are missing
+    ENABLE_BAND_13: bool = os.getenv("ENABLE_BAND_13", "true").lower() in ("true", "1")
+    ENABLE_BAND_9: bool = os.getenv("ENABLE_BAND_9", "true").lower() in ("true", "1")
+    
     # Paths
     TMP_DIR: str = os.getenv("TMP_DIR_CONTAINER", ".tmp")
     MAX_TMP_DIR_SIZE_BYTES: int = 10 * 1024 * 1024 * 1024  # 10 GB
@@ -45,7 +50,9 @@ class Config:
         logger.info(f"LOG_LEVEL: {cls.LOG_LEVEL}")
         logger.info(f"TIMEZONE: {cls.TIMEZONE}")
         logger.info(f"BAND_13_SCHEDULE_CRON: {cls.BAND_13_SCHEDULE_CRON}")
+        logger.info(f"ENABLE_BAND_13: {cls.ENABLE_BAND_13}")
         logger.info(f"BAND_9_SCHEDULE_CRON: {cls.BAND_9_SCHEDULE_CRON}")
+        logger.info(f"ENABLE_BAND_9: {cls.ENABLE_BAND_9}")
         logger.info(f"TMP_DIR: {cls.TMP_DIR}")
         logger.info("=====================")
 

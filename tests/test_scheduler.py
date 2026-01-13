@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, AsyncMock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 import pytest
-from scheduler import start_scheduler, _create_job_callback, _run_job
+from scheduler import start_scheduler, _create_enqueue_callback, _run_job, _worker
 
 # Config mock needs to be applied before importing/running scheduler.start_scheduler
 # but start_scheduler imports config.
@@ -39,7 +39,7 @@ async def test_start_scheduler_registers_jobs(mock_config):
             "job_b": mock_job_b
         }
 
-        # Mock APScheduler
+    # Mock APScheduler
         with mock.patch('scheduler.AsyncIOScheduler') as MockScheduler:
             scheduler_instance = MockScheduler.return_value
             scheduler_instance.start = MagicMock()
@@ -50,10 +50,24 @@ async def test_start_scheduler_registers_jobs(mock_config):
             # start_scheduler waits on `stop_event.wait()`
             # We can mock asyncio.Event to return immediately or throw CancelledError
             
-            with mock.patch('asyncio.Event') as MockEvent:
+            # Mock asyncio.Queue and create_task
+            with mock.patch('asyncio.Queue') as MockQueue, \
+                 mock.patch('asyncio.create_task') as mock_create_task, \
+                 mock.patch('asyncio.Event') as MockEvent:
+                
+                queue_instance = MockQueue.return_value
                 event_instance = MockEvent.return_value
                 # Make wait() raise CancelledError immediately to exit the loop
                 event_instance.wait = AsyncMock(side_effect=asyncio.CancelledError)
+
+                # Make create_task return an awaitable mock (Future)
+                mock_worker_task = asyncio.Future()
+                mock_worker_task.set_result(None) # Make it completed so await finishes
+                
+                # Replace cancel with a MagicMock
+                mock_worker_task.cancel = MagicMock()
+                
+                mock_create_task.return_value = mock_worker_task
 
                 await start_scheduler(job_registry)
                 
@@ -62,6 +76,12 @@ async def test_start_scheduler_registers_jobs(mock_config):
 
                 # Verification
                 assert scheduler_instance.add_job.call_count == 2
+                
+                # Check queue creation
+                MockQueue.assert_called_once()
+                
+                # Check worker startup
+                mock_create_task.assert_called_once()
                 
                 # Verify triggers
                 calls = scheduler_instance.add_job.call_args_list
@@ -72,8 +92,6 @@ async def test_start_scheduler_registers_jobs(mock_config):
                 trigger_a = job_a_call.kwargs['trigger']
                 assert isinstance(trigger_a, CronTrigger)
                 assert "minute='*/10'" in str(trigger_a) 
-                # assert trigger timezone. APScheduler converts string to tzinfo.
-                # checking str(trigger_a.timezone) should be enough or str(trigger_a) contains 'America/New_York'
                 assert str(trigger_a.timezone) == 'America/New_York'
 
                 # Check job_b (0 0 * * *)
@@ -87,17 +105,91 @@ async def test_start_scheduler_registers_jobs(mock_config):
             scheduler_instance.shutdown.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_create_job_callback():
+async def test_create_enqueue_callback():
+    mock_queue = AsyncMock()
     mock_job_cls = MagicMock()
     mock_job_cls.__name__ = "TestJob"
-    mock_instance = AsyncMock()
-    mock_job_cls.return_value = mock_instance
     
-    callback = _create_job_callback(mock_job_cls)
+    callback = _create_enqueue_callback(mock_queue, mock_job_cls, "test_job")
     await callback()
     
-    mock_job_cls.assert_called_once()
-    mock_instance.run.assert_called_once()
+    # Check that it put something in the queue
+    mock_queue.put.assert_called_once()
+    args = mock_queue.put.call_args[0][0]
+    # args should be (func, job_name)
+    assert args[1] == "test_job"
+    assert callable(args[0])
+
+
+@pytest.mark.asyncio
+async def test_worker():
+    mock_queue = MagicMock()
+    # Configure get to be async
+    mock_queue.get = AsyncMock()
+    mock_job_func = AsyncMock()
+    
+    # Setup queue to return one job then block or cancel
+    # We can throw CancelledError on the second get() to stop the worker
+    mock_queue.get.side_effect = [
+        (mock_job_func, "test_job"),
+        asyncio.CancelledError
+    ]
+    
+    try:
+        await _worker(mock_queue)
+    except asyncio.CancelledError:
+        pass
+        
+    
+    mock_job_func.assert_called_once()
+    mock_queue.task_done.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_worker_processes_two_jobs_same_type():
+    mock_queue = MagicMock()
+    mock_queue.get = AsyncMock()
+    mock_job_func = AsyncMock()
+
+    # Same job function twice
+    mock_queue.get.side_effect = [
+        (mock_job_func, "duplicate_job"),
+        (mock_job_func, "duplicate_job"),
+        asyncio.CancelledError
+    ]
+
+    try:
+        await _worker(mock_queue)
+    except asyncio.CancelledError:
+        pass
+
+    assert mock_job_func.await_count == 2
+    assert mock_queue.task_done.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_processes_multiple_jobs_different_types():
+    mock_queue = MagicMock()
+    mock_queue.get = AsyncMock()
+    
+    # We need mock functions that we can track being awaited
+    mock_job_a = AsyncMock()
+    mock_job_b = AsyncMock()
+
+    mock_queue.get.side_effect = [
+        (mock_job_a, "job_a"),
+        (mock_job_b, "job_b"),
+        asyncio.CancelledError
+    ]
+
+    try:
+        await _worker(mock_queue)
+    except asyncio.CancelledError:
+        pass
+
+    mock_job_a.assert_awaited_once()
+    mock_job_b.assert_awaited_once()
+    assert mock_queue.task_done.call_count == 2
 
 
 @pytest.mark.asyncio
