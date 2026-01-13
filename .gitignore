@@ -3,3 +3,5 @@ venv-radar/
 venv*
 output_radar/
 RMA*
+.venv
+__pycache__/
