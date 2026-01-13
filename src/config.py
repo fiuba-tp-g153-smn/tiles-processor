@@ -28,6 +28,7 @@ class Config:
     
     # Paths
     TMP_DIR: str = os.getenv("TMP_DIR_CONTAINER", ".tmp")
+    MAX_TMP_DIR_SIZE_BYTES: int = 10 * 1024 * 1024 * 1024  # 10 GB
 
     @classmethod
     def get_job_schedules(cls) -> Dict[str, str]:

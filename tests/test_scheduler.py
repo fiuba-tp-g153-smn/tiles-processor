@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, AsyncMock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 import pytest
-from scheduler import start_scheduler, _create_job_callback
+from scheduler import start_scheduler, _create_job_callback, _run_job
 
 # Config mock needs to be applied before importing/running scheduler.start_scheduler
 # but start_scheduler imports config.
@@ -98,3 +98,29 @@ async def test_create_job_callback():
     
     mock_job_cls.assert_called_once()
     mock_instance.run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_job_respects_size_limit(mock_config):
+    # Setup
+    mock_job_cls = MagicMock()
+    mock_job_cls.__name__ = "TestJob"
+    mock_instance = AsyncMock()
+    mock_job_cls.return_value = mock_instance
+
+    # Mock _get_directory_size
+    with mock.patch('scheduler._get_directory_size') as mock_get_size:
+        # Mock config values
+        with mock.patch('scheduler.config.MAX_TMP_DIR_SIZE_BYTES', 1000):
+            
+            # Case 1: Size OK (500 < 1000)
+            mock_get_size.return_value = 500
+            await _run_job(mock_job_cls)
+            mock_instance.run.assert_called()
+            mock_instance.run.reset_mock()
+
+            # Case 2: Size Exceeded (1500 > 1000)
+            mock_get_size.return_value = 1500
+            await _run_job(mock_job_cls)
+            mock_instance.run.assert_not_called()
+

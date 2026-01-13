@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from pathlib import Path
 from datetime import timezone
 from typing import Dict, Type
 
@@ -11,10 +13,36 @@ from config import config
 logger = logging.getLogger(__name__)
 
 
+def _get_directory_size(path: Path) -> int:
+    """Calculate the total size of a directory in bytes."""
+    total_size = 0
+    if not path.exists():
+        return 0
+    for dirpath, _, filenames in os.walk(path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            # skip if it is symbolic link
+            if not os.path.islink(fp):
+                total_size += os.path.getsize(fp)
+    return total_size
+
+
 async def _run_job(job_cls):
     """
     Generic runner for any job class that has a .run() coroutine.
     """
+    # Check tmp dir size
+    tmp_path = Path.cwd() / config.TMP_DIR
+    current_size = _get_directory_size(tmp_path)
+    
+    if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
+        logger.error(
+            f"Job {job_cls.__name__} cancelled. "
+            f"Temporary directory {tmp_path} size ({current_size / (1024**3):.2f} GB) "
+            f"exceeds limit ({config.MAX_TMP_DIR_SIZE_BYTES / (1024**3):.2f} GB)."
+        )
+        return
+
     try:
         job = job_cls()
         logger.info(f"Starting job: {job_cls.__name__}")
