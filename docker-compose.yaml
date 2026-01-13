@@ -8,4 +8,4 @@ services:
     volumes:
       - ./.tmp:/app/.tmp
     # Options: process_band_13 or process_band_9
-    command: python3 src/main.py process_band_9
+    command: python3 src/main.py process_band_13

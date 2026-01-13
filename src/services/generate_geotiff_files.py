@@ -24,64 +24,44 @@ class GenerateGeoTIFFFilesService:
     }
 
     # Paleta para Canal 9 - Water Vapor (Vapor de Agua Niveles Medios)
-    # Escala: -90°C (183.15K) a +50°C (323.15K)
-    # EXACTAMENTE según SMN: amarillo → verde → cyan → azul → violeta → rojo → naranja → marrón → GRIS
-    WATER_VAPOR_PALETTE = [
-        # -90°C a -85°C: Amarillo brillante (muy raro) (índices 0-8)
-        "#ffff00", "#fffc00", "#fff900", "#fff600", "#fff300", "#fff000", "#ffed00", "#ffea00",
-        "#ffe700",
-        # -85°C a -75°C: Verde brillante (índices 9-26)
-        "#e0ff00", "#d0ff00", "#c0ff00", "#b0ff00", "#a0ff00", "#90ff00", "#80ff00", "#70ff00",
-        "#60ff00", "#50ff00", "#40ff00", "#30ff00", "#20ff00", "#10ff00", "#00ff00", "#00ff10",
-        "#00ff20", "#00ff30",
-        # -75°C a -65°C: Verde a cyan (índices 27-44)
-        "#00ff40", "#00ff50", "#00ff60", "#00ff70", "#00ff80", "#00ff90", "#00ffa0", "#00ffb0",
-        "#00ffc0", "#00ffd0", "#00ffe0", "#00fff0", "#00ffff", "#00f0ff", "#00e0ff", "#00d0ff",
-        "#00c0ff", "#00b0ff",
-        # -65°C a -55°C: Cyan a azul claro (índices 45-62)
-        "#00a0ff", "#0090ff", "#0080ff", "#0070ff", "#0060ff", "#0050ff", "#0040ff", "#0030ff",
-        "#0020ff", "#0010ff", "#0000ff", "#1010ff", "#2020ff", "#3030ff", "#4040ff", "#5050ff",
-        "#6060ff", "#7070ff",
-        # -55°C a -45°C: Azul a azul oscuro (índices 63-80)
-        "#6060f0", "#5555e5", "#4a4ad0", "#4040c0", "#3535b0", "#2a2aa0", "#202090", "#151580",
-        "#101070", "#0a0a60", "#050550", "#000050", "#000048", "#000040", "#000038", "#000030",
-        "#000538", "#000a40",
-        # -45°C a -35°C: Azul oscuro a violeta (índices 81-98)
-        "#000f48", "#001450", "#051958", "#0a1e60", "#0f2368", "#142870", "#192d78", "#1e3280",
-        "#233788", "#283c90", "#2d4198", "#3246a0", "#5050a8", "#6060b0", "#7070b8", "#8080c0",
-        "#9090c8", "#a000a0",
-        # -35°C a -25°C: Violeta a rojo oscuro (índices 99-116)
-        "#950095", "#8a008a", "#800080", "#750075", "#6a006a", "#600060", "#550555", "#500a50",
-        "#4b0f4b", "#461446", "#411941", "#3c1e3c", "#372337", "#322832", "#2d2d2d", "#282020",
-        "#401010", "#500000",
-        # -25°C a -15°C: Rojo oscuro a rojo (índices 117-134)
-        "#600000", "#700000", "#800000", "#900000", "#a00000", "#b00000", "#c00000", "#d00000",
-        "#e00000", "#f00000", "#ff0000", "#ff0a00", "#ff1400", "#ff1e00", "#ff2800", "#ff3200",
-        "#ff3c00", "#ff4600",
-        # -15°C a -5°C: Rojo a naranja (índices 135-152)
-        "#ff5000", "#ff5a00", "#ff6400", "#ff6e00", "#ff7800", "#ff8200", "#ff8c00", "#ff9600",
-        "#ffa000", "#ffaa00", "#ffb400", "#ffbe00", "#ffc800", "#ffd200", "#ffdc00", "#ffe600",
-        "#fff000", "#fffa00",
-        # -5°C a 5°C: Naranja a marrón (índices 153-170)
-        "#f0e600", "#e0d200", "#d0be00", "#c0aa00", "#b09600", "#a08200", "#906e00", "#805a00",
-        "#704600", "#603200", "#503c32", "#404640", "#30504e", "#285a5a", "#206060", "#186666",
-        "#106c6c", "#087272",
-        # 5°C a 15°C: Marrón-verde a gris oscuro (índices 171-188)
-        "#107878", "#187e7e", "#208484", "#288a8a", "#309090", "#389696", "#409c9c", "#48a2a2",
-        "#50a8a8", "#58aeae", "#606060", "#606060", "#606060", "#626262", "#646464", "#666666",
-        "#686868", "#6a6a6a",
-        # 15°C a 30°C: Gris (LA MAYORÍA) (índices 189-224)
-        "#6c6c6c", "#6e6e6e", "#707070", "#727272", "#747474", "#767676", "#787878", "#7a7a7a",
-        "#7c7c7c", "#7e7e7e", "#808080", "#828282", "#848484", "#868686", "#888888", "#8a8a8a",
-        "#8c8c8c", "#8e8e8e", "#909090", "#929292", "#949494", "#969696", "#989898", "#9a9a9a",
-        "#9c9c9c", "#9e9e9e", "#a0a0a0", "#a2a2a2", "#a4a4a4", "#a6a6a6", "#a8a8a8", "#aaaaaa",
-        "#acacac", "#aeaeae", "#b0b0b0", "#b2b2b2",
-        # 30°C a 50°C: Gris claro a blanco (índices 225-255)
-        "#b4b4b4", "#b6b6b6", "#b8b8b8", "#bababa", "#bcbcbc", "#bebebe", "#c0c0c0", "#c2c2c2",
-        "#c4c4c4", "#c6c6c6", "#c8c8c8", "#cacaca", "#cccccc", "#cecece", "#d0d0d0", "#d2d2d2",
-        "#d4d4d4", "#d6d6d6", "#d8d8d8", "#dadada", "#dcdcdc", "#dedede", "#e0e0e0", "#e2e2e2",
-        "#e4e4e4", "#e6e6e6", "#e8e8e8", "#eaeaea", "#ececec", "#eeeeee", "#f0f0f0",
+    # Colores apagados estilo SMN: bordó → naranja → gris claro → gris oscuro → azul medio
+    WATER_VAPOR_PALETTE_BASE = [
+        # Muy seco/frío alto - bordó oscuro a rojo apagado
+        "#400000", "#500000", "#600000", "#700000", "#800000", "#8b0000",
+        "#900000", "#a00000", "#a52a2a", "#b22222",
+        
+        # Transición a naranja/marrón (no amarillo brillante)
+        "#c04000", "#d04000", "#d05000", "#d06000", "#e06000", 
+        "#e07000", "#f07000", "#f08000", "#ff8c00", "#ffa500",
+        
+        # Naranja claro a beige/gris cálido
+        "#ffb366", "#ffc080", "#ffcc99", "#e6d5b8", "#d9c7a8",
+        "#ccb899", "#bfaa88", "#b39b77",
+        
+        # Grises claros (zonas intermedias)
+        "#d3d3d3", "#c0c0c0", "#b0b0b0", "#a8a8a8", "#a0a0a0",
+        "#989898", "#909090", "#888888",
+        
+        # Grises medios/oscuros (más húmedo)
+        "#808080", "#787878", "#707070", "#686868", "#606060",
+        "#585858", "#505050", "#484848",
+        
+        # Azul grisáceo (húmedo) - NO cyan brillante
+        "#4a5a6a", "#3f5266", "#354a60", "#2b4257", "#213a4e",
+        
+        # Azul medio apagado (muy húmedo)
+        "#1c3a52", "#183654", "#143256", "#102e58", "#0c2a5a",
+        "#08265c", "#04225e", "#001e60",
     ]
+
+    @staticmethod
+    def _expand_palette_to_256(palette):
+        import numpy as np
+        idx = np.linspace(0, len(palette) - 1, 256).astype(int)
+        return [palette[i] for i in idx]
+
+    # Invertir la paleta para que coincida con la referencia del SMN
+    WATER_VAPOR_PALETTE = _expand_palette_to_256(WATER_VAPOR_PALETTE_BASE[::-1])
 
     # Paleta para Canal 13 - Cloud Tops (Topes Nubosos)
     CLOUD_TOPS_PALETTE = [

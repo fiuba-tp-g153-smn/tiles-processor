@@ -38,4 +38,4 @@ COPY README.md ./
 ENV PYTHONPATH=/app/src
 
 # Default command
-CMD ["python3", "src/main.py", "process_band_9"]
+CMD ["python3", "src/main.py", "process_band_13"]
