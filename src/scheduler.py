@@ -77,12 +77,3 @@ def _create_job_callback(job_cls):
     # Set a nice name for debugging
     run_specific_job.__name__ = f"run_{job_cls.__name__}"
     return run_specific_job
-
-
-# def run_forever_blocking(job_registry: Dict[str, Type]):
-#     """Helper to run the scheduler from a sync context (keeps the event loop running)."""
-#     loop = asyncio.get_event_loop()
-#     try:
-#         loop.run_until_complete(start_scheduler(job_registry))
-#     except (KeyboardInterrupt, SystemExit):
-#         pass

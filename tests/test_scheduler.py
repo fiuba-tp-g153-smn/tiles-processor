@@ -1,0 +1,95 @@
+import asyncio
+import sys
+import os
+from unittest import mock
+from unittest.mock import MagicMock, AsyncMock
+
+# Ensure src is in python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+
+import pytest
+from scheduler import start_scheduler, _create_job_callback
+
+# Config mock needs to be applied before importing/running scheduler.start_scheduler
+# but start_scheduler imports config.
+# We can mock `config.config.get_job_schedules`
+
+@pytest.fixture
+def mock_config():
+    with mock.patch('scheduler.config.get_job_schedules') as mock_get:
+        yield mock_get
+
+@pytest.mark.asyncio
+async def test_start_scheduler_registers_jobs(mock_config):
+    # Setup
+    mock_config.return_value = {
+        "job_a": "*/10 * * * *",
+        "job_b": "0 0 * * *"
+    }
+    
+    mock_job_a = MagicMock()
+    mock_job_a.__name__ = "JobA"
+    mock_job_b = MagicMock()
+    mock_job_b.__name__ = "JobB"
+    
+    job_registry = {
+        "job_a": mock_job_a,
+        "job_b": mock_job_b
+    }
+
+    # Mock APScheduler
+    with mock.patch('scheduler.AsyncIOScheduler') as MockScheduler:
+        scheduler_instance = MockScheduler.return_value
+        scheduler_instance.start = MagicMock()
+        scheduler_instance.shutdown = MagicMock()
+        scheduler_instance.get_jobs.return_value = [1, 2] # just for the logging count
+
+        # We need to interrupt the infinite wait in start_scheduler
+        # start_scheduler waits on `stop_event.wait()`
+        # We can mock asyncio.Event to return immediately or throw CancelledError
+        
+        with mock.patch('asyncio.Event') as MockEvent:
+            event_instance = MockEvent.return_value
+            # Make wait() raise CancelledError immediately to exit the loop
+            event_instance.wait = AsyncMock(side_effect=asyncio.CancelledError)
+
+            await start_scheduler(job_registry)
+
+            # Verification
+            assert scheduler_instance.add_job.call_count == 2
+            
+            # Verify triggers
+            calls = scheduler_instance.add_job.call_args_list
+            from apscheduler.triggers.cron import CronTrigger
+            
+            # Check job_a (*/10 * * * *)
+            job_a_call = next(c for c in calls if c.kwargs['id'] == 'job_a')
+            trigger_a = job_a_call.kwargs['trigger']
+            assert isinstance(trigger_a, CronTrigger)
+            # APScheduler 3.x CronTrigger fields are objects, we can check string representation or specific fields
+            # For "*/10 * * * *", minute should be a specific expression
+            # Use str(trigger) or check fields if accessible. 
+            # str(CronTrigger) usually gives the readable form.
+            assert "minute='*/10'" in str(trigger_a) 
+
+            # Check job_b (0 0 * * *)
+            job_b_call = next(c for c in calls if c.kwargs['id'] == 'job_b')
+            trigger_b = job_b_call.kwargs['trigger']
+            assert isinstance(trigger_b, CronTrigger)
+            assert "hour='0', minute='0'" in str(trigger_b)
+            
+            scheduler_instance.start.assert_called_once()
+            scheduler_instance.shutdown.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_create_job_callback():
+    mock_job_cls = MagicMock()
+    mock_job_cls.__name__ = "TestJob"
+    mock_instance = AsyncMock()
+    mock_job_cls.return_value = mock_instance
+    
+    callback = _create_job_callback(mock_job_cls)
+    await callback()
+    
+    mock_job_cls.assert_called_once()
+    mock_instance.run.assert_called_once()

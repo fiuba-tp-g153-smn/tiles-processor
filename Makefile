@@ -4,11 +4,11 @@
 .PHONY: up install
 
 up:
-	docker compose -f docker-compose-dev.yml up --build
+	docker compose -f docker-compose-dev.yaml up --build
 
 down:
 	docker compose down
-	docker compose -f docker-compose-dev.yml down --remove-orphans
+	docker compose -f docker-compose-dev.yaml down --remove-orphans
 
 prod:
 	docker compose up --build

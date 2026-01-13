@@ -26,25 +26,20 @@ async def main():
 
     job_name = sys.argv[1]
 
-    # Start scheduler mode
+    target_jobs = {}
     if job_name == "scheduler":
-        logger.info("Starting scheduler mode")
-        await start_scheduler(AVAILABLE_JOBS)
-        return
+        logger.info("Starting scheduler mode for ALL jobs")
+        target_jobs = AVAILABLE_JOBS
+    else:
+        job_class = AVAILABLE_JOBS.get(job_name)
+        if not job_class:
+            logger.error(f"Job '{job_name}' not found. Available jobs: {list(AVAILABLE_JOBS.keys())}")
+            return
+        
+        logger.info(f"Starting scheduler mode for SINGLE job: {job_name}")
+        target_jobs = {job_name: job_class}
 
-    # Run a specific job immediately (one-off)
-    job_class = AVAILABLE_JOBS.get(job_name)
-    if not job_class:
-        logger.error(f"Job '{job_name}' not found. Available jobs: {list(AVAILABLE_JOBS.keys())}")
-        return
-
-    logger.info(f"Running manual job: {job_name}")
-    job_instance = job_class()
-    try:
-        await job_instance.run()
-        logger.info(f"Manual job '{job_name}' completed successfully.")
-    except Exception:
-        logger.exception(f"Manual job '{job_name}' failed.")
+    await start_scheduler(target_jobs)
 
 
 if __name__ == "__main__":
