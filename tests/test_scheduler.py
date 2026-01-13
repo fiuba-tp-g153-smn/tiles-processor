@@ -51,14 +51,22 @@ async def test_start_scheduler_registers_jobs(mock_config):
             # We can mock asyncio.Event to return immediately or throw CancelledError
             
             # Mock asyncio.Queue and create_task
+            
+            # Define plain worker func to avoid Mock return values (which might be misinterpreted)
+            def simple_worker(queue):
+                return None
+
             with mock.patch('asyncio.Queue') as MockQueue, \
                  mock.patch('asyncio.create_task') as mock_create_task, \
+                 mock.patch('scheduler._worker', side_effect=simple_worker) as mock_worker, \
                  mock.patch('asyncio.Event') as MockEvent:
                 
                 queue_instance = MockQueue.return_value
                 event_instance = MockEvent.return_value
-                # Make wait() raise CancelledError immediately to exit the loop
-                event_instance.wait = AsyncMock(side_effect=asyncio.CancelledError)
+                
+                async def wait():
+                    return True
+                event_instance.wait = wait
 
                 # Make create_task return an awaitable mock (Future)
                 mock_worker_task = asyncio.Future()
@@ -195,11 +203,18 @@ async def test_worker_processes_multiple_jobs_different_types():
 @pytest.mark.asyncio
 async def test_run_job_respects_size_limit(mock_config):
     # Setup
-    mock_job_cls = MagicMock()
-    mock_job_cls.__name__ = "TestJob"
-    mock_instance = AsyncMock()
-    mock_job_cls.return_value = mock_instance
+    mock_instance = MagicMock()
+    call_tracker = MagicMock()
+    
+    async def run_job():
+        call_tracker()
+        
+    mock_instance.run = run_job
 
+    def mock_job_cls():
+        return mock_instance
+    mock_job_cls.__name__ = "TestJob"
+    
     # Mock _get_directory_size
     with mock.patch('scheduler._get_directory_size') as mock_get_size:
         # Mock config values
@@ -208,11 +223,11 @@ async def test_run_job_respects_size_limit(mock_config):
             # Case 1: Size OK (500 < 1000)
             mock_get_size.return_value = 500
             await _run_job(mock_job_cls)
-            mock_instance.run.assert_called()
-            mock_instance.run.reset_mock()
+            call_tracker.assert_called_once()
+            call_tracker.reset_mock()
 
             # Case 2: Size Exceeded (1500 > 1000)
             mock_get_size.return_value = 1500
             await _run_job(mock_job_cls)
-            mock_instance.run.assert_not_called()
+            call_tracker.assert_not_called()
 

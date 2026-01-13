@@ -64,7 +64,8 @@ async def _worker(queue: asyncio.Queue):
             # It's safer to check it right before execution in case the queue is long
             # But the _run_job already has the check.
             # We just need to call the function.
-            logger.info("Worker picked up job: %s", job_name)
+            remaining = queue.qsize()
+            logger.info("Worker picked up job: %s. Queue size: %d pending jobs.", job_name, remaining)
             await job_func()
         except Exception:
             logger.exception("Worker failed to process job: %s", job_name)
