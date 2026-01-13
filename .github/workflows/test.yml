@@ -25,7 +25,7 @@ jobs:
       run: pip install poetry &&  poetry config virtualenvs.create false
 
     - name: Install dependencies
-      run: poetry install
+      run: poetry install --no-root --no-ansi
 
     - name: Create reports directory
       run: mkdir -p reports
