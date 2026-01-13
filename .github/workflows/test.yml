@@ -19,7 +19,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.13.8'
+        python-version: '3.12.3'
 
     - name: Setup Poetry
       run: pip install poetry &&  poetry config virtualenvs.create false
