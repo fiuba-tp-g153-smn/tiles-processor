@@ -24,7 +24,7 @@ async def _run_job(job_cls):
         logger.exception("Job %s failed", job_cls.__name__)
 
 
-async def start_scheduler(job_registry: Dict[str, Type]):
+async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Event = None):
     """
     Start APScheduler with jobs defined in the registry.
     Schedules are pulled from config.py based on the job name.
@@ -57,7 +57,8 @@ async def start_scheduler(job_registry: Dict[str, Type]):
     scheduler.start()
 
     # Keep the scheduler running until cancelled
-    stop_event = asyncio.Event()
+    if stop_event is None:
+        stop_event = asyncio.Event()
 
     try:
         await stop_event.wait()

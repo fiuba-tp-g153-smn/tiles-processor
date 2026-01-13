@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+import signal
 
 from config import config
 from logging_config import setup_logging
@@ -39,11 +40,25 @@ async def main():
         logger.info(f"Starting scheduler mode for SINGLE job: {job_name}")
         target_jobs = {job_name: job_class}
 
-    await start_scheduler(target_jobs)
+    
+    # Graceful shutdown setup
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
 
+    def handle_signal(sig):
+        logger.info(f"Received exit signal {sig.name}...")
+        stop_event.set()
+        # Optionally, we could cancel tasks here if stop_event.wait() wasn't enough,
+        # but stop_event is what start_scheduler waits on.
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda s=sig: handle_signal(s))
+
+    await start_scheduler(target_jobs, stop_event=stop_event)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    except (KeyboardInterrupt, SystemExit):
+        pass # Handle any remaining interrupt that might bubble up if strictly synchronous code ran
+
