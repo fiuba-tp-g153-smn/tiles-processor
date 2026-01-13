@@ -8,3 +8,5 @@ __pycache__/
 .env
 *.zip
 *.tar.gz
+.coverage
+reports/

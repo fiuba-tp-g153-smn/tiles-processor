@@ -14,8 +14,4 @@ prod:
 	docker compose up --build
 
 test:
-	BAND_13_SCHEDULE_CRON="*/10 * * * *" \
-	BAND_9_SCHEDULE_CRON="*/10 * * * *" \
-	TZ="UTC" \
-	TMP_DIR=".tmp" \
-	.venv/bin/pytest tests
+	pytest tests/ -m "not skip" --color=yes --junitxml=reports/junit_report.xml --cov=src --cov-report term --cov-report html:reports/coverage -W ignore::DeprecationWarning
