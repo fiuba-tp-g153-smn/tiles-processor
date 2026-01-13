@@ -4,6 +4,7 @@ import sys
 import time
 
 from jobs.process_band_13_job import ProcessBand13Job
+from jobs.process_band_9_job import ProcessBand9Job
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,6 +15,7 @@ logging.Formatter.converter = time.gmtime
 
 AVAILABLE_JOBS = {
     "process_band_13": ProcessBand13Job,
+    "process_band_9": ProcessBand9Job,
 }
 
 

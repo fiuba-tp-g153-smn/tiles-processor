@@ -1,6 +1,6 @@
-import logging
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
+import logging
 
 from constants import constants
 from clients import s3_client
@@ -14,11 +14,11 @@ from services.setup_goes_georreferencing import SetupGOESGeorreferencingService
 logger = logging.getLogger(__name__)
 
 
-class ProcessBand13Job:
+class ProcessBand9Job:
     def __init__(self):
         self._bucket_name = constants.GOES19_BUCKET_NAME
         self._l1b_products_path = "ABI-L1b-RadF"
-        self._product_base_file_pattern = "C13_G19"
+        self._product_base_file_pattern = "C09_G19"
         self._s3_client = s3_client.S3Client(
             self._bucket_name, max_concurrent_downloads=6
         )
@@ -38,18 +38,18 @@ class ProcessBand13Job:
         ).run()
         logger.info("Brightness temperature computation completed.")
 
-        geotiff_output_dir = Path.cwd() / ".tmp" / "band_13" / "geotiff"
+        geotiff_output_dir = Path.cwd() / ".tmp" / "band_9" / "geotiff"
         geotiff_files = await GenerateGeoTIFFFilesService(
             brightness_temperature_data,
             geotiff_output_dir,
-            color_palette=GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE,
-            vmin=183.15,
-            vmax=323.15,
-            product_name="Cloud_Tops",
+            color_palette=GenerateGeoTIFFFilesService.WATER_VAPOR_PALETTE,
+            vmin=183.15,  # -90°C en Kelvin
+            vmax=323.15,  # +50°C en Kelvin
+            product_name="Water_Vapor",
         ).run()
         logger.info("GeoTIFF generation completed.")
 
-        tiles_output_dir = Path.cwd() / ".tmp" / "band_13" / "tiles"
+        tiles_output_dir = Path.cwd() / ".tmp" / "band_9" / "tiles"
         await GenerateTilesService(geotiff_files, tiles_output_dir).run()
         logger.info("Tiles generation completed.")
 
@@ -91,8 +91,8 @@ class ProcessBand13Job:
                     logger.info(f"Need {files_still_needed} files, filtering minutes >= {min_minute}")
                     
                     def minute_filter(file_path: str) -> bool:
-                        file_minute = self._extract_minute_from_filename(file_path)
-                        return file_minute is not None and file_minute >= min_minute
+                        minute = self._extract_minute_from_filename(file_path)
+                        return minute is not None and minute >= min_minute
                     
                     hour_files = await self._s3_client.download_folder(
                         search_path,
@@ -126,7 +126,7 @@ class ProcessBand13Job:
     def _extract_minute_from_filename(self, file_path: str) -> int | None:
         """
         Extrae el minuto del nombre del archivo GOES.
-        Formato típico: OR_ABI-L1b-RadF-M6C13_G19_sYYYYJJJHHMMSSS...
+        Formato típico: OR_ABI-L1b-RadF-M6C09_G19_sYYYYJJJHHMMSSS...
         El timestamp de inicio está después de '_s'
         Formato: YYYY (4) + JJJ (3) + HH (2) + MM (2) + SSS (3) = 14 caracteres
         """
