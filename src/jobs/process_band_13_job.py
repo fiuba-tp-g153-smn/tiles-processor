@@ -3,6 +3,7 @@ from datetime import datetime, UTC, timedelta
 from pathlib import Path
 
 from constants import constants
+from config import config
 from clients import s3_client
 from services.compute_brightness_temperatures import (
     ComputeBrightnessTemperaturesService,
@@ -38,7 +39,7 @@ class ProcessBand13Job:
         ).run()
         logger.info("Brightness temperature computation completed.")
 
-        geotiff_output_dir = Path.cwd() / ".tmp" / "band_13" / "geotiff"
+        geotiff_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "geotiff"
         geotiff_files = await GenerateGeoTIFFFilesService(
             brightness_temperature_data,
             geotiff_output_dir,
@@ -49,7 +50,7 @@ class ProcessBand13Job:
         ).run()
         logger.info("GeoTIFF generation completed.")
 
-        tiles_output_dir = Path.cwd() / ".tmp" / "band_13" / "tiles"
+        tiles_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "tiles"
         await GenerateTilesService(geotiff_files, tiles_output_dir).run()
         logger.info("Tiles generation completed.")
 

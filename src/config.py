@@ -25,6 +25,9 @@ class Config:
     #   "0 0 1,15 * *"  -> On the 1st and 15th of every month at 00:00 UTC
     BAND_13_SCHEDULE_CRON: str = get_required_env("BAND_13_SCHEDULE_CRON")
     BAND_9_SCHEDULE_CRON: str = get_required_env("BAND_9_SCHEDULE_CRON")
+    
+    # Paths
+    TMP_DIR: str = os.getenv("TMP_DIR_CONTAINER", ".tmp")
 
     @classmethod
     def get_job_schedules(cls) -> Dict[str, str]:
@@ -32,5 +35,17 @@ class Config:
             "process_band_13": cls.BAND_13_SCHEDULE_CRON,
             "process_band_9": cls.BAND_9_SCHEDULE_CRON,
         }
+
+    @classmethod
+    def log_config(cls):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("=== Configuration ===")
+        logger.info(f"LOG_LEVEL: {cls.LOG_LEVEL}")
+        logger.info(f"TIMEZONE: {cls.TIMEZONE}")
+        logger.info(f"BAND_13_SCHEDULE_CRON: {cls.BAND_13_SCHEDULE_CRON}")
+        logger.info(f"BAND_9_SCHEDULE_CRON: {cls.BAND_9_SCHEDULE_CRON}")
+        logger.info(f"TMP_DIR: {cls.TMP_DIR}")
+        logger.info("=====================")
 
 config = Config()

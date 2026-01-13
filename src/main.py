@@ -21,6 +21,8 @@ async def main():
     setup_logging(log_level=config.LOG_LEVEL)
     logger = logging.getLogger(__name__)
 
+    config.log_config()
+
     if len(sys.argv) < 2:
         logger.error("Usage: python3 ./src/main.py <job_name|scheduler>")
         return
