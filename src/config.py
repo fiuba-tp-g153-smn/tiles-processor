@@ -35,6 +35,23 @@ class Config:
     TMP_DIR: str = os.getenv("TMP_DIR_CONTAINER", ".tmp")
     MAX_TMP_DIR_SIZE_BYTES: int = 10 * 1024 * 1024 * 1024  # 10 GB
 
+    # Bounding box for clipping satellite imagery (defaults to Argentina region)
+    # Coordinates are in EPSG:4326 (longitude/latitude)
+    BOUNDS_MINX: float = float(os.getenv("BOUNDS_MINX", "-90.0"))   # West longitude
+    BOUNDS_MINY: float = float(os.getenv("BOUNDS_MINY", "-60.0"))   # South latitude
+    BOUNDS_MAXX: float = float(os.getenv("BOUNDS_MAXX", "-30.0"))   # East longitude
+    BOUNDS_MAXY: float = float(os.getenv("BOUNDS_MAXY", "-15.0"))   # North latitude
+
+    @classmethod
+    def get_bounds(cls) -> Dict[str, float]:
+        """Get the bounding box configuration for clipping."""
+        return {
+            "minx": cls.BOUNDS_MINX,
+            "miny": cls.BOUNDS_MINY,
+            "maxx": cls.BOUNDS_MAXX,
+            "maxy": cls.BOUNDS_MAXY,
+        }
+
     @classmethod
     def get_job_schedules(cls) -> Dict[str, str]:
         return {

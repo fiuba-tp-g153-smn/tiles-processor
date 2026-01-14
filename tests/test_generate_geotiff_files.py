@@ -175,7 +175,7 @@ class TestGenerateGeoTIFFService:
         assert service._color_palette == custom_palette
 
     def test_default_bounds_structure(self):
-        """Test that DEFAULT_BOUNDS has correct structure."""
+        """Test that DEFAULT_BOUNDS constant has correct structure."""
         bounds = GenerateGeoTIFFFilesService.DEFAULT_BOUNDS
 
         assert "minx" in bounds
@@ -183,11 +183,28 @@ class TestGenerateGeoTIFFService:
         assert "maxx" in bounds
         assert "maxy" in bounds
 
-        # Verify Argentina-region defaults
+        # Verify Argentina-region defaults in constant
         assert bounds["minx"] == -90.0
         assert bounds["miny"] == -60.0
         assert bounds["maxx"] == -30.0
         assert bounds["maxy"] == -15.0
+
+    def test_config_bounds_structure(self):
+        """Test that config.get_bounds() returns correct structure."""
+        from config import config
+
+        bounds = config.get_bounds()
+
+        assert "minx" in bounds
+        assert "miny" in bounds
+        assert "maxx" in bounds
+        assert "maxy" in bounds
+
+        # All values should be floats
+        assert isinstance(bounds["minx"], float)
+        assert isinstance(bounds["miny"], float)
+        assert isinstance(bounds["maxx"], float)
+        assert isinstance(bounds["maxy"], float)
 
     @pytest.mark.asyncio
     async def test_run_creates_output_directory(self, tmp_path):

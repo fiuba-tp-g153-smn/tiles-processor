@@ -9,6 +9,8 @@ import numpy as np
 import xarray as xr
 import rioxarray
 
+from config import config
+
 # Note: Ensure you have rioxarray installed to use the rio accessor
 
 logger = logging.getLogger(__name__)
@@ -137,12 +139,13 @@ class GenerateGeoTIFFFilesService:
         # Fix nodata value before clipping (original value is too large for float32)
         c13_reproj = c13_reproj.rio.write_nodata(np.nan, inplace=False)
 
-        # 2. Clip to Argentina bounds to reduce processing area
+        # 2. Clip to configured bounds to reduce processing area
+        bounds = config.get_bounds()
         c13_clipped = c13_reproj.rio.clip_box(
-            minx=self.DEFAULT_BOUNDS["minx"],
-            miny=self.DEFAULT_BOUNDS["miny"],
-            maxx=self.DEFAULT_BOUNDS["maxx"],
-            maxy=self.DEFAULT_BOUNDS["maxy"],
+            minx=bounds["minx"],
+            miny=bounds["miny"],
+            maxx=bounds["maxx"],
+            maxy=bounds["maxy"],
         )
 
         # Free memory from full reprojection
