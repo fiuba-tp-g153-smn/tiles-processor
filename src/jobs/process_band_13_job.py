@@ -32,6 +32,7 @@ Example GOES-19 filename:
     └── s20250141230210 = start time: 2025, day 014, 12:30:21.0 UTC
 """
 import logging
+from typing import Callable, Optional
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 
@@ -86,24 +87,31 @@ class ProcessBand13Job:
         # Prepare raw directory for caching downloads
         raw_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "raw"
         raw_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Prepare tiles directory to check for existing outputs
+        tiles_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "tiles"
+
+        def check_tiles_exist(s3_key: str) -> bool:
+            """Check if tiles already exist for the given S3 file."""
+            file_stem = Path(s3_key).stem
+            expected_tile_dir = tiles_output_dir / f"{file_stem}_tiles"
+            exists = expected_tile_dir.exists()
+            if exists:
+                logger.debug(f"Tiles exist for {s3_key}, skipping.")
+            return exists
 
         # Download files from the last hour (6 files)
-        downloaded_files = await self._download_last_hour_files(current_time, raw_output_dir)
+        # files that match 'check_tiles_exist' will return None as content
+        downloaded_files = await self._download_last_hour_files(
+            current_time, 
+            local_cache_dir=raw_output_dir,
+            skip_if=check_tiles_exist
+        )
         
-        # Filter out files that have already been processed
-        tiles_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "tiles"
-        files_to_process = {}
-
-        for file_path, content in downloaded_files.items():
-            # Derive the expected tile directory name from the input file stem
-            # Example: OR_ABI-L1b-RadF-M6C13_G19_s2026... -> OR_ABI-L1b-RadF-M6C13_G19_s2026..._tiles
-            file_stem = Path(file_path).stem
-            expected_tile_dir = tiles_output_dir / f"{file_stem}_tiles"
-
-            if expected_tile_dir.exists():
-                logger.info(f"Skipping {file_path}: Tiles already exist at {expected_tile_dir}")
-            else:
-                files_to_process[file_path] = content
+        # Filter only files that have content (new or not skipped)
+        files_to_process = {
+            k: v for k, v in downloaded_files.items() if v is not None
+        }
 
         if not files_to_process:
             logger.info("All files have already been processed. Nothing to do.")
@@ -115,6 +123,7 @@ class ProcessBand13Job:
             files_to_process
         ).run()
         logger.info("Georreferencing completed.")
+        
         brightness_temperature_data = await ComputeBrightnessTemperaturesService(
             georreferenced_data
         ).run()
@@ -133,8 +142,45 @@ class ProcessBand13Job:
 
         await GenerateTilesService(geotiff_files, tiles_output_dir).run()
         logger.info("Tiles generation completed.")
+        
+        # Cleanup old files (retention policy)
+        # We need to keep at least 24 images for the rolling window cache to work effective.
+        # Keeping 26 gives us a small buffer (25th and 26th oldest).
+        RETENTION_COUNT = 26
+        
+        logger.info(f"Running cleanup (keeping newest {RETENTION_COUNT} files)...")
+        self._cleanup_directory(raw_output_dir, "*.nc", RETENTION_COUNT)
+        self._cleanup_directory(geotiff_output_dir, "*.tif", RETENTION_COUNT)
 
-    async def _download_last_hour_files(self, current_time: datetime, local_cache_dir: Path) -> dict[str, bytes]:
+    def _cleanup_directory(self, directory: Path, pattern: str, keep_count: int):
+        """
+        Delete old files in a directory, keeping only the newest `keep_count`.
+        Files are sorted by name (which includes timestamp for GOES files).
+        """
+        if not directory.exists():
+            return
+
+        files = sorted(directory.glob(pattern))
+        
+        if len(files) <= keep_count:
+            return
+
+        # Identify files to delete (all except the last `keep_count`)
+        files_to_delete = files[:-keep_count]
+        
+        for file_path in files_to_delete:
+            try:
+                file_path.unlink()
+                logger.info(f"Cleanup: deleted old file {file_path.name}")
+            except Exception as e:
+                logger.warning(f"Cleanup: failed to delete {file_path}: {e}")
+
+    async def _download_last_hour_files(
+        self, 
+        current_time: datetime, 
+        local_cache_dir: Path,
+        skip_if: Callable[[str], bool] = None
+    ) -> dict[str, bytes]:
         """
         Download the last 24 images (4 hours of data, 1 image every 10 minutes).
         Example for 13:23 UTC:
@@ -162,6 +208,7 @@ class ProcessBand13Job:
                     search_path,
                     file_pattern=self._product_base_file_pattern,
                     local_cache_dir=local_cache_dir,
+                    skip_if=skip_if,
                 )
             else:
                 # Previous hours: filter by minutes if necessary
@@ -181,6 +228,7 @@ class ProcessBand13Job:
                         file_pattern=self._product_base_file_pattern,
                         file_filter=minute_filter,
                         local_cache_dir=local_cache_dir,
+                        skip_if=skip_if,
                     )
                 else:
                     # We need all files from this hour
@@ -188,6 +236,7 @@ class ProcessBand13Job:
                         search_path,
                         file_pattern=self._product_base_file_pattern,
                         local_cache_dir=local_cache_dir,
+                        skip_if=skip_if,
                     )
             
             all_files.update(hour_files)

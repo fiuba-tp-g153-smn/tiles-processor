@@ -77,7 +77,8 @@ class S3Client:
         file_pattern: str = "",
         file_filter: Callable[[str], bool] = None,
         local_cache_dir: Optional[Path] = None,
-    ) -> Dict[str, bytes]:
+        skip_if: Callable[[str], bool] = None,
+    ) -> Dict[str, Optional[bytes]]:
         """
         Download files from a folder.
 
@@ -86,6 +87,7 @@ class S3Client:
             file_pattern: Pattern to match in file names
             file_filter: Optional function to filter file paths before downloading
             local_cache_dir: Optional directory to check/store cached files
+            skip_if: Optional function to skip download if true (returns None for content)
         """
         file_paths = await self._get_folder_file_paths(folder_path, file_pattern)
         
@@ -99,9 +101,16 @@ class S3Client:
         files = {}
         files_to_download = []
 
-        # Check cache if enabled
-        if local_cache_dir:
-            for fp in file_paths:
+        # Check skip_if first (e.g., if tiles already exist)
+        # Then check cache if enabled
+        for fp in file_paths:
+            # Check if we should skip this file completely (e.g. output already exists)
+            if skip_if and skip_if(fp):
+                logger.info(f"Skipping download for {fp}: check condition met")
+                files[fp] = None
+                continue
+
+            if local_cache_dir:
                 file_name = Path(fp).name
                 cache_path = local_cache_dir / file_name
                 if cache_path.exists():
@@ -115,8 +124,8 @@ class S3Client:
                         files_to_download.append(fp)
                 else:
                     files_to_download.append(fp)
-        else:
-            files_to_download = file_paths
+            else:
+                files_to_download.append(fp)
 
         if not files_to_download:
             return files

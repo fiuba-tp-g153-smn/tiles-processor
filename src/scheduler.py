@@ -204,6 +204,11 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         executors=executors,
         timezone=config.TIMEZONE
     )
+    
+    # Start scheduler in paused state to load jobs from the database
+    # This allows scheduler.get_job() to correctly detect existing jobs
+    scheduler.start(paused=True)
+    
     schedules = config.get_job_schedules()
 
     logger.info("Using persistent job store at: %s", db_path)
@@ -248,8 +253,8 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         )
         logger.info("Scheduled job '%s' with cron '%s'", job_name, schedule_cron)
 
-    logger.info("Starting scheduler with %d jobs", len(scheduler.get_jobs()))
-    scheduler.start()
+    logger.info("Resuming scheduler with %d jobs", len(scheduler.get_jobs()))
+    scheduler.resume()
 
     try:
         await stop_event.wait()
