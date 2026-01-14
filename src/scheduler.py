@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from datetime import timezone
 from typing import Dict, Type
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler

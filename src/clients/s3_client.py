@@ -47,9 +47,9 @@ class S3Client:
                     return relative_file_path, content
             except Exception as e:
                 logger.warning(
-                    f"⚠ Attempt {attempt}/{retries} failed for {relative_file_path}: {str(e)}"
+                    f"⚠ Attempt {attempt + 1}/{retries} failed for {relative_file_path}: {str(e)}"
                 )
-                if attempt == retries:
+                if attempt == retries - 1:
                     logger.error(
                         f"✗ Error downloading {relative_file_path} after {retries} attempts. Ignoring file."
                     )
