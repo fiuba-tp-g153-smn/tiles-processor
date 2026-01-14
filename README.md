@@ -10,6 +10,13 @@ This project is a Python-based scheduler application designed to process GOES-19
 - **Job Management**:
     - **Queuing System**: Jobs are triggered by CRON schedules but are added to a processing queue. A background worker processes jobs sequentially to prevent resource overload.
     - **Feature Toggles**: Specific job types (Band 13, Band 9) can be enabled or disabled via configuration.
+    - **Smart Execution**:
+        - **Immediate First Run**: New deployments trigger a separate one-off execution immediately, then follow the recurring schedule.
+        - **Persistence**: Job state is saved to SQLite, ensuring the schedule survives application restarts.
+- **Optimized Processing**:
+    - **Smart Caching**: Checks local disk before downloading from S3.
+    - **Skip Logic**: Skips the entire processing pipeline if the final tiles already exist for a file.
+    - **Auto-Cleanup**: Automatically deletes raw `.nc` and intermediate `.tif` files, retaining only the last 26 images to minimize disk usage while maintaining an effective cache.
 - **Safety Limits**: Prevents job execution if the temporary directory size exceeds 10GB (`MAX_TMP_DIR_SIZE_BYTES`) to avoid disk overflow.
 - **Dockerized**: Fully containerized environment for easy deployment.
 - **Scheduler**: Uses `APScheduler` for precise job scheduling (cron-based).
@@ -27,7 +34,8 @@ Each job (Band 13 and Band 9) follows this processing pipeline:
    │  Downloads 24 images from NOAA's noaa-goes19 bucket
    │  Pattern: ABI-L1b-RadF/{YYYY}/{DDD}/{HH}/...C13_G19... (or C09_G19)
    │  Goes back up to 5 hours to find 24 files (4 hours of data)
-   │  Returns: Dict[filename, bytes]
+   │  [OPTIMIZATION] Checks local cache & existing tiles first
+   │  Returns: Dict[filename, bytes] (skips files where tiles exist)
    │
    ▼
 2. GEOREFERENCE (SetupGOESGeorreferencingService)
@@ -80,7 +88,7 @@ GOES-19 publishes Full Disk images **every 10 minutes**. Each job downloads 24 i
 | Every 10 min | `*/10 * * * *` | Real-time updates, but high resource usage |
 | Every hour | `0 * * * *` | Lower resource usage, 1-hour delay acceptable |
 
-### File Naming and Overwrites
+### File Management & Retention
 
 GOES-19 files have unique names based on timestamp:
 ```
@@ -88,10 +96,13 @@ OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
                          └── s20250141230210 = start time (2025, day 014, 12:30:21.0 UTC)
 ```
 
-When the same job runs multiple times with overlapping time windows:
-- **GeoTIFFs**: Atomically overwritten (old file replaced safely)
-- **Tiles**: Existing directory deleted and replaced
-- **No duplicate accumulation**: Same timestamps produce same filenames, keeping disk usage bounded
+**Optimization Strategy**:
+- **Smart Skip**: If tiles exist in `.tmp/band_{N}/tiles/{filename}_tiles`, the system **skips** downloading and processing that file entirely.
+- **Retention Policy**:
+    - The system keeps the **newest 26 files** (approx 4.3 hours) in `raw/` and `geotiff/`.
+    - Older files are automatically deleted after every run to save disk space.
+    - This retention window ensures the "last 24 images" cache remains effective for subsequent runs.
+- **Intermediate Cleanup**: Raw `.nc` and intermediate `.tif` files are transient for files outside the retention window.
 
 ## Commands
 

@@ -64,14 +64,20 @@ class ProcessBand13Job:
         _s3_client: Async S3 client with concurrency limiting
 
     Pipeline stages:
-        1. Download → SetupGOESGeorreferencingService (georeferencing)
-        2. → ComputeBrightnessTemperaturesService (Planck equation)
-        3. → GenerateGeoTIFFFilesService (colorized GeoTIFFs)
-        4. → GenerateTilesService (XYZ web tiles)
+        1. Download (Smart Skip + Caching)
+           - Checks if tiles already exist (skips processing if true)
+           - Checks local 'raw' directory (skips download if present)
+           - Downloads from S3 if needed
+        2. → SetupGOESGeorreferencingService (georeferencing)
+        3. → ComputeBrightnessTemperaturesService (Planck equation)
+        4. → GenerateGeoTIFFFilesService (colorized GeoTIFFs)
+        5. → GenerateTilesService (XYZ web tiles)
+        6. → Cleanup (Retention Policy: keeps last 26 files)
 
     Output directories:
-        - GeoTIFFs: {TMP_DIR}/band_13/geotiff/
-        - Tiles: {TMP_DIR}/band_13/tiles/
+        - Raw: {TMP_DIR}/band_13/raw/ (Cached input)
+        - GeoTIFFs: {TMP_DIR}/band_13/geotiff/ (Intermediate)
+        - Tiles: {TMP_DIR}/band_13/tiles/ (Final Output)
     """
     def __init__(self):
         self._bucket_name = constants.GOES19_BUCKET_NAME
