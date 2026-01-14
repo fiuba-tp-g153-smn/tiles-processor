@@ -89,56 +89,59 @@ class ProcessBand13Job:
 
     async def run(self):
         current_time = datetime.now(UTC)
+        dirs = self._prepare_directories()
 
-        # Prepare raw directory for caching downloads
-        raw_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "raw"
-        raw_output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Prepare tiles directory to check for existing outputs
-        tiles_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "tiles"
-
-        def check_tiles_exist(s3_key: str) -> bool:
-            """Check if tiles already exist for the given S3 file."""
-            file_stem = Path(s3_key).stem
-            expected_tile_dir = tiles_output_dir / f"{file_stem}_tiles"
-            exists = expected_tile_dir.exists()
-            if exists:
-                logger.debug(f"Tiles exist for {s3_key}, skipping.")
-            return exists
-
-        # Download files from the last hour (6 files)
-        # files that match 'check_tiles_exist' will return None as content
-        downloaded_files = await self._download_last_hour_files(
-            current_time, 
-            local_cache_dir=raw_output_dir,
-            skip_if=check_tiles_exist
-        )
-        
-        # Filter only files that have content (new or not skipped)
-        files_to_process = {
-            k: v for k, v in downloaded_files.items() if v is not None
-        }
-
+        files_to_process = await self._get_files_to_process(current_time, dirs)
         if not files_to_process:
-            logger.info("All files have already been processed. Nothing to do.")
+            logger.info("No new files to process.")
+            self._perform_cleanup(dirs)
             return
 
         logger.info(f"Processing {len(files_to_process)} new files...")
+        await self._run_processing_pipeline(files_to_process, dirs)
+        self._perform_cleanup(dirs)
 
-        georreferenced_data = await SetupGOESGeorreferencingService(
-            files_to_process
-        ).run()
-        logger.info("Georreferencing completed.")
+    def _prepare_directories(self) -> dict[str, Path]:
+        base = Path.cwd() / config.TMP_DIR / "band_13"
+        dirs = {
+            "raw": base / "raw",
+            "tiles": base / "tiles",
+            "geotiff": base / "geotiff",
+        }
+        for d in dirs.values():
+            d.mkdir(parents=True, exist_ok=True)
+        return dirs
+
+    async def _get_files_to_process(self, current_time: datetime, dirs: dict[str, Path]) -> dict:
+        """Download missing files and filter out those already processed."""
         
-        brightness_temperature_data = await ComputeBrightnessTemperaturesService(
-            georreferenced_data
-        ).run()
+        def check_tiles_exist(s3_key: str) -> bool:
+            stem = Path(s3_key).stem
+            # Check if tile directory exists and is valid
+            return (dirs["tiles"] / f"{stem}_tiles").exists()
+
+        downloaded = await self._download_last_hour_files(
+            current_time, 
+            dirs["raw"], 
+            skip_if=check_tiles_exist
+        )
+        
+        # files with None content were skipped by skip_if (tiles exist)
+        return {k: v for k, v in downloaded.items() if v is not None}
+
+    async def _run_processing_pipeline(self, files: dict, dirs: dict[str, Path]):
+        # 1. Georeference
+        geo_data = await SetupGOESGeorreferencingService(files).run()
+        logger.info("Georreferencing completed.")
+
+        # 2. Brightness Temp
+        bt_data = await ComputeBrightnessTemperaturesService(geo_data).run()
         logger.info("Brightness temperature computation completed.")
 
-        geotiff_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "geotiff"
+        # 3. GeoTIFF
         geotiff_files = await GenerateGeoTIFFFilesService(
-            brightness_temperature_data,
-            geotiff_output_dir,
+            bt_data,
+            dirs["geotiff"],
             color_palette=GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE,
             vmin=183.15,
             vmax=323.15,
@@ -146,40 +149,29 @@ class ProcessBand13Job:
         ).run()
         logger.info("GeoTIFF generation completed.")
 
-        await GenerateTilesService(geotiff_files, tiles_output_dir).run()
+        # 4. Tiles
+        await GenerateTilesService(geotiff_files, dirs["tiles"]).run()
         logger.info("Tiles generation completed.")
-        
-        # Cleanup old files (retention policy)
-        # We need to keep at least 24 images for the rolling window cache to work effective.
-        # Keeping 26 gives us a small buffer (25th and 26th oldest).
-        RETENTION_COUNT = 26
-        
-        logger.info(f"Running cleanup (keeping newest {RETENTION_COUNT} files)...")
-        self._cleanup_directory(raw_output_dir, "*.nc", RETENTION_COUNT)
-        self._cleanup_directory(geotiff_output_dir, "*.tif", RETENTION_COUNT)
+
+    def _perform_cleanup(self, dirs: dict[str, Path]):
+        retention = 26
+        logger.info(f"Running cleanup (keeping newest {retention} files)...")
+        self._cleanup_directory(dirs["raw"], "*.nc", retention)
+        self._cleanup_directory(dirs["geotiff"], "*.tif", retention)
 
     def _cleanup_directory(self, directory: Path, pattern: str, keep_count: int):
-        """
-        Delete old files in a directory, keeping only the newest `keep_count`.
-        Files are sorted by name (which includes timestamp for GOES files).
-        """
         if not directory.exists():
             return
-
         files = sorted(directory.glob(pattern))
-        
         if len(files) <= keep_count:
             return
 
-        # Identify files to delete (all except the last `keep_count`)
-        files_to_delete = files[:-keep_count]
-        
-        for file_path in files_to_delete:
+        for p in files[:-keep_count]:
             try:
-                file_path.unlink()
-                logger.info(f"Cleanup: deleted old file {file_path.name}")
+                p.unlink()
+                logger.info(f"Cleanup: deleted {p.name}")
             except Exception as e:
-                logger.warning(f"Cleanup: failed to delete {file_path}: {e}")
+                logger.warning(f"Cleanup failed for {p}: {e}")
 
     async def _download_last_hour_files(
         self, 
@@ -187,99 +179,66 @@ class ProcessBand13Job:
         local_cache_dir: Path,
         skip_if: Callable[[str], bool] = None
     ) -> dict[str, bytes]:
-        """
-        Download the last 24 images (4 hours of data, 1 image every 10 minutes).
-        Example for 13:23 UTC:
-          - Folder 13h: 10, 00
-          - Folder 12h: 50, 40, 30, 20, 10, 00
-          - Folder 11h: 50, 40, 30, 20, 10, 00
-          - Folder 10h: 50, 40, 30, 20, 10, 00
-          - Folder 9h: 50, 40, 30, 20
-        """
-        TARGET_FILES = 24
+        target_files = 24
         all_files = {}
         hours_back = 0
         
-        while len(all_files) < TARGET_FILES:
-            # Calculate the hour to search
+        while len(all_files) < target_files and hours_back <= 5:
+            # Determine how many files we still need
+            needed = target_files - len(all_files)
             search_time = current_time - timedelta(hours=hours_back)
-            search_path = self._build_directory_path(search_time)
             
-            files_still_needed = TARGET_FILES - len(all_files)
+            # Helper to download one hour batch
+            batch = await self._download_hour_batch(
+                search_time, needed, local_cache_dir, skip_if
+            )
             
-            if hours_back == 0:
-                # Current hour: download all available
-                logger.info(f"Downloading from current hour: {search_path} (time: {search_time.isoformat()})")
-                hour_files = await self._s3_client.download_folder(
-                    search_path,
-                    file_pattern=self._product_base_file_pattern,
-                    local_cache_dir=local_cache_dir,
-                    skip_if=skip_if,
-                )
-            else:
-                # Previous hours: filter by minutes if necessary
-                logger.info(f"Downloading from hour -{hours_back}: {search_path} (time: {search_time.isoformat()})")
-                
-                # If we need less than 6 files from this hour, filter by minute
-                if files_still_needed < 6:
-                    min_minute = 60 - (files_still_needed * 10)
-                    logger.info(f"Need {files_still_needed} files, filtering minutes >= {min_minute}")
-                    
-                    def minute_filter(file_path: str) -> bool:
-                        file_minute = self._extract_minute_from_filename(file_path)
-                        return file_minute is not None and file_minute >= min_minute
-                    
-                    hour_files = await self._s3_client.download_folder(
-                        search_path,
-                        file_pattern=self._product_base_file_pattern,
-                        file_filter=minute_filter,
-                        local_cache_dir=local_cache_dir,
-                        skip_if=skip_if,
-                    )
-                else:
-                    # We need all files from this hour
-                    hour_files = await self._s3_client.download_folder(
-                        search_path,
-                        file_pattern=self._product_base_file_pattern,
-                        local_cache_dir=local_cache_dir,
-                        skip_if=skip_if,
-                    )
-            
-            all_files.update(hour_files)
-            logger.info(f"Downloaded {len(hour_files)} files from hour -{hours_back}. Total so far: {len(all_files)}")
-            
+            all_files.update(batch)
             hours_back += 1
-            
-            # Safety limit to avoid infinite loops (maximum 5 hours back)
-            if hours_back > 5:
-                logger.warning(f"Reached maximum hours back limit. Downloaded {len(all_files)}/{TARGET_FILES} files.")
-                break
-        
-        logger.info(f"Total files downloaded: {len(all_files)}")
+
         return all_files
 
+    async def _download_hour_batch(
+        self, 
+        time: datetime, 
+        needed: int, 
+        cache_dir: Path, 
+        skip_if: Callable
+    ) -> dict:
+        path = self._build_directory_path(time)
+        logger.info(f"Checking {path} (needs {needed} more)")
+
+        # For previous hours (needed < 6), only get the newest files (minutes 50,40,30...)
+        # Logic: 1 file every 10 mins = 6 files/hour.
+        # If we need N files, we look for minutes >= 60 - (N * 10).
+        file_filter = None
+        if needed < 6:
+            min_minute = 60 - (needed * 10)
+            file_filter = lambda f: self._is_minute_ge(f, min_minute)
+
+        return await self._s3_client.download_folder(
+            path,
+            file_pattern=self._product_base_file_pattern,
+            file_filter=file_filter,
+            local_cache_dir=cache_dir,
+            skip_if=skip_if,
+        )
+
+    def _is_minute_ge(self, file_path: str, min_minute: int) -> bool:
+        """Filter helper: returns True if file minute >= min_minute."""
+        m = self._extract_minute_from_filename(file_path)
+        return m is not None and m >= min_minute
+
     def _build_directory_path(self, time: datetime) -> str:
-        """Build the directory path for a specific hour."""
         return f"{self._l1b_products_path}/{time.strftime('%Y/%j/%H')}"
 
     def _extract_minute_from_filename(self, file_path: str) -> int | None:
-        """
-        Extract the minute from the GOES filename.
-        Typical format: OR_ABI-L1b-RadF-M6C13_G19_sYYYYJJJHHMMSSS...
-        The start timestamp is after '_s'
-        Format: YYYY (4) + JJJ (3) + HH (2) + MM (2) + SSS (3) = 14 characters
-        """
         try:
             filename = file_path.split("/")[-1]
-            # Search for the pattern _sYYYYJJJHHMMSSS
             start_idx = filename.find("_s")
-            if start_idx == -1:
-                return None
-            # The format is _sYYYYJJJHHMMSSS
-            # Positions: 0-3=year, 4-6=day, 7-8=hour, 9-10=minute, 11-13=second
-            timestamp_str = filename[start_idx + 2:start_idx + 2 + 14]
-            minute = int(timestamp_str[9:11])
-            return minute
+            if start_idx == -1: return None
+            # _sYYYYJJJHHMMSSS -> extract MM (idx 9-11 relative to start of timestamp)
+            timestamp_str = filename[start_idx + 2 : start_idx + 16]
+            return int(timestamp_str[9:11])
         except (ValueError, IndexError):
-            logger.warning(f"Could not extract minute from filename: {file_path}")
             return None
