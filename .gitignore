@@ -3,3 +3,10 @@ venv-radar/
 venv*
 output_radar/
 RMA*
+.venv
+__pycache__/
+.env
+*.zip
+*.tar.gz
+.coverage
+reports/

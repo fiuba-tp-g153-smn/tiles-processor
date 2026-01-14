@@ -1,3 +1,31 @@
+"""
+GeoTIFF Generation Service.
+
+This service creates colorized RGBA GeoTIFF files from brightness temperature
+data for web visualization. It handles reprojection, clipping, and color mapping.
+
+Processing Steps:
+    1. Reproject from GOES geostationary to EPSG:4326 (lat/lon)
+    2. Clip to configured bounding box (reduces file size significantly)
+    3. Normalize temperature values to 0-255 range
+    4. Apply color palette lookup to create RGB values
+    5. Create alpha channel (transparent for NaN/no-data)
+    6. Save as RGBA GeoTIFF with atomic write pattern
+
+Color Palettes:
+    - CLOUD_TOPS_PALETTE: Grayscale → Red (256 colors) for Band 13
+      Cold cloud tops (low temps) appear red, warm surfaces appear gray
+    - WATER_VAPOR_PALETTE: Maroon → Blue (256 colors, SMN style) for Band 9
+      Dry air (low temps) appears maroon, moist air appears blue
+
+Atomic Writes:
+    Files are written to a temporary UUID-named file, then atomically renamed
+    to the final destination. This prevents corrupted files if processing fails.
+
+File Overwrites:
+    If a file with the same name exists, it is atomically replaced.
+    GOES filenames include timestamps, so same-name = same data (idempotent).
+"""
 import asyncio
 import gc
 import logging
@@ -9,47 +37,81 @@ import numpy as np
 import xarray as xr
 import rioxarray
 
+from config import config
+
 # Note: Ensure you have rioxarray installed to use the rio accessor
 
 logger = logging.getLogger(__name__)
 
 
 class GenerateGeoTIFFFilesService:
-    # Argentina bounding box (with some margin)
-    ARGENTINA_BOUNDS = {
-        "minx": -90.0,  # 90°W - Pacífico (incluye Chile, Perú)
-        "miny": -60.0,  # 60°S - Más al sur (océano/Antártida)
-        "maxx": -30.0,  # 30°W - Medio del Atlántico
-        "maxy": -15.0,  # 15°S - Norte (Bolivia/Brasil)
+    """
+    Generates colorized RGBA GeoTIFF files from brightness temperature data.
+
+    This service takes brightness temperature DataArrays and creates web-ready
+    GeoTIFF files with custom color palettes for visualization.
+
+    Processing pipeline:
+        1. Remove grid_mapping attribute (can cause issues with rioxarray)
+        2. Reproject to EPSG:4326 (WGS84 lat/lon)
+        3. Clip to configured bounds (from config.get_bounds())
+        4. Normalize temperatures to [vmin, vmax] → [0, 255]
+        5. Apply color palette via index lookup
+        6. Create alpha channel (255=opaque, 0=transparent for NaN)
+        7. Stack into RGBA DataArray
+        8. Write to GeoTIFF with atomic rename
+
+    Args:
+        brightness_temperatures: Dict mapping filenames to temperature DataArrays
+        output_dir: Directory for output GeoTIFF files
+        color_palette: List of 256 hex color strings (default: CLOUD_TOPS_PALETTE)
+        vmin: Minimum temperature for normalization (default: 183.15K = -90°C)
+        vmax: Maximum temperature for normalization (default: 323.15K = +50°C)
+        product_name: Name for the output DataArray (default: "Cloud_Tops")
+
+    Returns:
+        List of Path objects pointing to generated GeoTIFF files
+
+    Memory Management:
+        Explicit gc.collect() and del statements are used throughout to
+        manage memory when processing large satellite imagery arrays.
+        This is critical for processing multiple images without memory exhaustion.
+    """
+    # Default bounding box (Argentina with margin)
+    DEFAULT_BOUNDS = {
+        "minx": -90.0,  # 90°W - Pacific (includes Chile, Peru)
+        "miny": -60.0,  # 60°S - Further south (ocean/Antarctica)
+        "maxx": -30.0,  # 30°W - Middle of Atlantic
+        "maxy": -15.0,  # 15°S - North (Bolivia/Brazil)
     }
 
-    # Paleta para Canal 9 - Water Vapor (Vapor de Agua Niveles Medios)
-    # Colores apagados estilo SMN: bordó → naranja → gris claro → gris oscuro → azul medio
+    # Palette for Band 9 - Water Vapor (Mid-Level Water Vapor)
+    # Muted colors SMN style: maroon -> orange -> light gray -> dark gray -> medium blue
     WATER_VAPOR_PALETTE_BASE = [
-        # Muy seco/frío alto - bordó oscuro a rojo apagado
+        # Very dry/cold high - dark maroon to muted red
         "#400000", "#500000", "#600000", "#700000", "#800000", "#8b0000",
         "#900000", "#a00000", "#a52a2a", "#b22222",
         
-        # Transición a naranja/marrón (no amarillo brillante)
+        # Transition to orange/brown (no bright yellow)
         "#c04000", "#d04000", "#d05000", "#d06000", "#e06000", 
         "#e07000", "#f07000", "#f08000", "#ff8c00", "#ffa500",
         
-        # Naranja claro a beige/gris cálido
+        # Light orange to beige/warm gray
         "#ffb366", "#ffc080", "#ffcc99", "#e6d5b8", "#d9c7a8",
         "#ccb899", "#bfaa88", "#b39b77",
         
-        # Grises claros (zonas intermedias)
+        # Light grays (intermediate zones)
         "#d3d3d3", "#c0c0c0", "#b0b0b0", "#a8a8a8", "#a0a0a0",
         "#989898", "#909090", "#888888",
         
-        # Grises medios/oscuros (más húmedo)
+        # Medium/dark grays (more humid)
         "#808080", "#787878", "#707070", "#686868", "#606060",
         "#585858", "#505050", "#484848",
         
-        # Azul grisáceo (húmedo) - NO cyan brillante
+        # Grayish blue (humid) - NO bright cyan
         "#4a5a6a", "#3f5266", "#354a60", "#2b4257", "#213a4e",
         
-        # Azul medio apagado (muy húmedo)
+        # Muted medium blue (very humid)
         "#1c3a52", "#183654", "#143256", "#102e58", "#0c2a5a",
         "#08265c", "#04225e", "#001e60",
     ]
@@ -60,10 +122,10 @@ class GenerateGeoTIFFFilesService:
         idx = np.linspace(0, len(palette) - 1, 256).astype(int)
         return [palette[i] for i in idx]
 
-    # Invertir la paleta para que coincida con la referencia del SMN
+    # Invert the palette to match the SMN reference
     WATER_VAPOR_PALETTE = _expand_palette_to_256(WATER_VAPOR_PALETTE_BASE[::-1])
 
-    # Paleta para Canal 13 - Cloud Tops (Topes Nubosos)
+    # Palette for Band 13 - Cloud Tops
     CLOUD_TOPS_PALETTE = [
         "#ffffff", "#f2f2f2", "#e5e5e5", "#d7d7d7", "#cacaca", "#bcbcbc", "#afafaf", "#a2a2a2",
         "#949494", "#878787", "#797979", "#6c6c6c", "#5e5e5e", "#515151", "#444444", "#363636",
@@ -137,12 +199,13 @@ class GenerateGeoTIFFFilesService:
         # Fix nodata value before clipping (original value is too large for float32)
         c13_reproj = c13_reproj.rio.write_nodata(np.nan, inplace=False)
 
-        # 2. Clip to Argentina bounds to reduce processing area
+        # 2. Clip to configured bounds to reduce processing area
+        bounds = config.get_bounds()
         c13_clipped = c13_reproj.rio.clip_box(
-            minx=self.ARGENTINA_BOUNDS["minx"],
-            miny=self.ARGENTINA_BOUNDS["miny"],
-            maxx=self.ARGENTINA_BOUNDS["maxx"],
-            maxy=self.ARGENTINA_BOUNDS["maxy"],
+            minx=bounds["minx"],
+            miny=bounds["miny"],
+            maxx=bounds["maxx"],
+            maxy=bounds["maxy"],
         )
 
         # Free memory from full reprojection

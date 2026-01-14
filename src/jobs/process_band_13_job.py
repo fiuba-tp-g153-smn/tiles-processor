@@ -1,8 +1,43 @@
+"""
+GOES-19 Band 13 (Cloud Tops) Processing Job.
+
+This module processes GOES-19 ABI Band 13 (10.33 µm - Clean IR Window) satellite
+imagery to generate web map tiles for cloud top temperature visualization.
+
+Pipeline Overview:
+    1. DOWNLOAD: Fetches 24 images (4 hours) from NOAA's noaa-goes19 S3 bucket
+    2. GEOREFERENCE: Applies GOES satellite projection and coordinate transformation
+    3. BRIGHTNESS TEMP: Converts radiance to temperature using Planck equation
+    4. GEOTIFF: Creates colorized RGBA GeoTIFFs clipped to configured bounds
+    5. TILES: Generates XYZ web tiles (zoom 3-7, WEBP format, Leaflet-compatible)
+
+Band 13 Specifications:
+    - Wavelength: 10.33 µm (Clean Infrared Window)
+    - Purpose: Cloud top temperature monitoring, storm tracking
+    - Temperature range: 183.15K to 323.15K (-90°C to +50°C)
+    - Color palette: Grayscale → Red (cold clouds appear red)
+
+Execution Frequency:
+    GOES-19 publishes Full Disk images every 10 minutes.
+    Recommended schedule: */30 * * * * (every 30 minutes)
+
+File Handling:
+    - GOES files have unique timestamps in filenames (no collisions)
+    - GeoTIFFs are atomically overwritten if same timestamp is reprocessed
+    - Tile directories are deleted and replaced on reprocessing
+    - Output: .tmp/band_13/geotiff/*.tif and .tmp/band_13/tiles/*_tiles/
+
+Example GOES-19 filename:
+    OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
+    └── s20250141230210 = start time: 2025, day 014, 12:30:21.0 UTC
+"""
 import logging
+from typing import Callable, Optional
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 
 from constants import constants
+from config import config
 from clients import s3_client
 from services.compute_brightness_temperatures import (
     ComputeBrightnessTemperaturesService,
@@ -15,6 +50,35 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessBand13Job:
+    """
+    Scheduled job for processing GOES-19 Band 13 (Cloud Tops) imagery.
+
+    This job downloads the last 24 satellite images (4 hours of data at 10-minute
+    intervals), processes them through the full pipeline, and generates web map
+    tiles for visualization.
+
+    Attributes:
+        _bucket_name: NOAA's public S3 bucket (noaa-goes19)
+        _l1b_products_path: S3 prefix for ABI Level 1b Full Disk products
+        _product_base_file_pattern: Filter pattern for Band 13 files (C13_G19)
+        _s3_client: Async S3 client with concurrency limiting
+
+    Pipeline stages:
+        1. Download (Smart Skip + Caching)
+           - Checks if tiles already exist (skips processing if true)
+           - Checks local 'raw' directory (skips download if present)
+           - Downloads from S3 if needed
+        2. → SetupGOESGeorreferencingService (georeferencing)
+        3. → ComputeBrightnessTemperaturesService (Planck equation)
+        4. → GenerateGeoTIFFFilesService (colorized GeoTIFFs)
+        5. → GenerateTilesService (XYZ web tiles)
+        6. → Cleanup (Retention Policy: keeps last 26 files)
+
+    Output directories:
+        - Raw: {TMP_DIR}/band_13/raw/ (Cached input)
+        - GeoTIFFs: {TMP_DIR}/band_13/geotiff/ (Intermediate)
+        - Tiles: {TMP_DIR}/band_13/tiles/ (Final Output)
+    """
     def __init__(self):
         self._bucket_name = constants.GOES19_BUCKET_NAME
         self._l1b_products_path = "ABI-L1b-RadF"
@@ -25,23 +89,59 @@ class ProcessBand13Job:
 
     async def run(self):
         current_time = datetime.now(UTC)
+        dirs = self._prepare_directories()
 
-        # Descargar archivos de la última hora (6 archivos)
-        downloaded_files = await self._download_last_hour_files(current_time)
+        files_to_process = await self._get_files_to_process(current_time, dirs)
+        if not files_to_process:
+            logger.info("No new files to process.")
+            self._perform_cleanup(dirs)
+            return
+
+        logger.info(f"Processing {len(files_to_process)} new files...")
+        await self._run_processing_pipeline(files_to_process, dirs)
+        self._perform_cleanup(dirs)
+
+    def _prepare_directories(self) -> dict[str, Path]:
+        base = Path.cwd() / config.TMP_DIR / "band_13"
+        dirs = {
+            "raw": base / "raw",
+            "tiles": base / "tiles",
+            "geotiff": base / "geotiff",
+        }
+        for d in dirs.values():
+            d.mkdir(parents=True, exist_ok=True)
+        return dirs
+
+    async def _get_files_to_process(self, current_time: datetime, dirs: dict[str, Path]) -> dict:
+        """Download missing files and filter out those already processed."""
         
-        georreferenced_data = await SetupGOESGeorreferencingService(
-            downloaded_files
-        ).run()
+        def check_tiles_exist(s3_key: str) -> bool:
+            stem = Path(s3_key).stem
+            # Check if tile directory exists and is valid
+            return (dirs["tiles"] / f"{stem}_tiles").exists()
+
+        downloaded = await self._download_last_hour_files(
+            current_time, 
+            dirs["raw"], 
+            skip_if=check_tiles_exist
+        )
+        
+        # files with None content were skipped by skip_if (tiles exist)
+        return {k: v for k, v in downloaded.items() if v is not None}
+
+    async def _run_processing_pipeline(self, files: dict, dirs: dict[str, Path]):
+        # 1. Georeference
+        geo_data = await SetupGOESGeorreferencingService(files).run()
         logger.info("Georreferencing completed.")
-        brightness_temperature_data = await ComputeBrightnessTemperaturesService(
-            georreferenced_data
-        ).run()
+
+        # 2. Brightness Temp
+        bt_data = await ComputeBrightnessTemperaturesService(geo_data).run()
         logger.info("Brightness temperature computation completed.")
 
-        geotiff_output_dir = Path.cwd() / ".tmp" / "band_13" / "geotiff"
+        # 3. GeoTIFF
         geotiff_files = await GenerateGeoTIFFFilesService(
-            brightness_temperature_data,
-            geotiff_output_dir,
+            bt_data,
+            dirs["geotiff"],
             color_palette=GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE,
             vmin=183.15,
             vmax=323.15,
@@ -49,98 +149,96 @@ class ProcessBand13Job:
         ).run()
         logger.info("GeoTIFF generation completed.")
 
-        tiles_output_dir = Path.cwd() / ".tmp" / "band_13" / "tiles"
-        await GenerateTilesService(geotiff_files, tiles_output_dir).run()
+        # 4. Tiles
+        await GenerateTilesService(geotiff_files, dirs["tiles"]).run()
         logger.info("Tiles generation completed.")
 
-    async def _download_last_hour_files(self, current_time: datetime) -> dict[str, bytes]:
-        """
-        Descarga las últimas 24 imágenes (4 horas de datos, 1 imagen cada 10 minutos).
-        Ejemplo para 13:23 UTC:
-          - Carpeta 13h: 10, 00
-          - Carpeta 12h: 50, 40, 30, 20, 10, 00
-          - Carpeta 11h: 50, 40, 30, 20, 10, 00
-          - Carpeta 10h: 50, 40, 30, 20, 10, 00
-          - Carpeta 9h: 50, 40, 30, 20
-        """
-        TARGET_FILES = 24
+    def _perform_cleanup(self, dirs: dict[str, Path]):
+        retention = 26
+        logger.info(f"Running cleanup (keeping newest {retention} files)...")
+        self._cleanup_directory(dirs["raw"], "*.nc", retention)
+        self._cleanup_directory(dirs["geotiff"], "*.tif", retention)
+
+    def _cleanup_directory(self, directory: Path, pattern: str, keep_count: int):
+        if not directory.exists():
+            return
+        files = sorted(directory.glob(pattern))
+        if len(files) <= keep_count:
+            return
+
+        for p in files[:-keep_count]:
+            try:
+                p.unlink()
+                logger.info(f"Cleanup: deleted {p.name}")
+            except Exception as e:
+                logger.warning(f"Cleanup failed for {p}: {e}")
+
+    async def _download_last_hour_files(
+        self, 
+        current_time: datetime, 
+        local_cache_dir: Path,
+        skip_if: Callable[[str], bool] = None
+    ) -> dict[str, bytes]:
+        target_files = 24
         all_files = {}
         hours_back = 0
         
-        while len(all_files) < TARGET_FILES:
-            # Calcular la hora a buscar
+        while len(all_files) < target_files and hours_back <= 5:
+            # Determine how many files we still need
+            needed = target_files - len(all_files)
             search_time = current_time - timedelta(hours=hours_back)
-            search_path = self._build_directory_path(search_time)
             
-            files_still_needed = TARGET_FILES - len(all_files)
+            # Helper to download one hour batch
+            batch = await self._download_hour_batch(
+                search_time, needed, local_cache_dir, skip_if
+            )
             
-            if hours_back == 0:
-                # Hora actual: descargar todos los disponibles
-                logger.info(f"Downloading from current hour: {search_path} (time: {search_time.isoformat()})")
-                hour_files = await self._s3_client.download_folder(
-                    search_path,
-                    file_pattern=self._product_base_file_pattern,
-                )
-            else:
-                # Horas anteriores: filtrar por minutos si es necesario
-                logger.info(f"Downloading from hour -{hours_back}: {search_path} (time: {search_time.isoformat()})")
-                
-                # Si necesitamos menos de 6 archivos de esta hora, filtrar por minuto
-                if files_still_needed < 6:
-                    min_minute = 60 - (files_still_needed * 10)
-                    logger.info(f"Need {files_still_needed} files, filtering minutes >= {min_minute}")
-                    
-                    def minute_filter(file_path: str) -> bool:
-                        file_minute = self._extract_minute_from_filename(file_path)
-                        return file_minute is not None and file_minute >= min_minute
-                    
-                    hour_files = await self._s3_client.download_folder(
-                        search_path,
-                        file_pattern=self._product_base_file_pattern,
-                        file_filter=minute_filter,
-                    )
-                else:
-                    # Necesitamos todos los archivos de esta hora
-                    hour_files = await self._s3_client.download_folder(
-                        search_path,
-                        file_pattern=self._product_base_file_pattern,
-                    )
-            
-            all_files.update(hour_files)
-            logger.info(f"Downloaded {len(hour_files)} files from hour -{hours_back}. Total so far: {len(all_files)}")
-            
+            all_files.update(batch)
             hours_back += 1
-            
-            # Límite de seguridad para evitar loops infinitos (máximo 5 horas atrás)
-            if hours_back > 5:
-                logger.warning(f"Reached maximum hours back limit. Downloaded {len(all_files)}/{TARGET_FILES} files.")
-                break
-        
-        logger.info(f"Total files downloaded: {len(all_files)}")
+
         return all_files
 
+    async def _download_hour_batch(
+        self, 
+        time: datetime, 
+        needed: int, 
+        cache_dir: Path, 
+        skip_if: Callable
+    ) -> dict:
+        path = self._build_directory_path(time)
+        logger.info(f"Checking {path} (needs {needed} more)")
+
+        # For previous hours (needed < 6), only get the newest files (minutes 50,40,30...)
+        # Logic: 1 file every 10 mins = 6 files/hour.
+        # If we need N files, we look for minutes >= 60 - (N * 10).
+        file_filter = None
+        if needed < 6:
+            min_minute = 60 - (needed * 10)
+            file_filter = lambda f: self._is_minute_ge(f, min_minute)
+
+        return await self._s3_client.download_folder(
+            path,
+            file_pattern=self._product_base_file_pattern,
+            file_filter=file_filter,
+            local_cache_dir=cache_dir,
+            skip_if=skip_if,
+        )
+
+    def _is_minute_ge(self, file_path: str, min_minute: int) -> bool:
+        """Filter helper: returns True if file minute >= min_minute."""
+        m = self._extract_minute_from_filename(file_path)
+        return m is not None and m >= min_minute
+
     def _build_directory_path(self, time: datetime) -> str:
-        """Construye la ruta del directorio para una hora específica."""
         return f"{self._l1b_products_path}/{time.strftime('%Y/%j/%H')}"
 
     def _extract_minute_from_filename(self, file_path: str) -> int | None:
-        """
-        Extrae el minuto del nombre del archivo GOES.
-        Formato típico: OR_ABI-L1b-RadF-M6C13_G19_sYYYYJJJHHMMSSS...
-        El timestamp de inicio está después de '_s'
-        Formato: YYYY (4) + JJJ (3) + HH (2) + MM (2) + SSS (3) = 14 caracteres
-        """
         try:
             filename = file_path.split("/")[-1]
-            # Buscar el patrón _sYYYYJJJHHMMSSS
             start_idx = filename.find("_s")
-            if start_idx == -1:
-                return None
-            # El formato es _sYYYYJJJHHMMSSS
-            # Posiciones: 0-3=año, 4-6=día, 7-8=hora, 9-10=minuto, 11-13=segundo
-            timestamp_str = filename[start_idx + 2:start_idx + 2 + 14]
-            minute = int(timestamp_str[9:11])
-            return minute
+            if start_idx == -1: return None
+            # _sYYYYJJJHHMMSSS -> extract MM (idx 9-11 relative to start of timestamp)
+            timestamp_str = filename[start_idx + 2 : start_idx + 16]
+            return int(timestamp_str[9:11])
         except (ValueError, IndexError):
-            logger.warning(f"Could not extract minute from filename: {file_path}")
             return None
