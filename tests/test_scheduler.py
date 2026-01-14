@@ -134,6 +134,7 @@ class TestStartScheduler:
                 MockScheduler.assert_called_once()
                 call_kwargs = MockScheduler.call_args.kwargs
                 assert 'jobstores' in call_kwargs
+                assert 'executors' in call_kwargs
                 assert call_kwargs['timezone'] == 'UTC'
 
                 # Verify add_job was called twice
@@ -146,6 +147,12 @@ class TestStartScheduler:
                     assert kwargs['coalesce'] is True    # Merge missed runs
                     assert kwargs['replace_existing'] is True
                     assert 'misfire_grace_time' in kwargs
+                    # Verify args contain job_name and job_cls
+                    job_args = kwargs['args']
+                    assert len(job_args) == 2
+                    assert isinstance(job_args[0], str)
+                    # Use logical check instead of strict type check for MagicMock
+                    assert hasattr(job_args[1], '__name__') or isinstance(job_args[1], type)
 
                 scheduler_instance.start.assert_called_once()
                 scheduler_instance.shutdown.assert_called_once()

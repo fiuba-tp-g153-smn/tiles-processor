@@ -6,6 +6,7 @@ features for job management, with SQLite persistence for surviving restarts.
 
 Key APScheduler Features Used:
     - SQLAlchemyJobStore: Persists jobs to SQLite database
+    - ProcessPoolExecutor: Runs jobs in separate processes for CPU isolation
     - max_instances=1: Prevents overlapping executions of the same job
     - coalesce=True: Merges missed runs into a single execution
     - misfire_grace_time: Allows delayed execution within a grace period
@@ -25,9 +26,11 @@ This design ensures:
 import asyncio
 import logging
 import os
+import threading
 from pathlib import Path
-from typing import Dict, Type
+from typing import Dict, Type, Optional
 
+from apscheduler.executors.pool import ProcessPoolExecutor
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -38,10 +41,6 @@ logger = logging.getLogger(__name__)
 
 # Grace time for misfired jobs (5 minutes)
 MISFIRE_GRACE_TIME = 300
-
-# Global job registry - populated by start_scheduler, used by run_job
-# This allows the module-level run_job function to look up job classes
-_job_registry: Dict[str, Type] = {}
 
 
 def _get_directory_size(path: Path) -> int:
@@ -58,41 +57,71 @@ def _get_directory_size(path: Path) -> int:
     return total_size
 
 
-async def run_job(job_name: str):
+class JobMonitor:
+    """
+    Thread-safe monitor for managing job registry and ensuring execution preconditions.
+    """
+    def __init__(self):
+        self._registry: Dict[str, Type] = {}
+        self._lock = threading.RLock()
+
+    def register_jobs(self, jobs: Dict[str, Type]):
+        """Register multiple jobs safely."""
+        with self._lock:
+            self._registry.update(jobs)
+
+    def get_job(self, name: str) -> Optional[Type]:
+        """Retrieve a job class by name safely."""
+        with self._lock:
+            return self._registry.get(name)
+
+    def ensure_execution_safe(self, job_name: str) -> bool:
+        """
+        Check if it is safe to execute the job (e.g., disk space limits).
+        Returns True if safe, False otherwise.
+        """
+        # Check tmp directory size before execution
+        tmp_path = Path.cwd() / config.TMP_DIR
+        current_size = _get_directory_size(tmp_path)
+
+        if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
+            logger.error(
+                "Job %s skipped: temp directory %s size (%.2f GB) exceeds limit (%.2f GB)",
+                job_name,
+                tmp_path,
+                current_size / (1024**3),
+                config.MAX_TMP_DIR_SIZE_BYTES / (1024**3),
+            )
+            return False
+        return True
+
+
+# Global instance of JobMonitor
+job_monitor = JobMonitor()
+
+
+def run_job(job_name: str, job_cls: Type):
     """
     Execute a job by name. This is a module-level function for APScheduler serialization.
 
     APScheduler with SQLite persistence requires jobs to be serializable. This function
     is defined at module level so it can be referenced as 'scheduler:run_job' and
-    serialized properly. The job_name is passed as an argument and used to look up
-    the actual job class from the global registry.
+    serialized properly.
+
+    Note: This function is synchronous to be executed in a ProcessPoolExecutor.
+    The actual job logic is async, so we use asyncio.run() to execute it.
 
     Args:
-        job_name: Name of the job to execute (must be in _job_registry)
+        job_name: Name of the job to execute
+        job_cls: The job class to instantiate and run (passed explicitly for process safety)
     """
-    # Check tmp directory size before execution
-    tmp_path = Path.cwd() / config.TMP_DIR
-    current_size = _get_directory_size(tmp_path)
-
-    if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
-        logger.error(
-            "Job %s skipped: temp directory %s size (%.2f GB) exceeds limit (%.2f GB)",
-            job_name,
-            tmp_path,
-            current_size / (1024**3),
-            config.MAX_TMP_DIR_SIZE_BYTES / (1024**3),
-        )
-        return
-
-    job_cls = _job_registry.get(job_name)
-    if not job_cls:
-        logger.error("Job %s not found in registry", job_name)
+    if not job_monitor.ensure_execution_safe(job_name):
         return
 
     try:
         job = job_cls()
         logger.info("Starting job: %s", job_name)
-        await job.run()
+        asyncio.run(job.run())
         logger.info("Job completed: %s", job_name)
     except Exception:
         logger.exception("Job %s failed with error", job_name)
@@ -113,18 +142,8 @@ def _create_job_runner(job_cls: Type, job_name: str):
         Async function that APScheduler can execute
     """
     async def _run_job():
-        # Check tmp directory size before execution
-        tmp_path = Path.cwd() / config.TMP_DIR
-        current_size = _get_directory_size(tmp_path)
-
-        if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
-            logger.error(
-                "Job %s skipped: temp directory %s size (%.2f GB) exceeds limit (%.2f GB)",
-                job_name,
-                tmp_path,
-                current_size / (1024**3),
-                config.MAX_TMP_DIR_SIZE_BYTES / (1024**3),
-            )
+        # Delegate check to the monitor
+        if not job_monitor.ensure_execution_safe(job_name):
             return
 
         try:
@@ -160,8 +179,8 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         }
         await start_scheduler(job_registry, stop_event)
     """
-    global _job_registry
-    _job_registry = job_registry
+    # Populate the global monitor
+    job_monitor.register_jobs(job_registry)
 
     # Configure SQLite job store for persistence
     db_path = Path(config.SCHEDULER_DB_PATH)
@@ -171,8 +190,14 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         'default': SQLAlchemyJobStore(url=f'sqlite:///{db_path}')
     }
 
+    # allocate 1 process per CPU core
+    executors = {
+        'default': ProcessPoolExecutor(max_workers=os.cpu_count())
+    }
+
     scheduler = AsyncIOScheduler(
         jobstores=jobstores,
+        executors=executors,
         timezone=config.TIMEZONE
     )
     schedules = config.get_job_schedules()
@@ -190,7 +215,7 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         scheduler.add_job(
             run_job,                  # Module-level function (serializable)
             trigger=CronTrigger.from_crontab(schedule_cron, timezone=config.TIMEZONE),
-            args=[job_name],          # Pass job_name as argument
+            args=[job_name, job_cls], # Pass class explicitly for process safety
             id=job_name,
             name=job_name,
             max_instances=1,          # Prevent overlapping runs
