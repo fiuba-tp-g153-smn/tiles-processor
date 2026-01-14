@@ -6,7 +6,7 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ${TMP_DIR_HOST}:${TMP_DIR_CONTAINER}
-    # Options: process_band_13 or process_band_9
+      - ${SCHEDULER_DB_HOST_DIR}:${SCHEDULER_DB_CONTAINER_DIR}
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - BAND_13_SCHEDULE_CRON=${BAND_13_SCHEDULE_CRON}
@@ -20,3 +20,4 @@ services:
       - BOUNDS_MINY=${BOUNDS_MINY}
       - BOUNDS_MAXX=${BOUNDS_MAXX}
       - BOUNDS_MAXY=${BOUNDS_MAXY}
+      - SCHEDULER_DB_PATH=${SCHEDULER_DB_PATH}

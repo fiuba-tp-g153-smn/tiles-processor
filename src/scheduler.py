@@ -1,20 +1,26 @@
 """
-APScheduler-based Job Scheduler.
+APScheduler-based Job Scheduler with SQLite Persistence.
 
 This module provides a simplified scheduler using APScheduler's built-in
-features for job management. It replaces the previous queue-based approach
-with APScheduler best practices.
+features for job management, with SQLite persistence for surviving restarts.
 
 Key APScheduler Features Used:
+    - SQLAlchemyJobStore: Persists jobs to SQLite database
     - max_instances=1: Prevents overlapping executions of the same job
     - coalesce=True: Merges missed runs into a single execution
     - misfire_grace_time: Allows delayed execution within a grace period
     - replace_existing=True: Updates job if it already exists
 
+Persistence:
+    Jobs are stored in a SQLite database. When the scheduler restarts:
+    - Existing job schedules are restored from the database
+    - Misfired jobs (missed during downtime) are handled per coalesce/grace settings
+    - The database file should be on a mounted volume for container persistence
+
 This design ensures:
     - Jobs don't overlap (no concurrent runs of the same job type)
     - Missed schedules are handled gracefully
-    - Simple, maintainable code without custom queue management
+    - Job state survives container/application restarts
 """
 import asyncio
 import logging
@@ -22,6 +28,7 @@ import os
 from pathlib import Path
 from typing import Dict, Type
 
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -31,6 +38,10 @@ logger = logging.getLogger(__name__)
 
 # Grace time for misfired jobs (5 minutes)
 MISFIRE_GRACE_TIME = 300
+
+# Global job registry - populated by start_scheduler, used by run_job
+# This allows the module-level run_job function to look up job classes
+_job_registry: Dict[str, Type] = {}
 
 
 def _get_directory_size(path: Path) -> int:
@@ -47,12 +58,52 @@ def _get_directory_size(path: Path) -> int:
     return total_size
 
 
+async def run_job(job_name: str):
+    """
+    Execute a job by name. This is a module-level function for APScheduler serialization.
+
+    APScheduler with SQLite persistence requires jobs to be serializable. This function
+    is defined at module level so it can be referenced as 'scheduler:run_job' and
+    serialized properly. The job_name is passed as an argument and used to look up
+    the actual job class from the global registry.
+
+    Args:
+        job_name: Name of the job to execute (must be in _job_registry)
+    """
+    # Check tmp directory size before execution
+    tmp_path = Path.cwd() / config.TMP_DIR
+    current_size = _get_directory_size(tmp_path)
+
+    if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
+        logger.error(
+            "Job %s skipped: temp directory %s size (%.2f GB) exceeds limit (%.2f GB)",
+            job_name,
+            tmp_path,
+            current_size / (1024**3),
+            config.MAX_TMP_DIR_SIZE_BYTES / (1024**3),
+        )
+        return
+
+    job_cls = _job_registry.get(job_name)
+    if not job_cls:
+        logger.error("Job %s not found in registry", job_name)
+        return
+
+    try:
+        job = job_cls()
+        logger.info("Starting job: %s", job_name)
+        await job.run()
+        logger.info("Job completed: %s", job_name)
+    except Exception:
+        logger.exception("Job %s failed with error", job_name)
+
+
 def _create_job_runner(job_cls: Type, job_name: str):
     """
-    Create an async job runner function for APScheduler.
+    Create an async job runner function for APScheduler (non-persistent mode).
 
-    The runner checks disk space limits before execution and handles
-    all exceptions to prevent scheduler crashes.
+    This is used when testing without persistence. For persistent job stores,
+    the module-level run_job function is used instead.
 
     Args:
         job_cls: The job class to instantiate and run
@@ -61,7 +112,7 @@ def _create_job_runner(job_cls: Type, job_name: str):
     Returns:
         Async function that APScheduler can execute
     """
-    async def run_job():
+    async def _run_job():
         # Check tmp directory size before execution
         tmp_path = Path.cwd() / config.TMP_DIR
         current_size = _get_directory_size(tmp_path)
@@ -85,8 +136,8 @@ def _create_job_runner(job_cls: Type, job_name: str):
             logger.exception("Job %s failed with error", job_name)
 
     # Set function name for APScheduler logging
-    run_job.__name__ = f"run_{job_name}"
-    return run_job
+    _run_job.__name__ = f"run_{job_name}"
+    return _run_job
 
 
 async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Event):
@@ -109,8 +160,24 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         }
         await start_scheduler(job_registry, stop_event)
     """
-    scheduler = AsyncIOScheduler(timezone=config.TIMEZONE)
+    global _job_registry
+    _job_registry = job_registry
+
+    # Configure SQLite job store for persistence
+    db_path = Path(config.SCHEDULER_DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    jobstores = {
+        'default': SQLAlchemyJobStore(url=f'sqlite:///{db_path}')
+    }
+
+    scheduler = AsyncIOScheduler(
+        jobstores=jobstores,
+        timezone=config.TIMEZONE
+    )
     schedules = config.get_job_schedules()
+
+    logger.info("Using persistent job store at: %s", db_path)
 
     for job_name, job_cls in job_registry.items():
         schedule_cron = schedules.get(job_name)
@@ -118,13 +185,12 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
             logger.warning("No schedule found for job '%s'. Skipping.", job_name)
             continue
 
-        # Create the job runner
-        job_func = _create_job_runner(job_cls, job_name)
-
-        # Add job with APScheduler best practices
+        # Add job using module-level run_job function with job_name as argument
+        # This allows APScheduler to serialize the job for SQLite persistence
         scheduler.add_job(
-            job_func,
+            run_job,                  # Module-level function (serializable)
             trigger=CronTrigger.from_crontab(schedule_cron, timezone=config.TIMEZONE),
+            args=[job_name],          # Pass job_name as argument
             id=job_name,
             name=job_name,
             max_instances=1,          # Prevent overlapping runs

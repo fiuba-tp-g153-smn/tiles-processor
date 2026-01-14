@@ -66,6 +66,11 @@ class Config:
     TMP_DIR: str = get_required_env("TMP_DIR_CONTAINER")
     MAX_TMP_DIR_SIZE_BYTES: int = 10 * 1024 * 1024 * 1024  # 10 GB
 
+    # Scheduler persistence
+    # Path to SQLite database for APScheduler job persistence
+    # Jobs survive container restarts when stored in a mounted volume
+    SCHEDULER_DB_PATH: str = get_required_env("SCHEDULER_DB_PATH")
+
     # Bounding box for clipping satellite imagery
     # Coordinates are in EPSG:4326 (longitude/latitude)
     BOUNDS_MINX: float = float(get_required_env("BOUNDS_MINX"))   # West longitude
@@ -103,6 +108,7 @@ class Config:
         logger.info(f"ENABLE_BAND_9: {cls.ENABLE_BAND_9}")
         logger.info(f"TMP_DIR: {cls.TMP_DIR}")
         logger.info(f"MAX_TMP_DIR_SIZE_BYTES: {cls.MAX_TMP_DIR_SIZE_BYTES}")
+        logger.info(f"SCHEDULER_DB_PATH: {cls.SCHEDULER_DB_PATH}")
         logger.info(f"BOUNDS_MINX: {cls.BOUNDS_MINX}")
         logger.info(f"BOUNDS_MINY: {cls.BOUNDS_MINY}")
         logger.info(f"BOUNDS_MAXX: {cls.BOUNDS_MAXX}")

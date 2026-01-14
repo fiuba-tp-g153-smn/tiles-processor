@@ -15,6 +15,7 @@ os.environ.setdefault("BOUNDS_MINX", "-90.0")
 os.environ.setdefault("BOUNDS_MINY", "-60.0")
 os.environ.setdefault("BOUNDS_MAXX", "-30.0")
 os.environ.setdefault("BOUNDS_MAXY", "-15.0")
+os.environ.setdefault("SCHEDULER_DB_PATH", "/tmp/test_scheduler.db")
 # Also set TMP_DIR for local tests (simulating container behavior or just providing a path)
 os.environ.setdefault("TMP_DIR", ".tmp")
 

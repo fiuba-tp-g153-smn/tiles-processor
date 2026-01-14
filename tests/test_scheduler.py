@@ -14,12 +14,13 @@ from scheduler import start_scheduler, _create_job_runner, _get_directory_size
 
 
 @pytest.fixture
-def mock_config():
+def mock_config(tmp_path):
     """Mock config for scheduler tests."""
     with mock.patch('scheduler.config') as mock_cfg:
         mock_cfg.TIMEZONE = 'UTC'
         mock_cfg.TMP_DIR = '.tmp'
         mock_cfg.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024 * 1024 * 1024  # 10GB
+        mock_cfg.SCHEDULER_DB_PATH = str(tmp_path / 'scheduler.db')
         mock_cfg.get_job_schedules.return_value = {
             "job_a": "*/10 * * * *",
             "job_b": "0 0 * * *"
@@ -109,37 +110,45 @@ class TestStartScheduler:
             "job_b": mock_job_b
         }
 
-        with patch('scheduler.AsyncIOScheduler') as MockScheduler:
-            scheduler_instance = MockScheduler.return_value
-            scheduler_instance.get_jobs.return_value = [1, 2]
+        with patch('scheduler.SQLAlchemyJobStore') as MockJobStore:
+            with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+                scheduler_instance = MockScheduler.return_value
+                scheduler_instance.get_jobs.return_value = [1, 2]
 
-            stop_event = asyncio.Event()
+                stop_event = asyncio.Event()
 
-            # Schedule stop after brief delay
-            async def stop_after_delay():
-                await asyncio.sleep(0.05)
-                stop_event.set()
+                # Schedule stop after brief delay
+                async def stop_after_delay():
+                    await asyncio.sleep(0.05)
+                    stop_event.set()
 
-            asyncio.create_task(stop_after_delay())
+                asyncio.create_task(stop_after_delay())
 
-            await start_scheduler(job_registry, stop_event)
+                await start_scheduler(job_registry, stop_event)
 
-            # Verify scheduler was created with correct timezone
-            MockScheduler.assert_called_once_with(timezone='UTC')
+                # Verify job store was created with SQLite URL
+                MockJobStore.assert_called_once()
+                assert 'sqlite:///' in MockJobStore.call_args.kwargs['url']
 
-            # Verify add_job was called twice
-            assert scheduler_instance.add_job.call_count == 2
+                # Verify scheduler was created with jobstores and timezone
+                MockScheduler.assert_called_once()
+                call_kwargs = MockScheduler.call_args.kwargs
+                assert 'jobstores' in call_kwargs
+                assert call_kwargs['timezone'] == 'UTC'
 
-            # Verify APScheduler best practices are used
-            for call in scheduler_instance.add_job.call_args_list:
-                kwargs = call.kwargs
-                assert kwargs['max_instances'] == 1  # Prevent overlap
-                assert kwargs['coalesce'] is True    # Merge missed runs
-                assert kwargs['replace_existing'] is True
-                assert 'misfire_grace_time' in kwargs
+                # Verify add_job was called twice
+                assert scheduler_instance.add_job.call_count == 2
 
-            scheduler_instance.start.assert_called_once()
-            scheduler_instance.shutdown.assert_called_once()
+                # Verify APScheduler best practices are used
+                for call in scheduler_instance.add_job.call_args_list:
+                    kwargs = call.kwargs
+                    assert kwargs['max_instances'] == 1  # Prevent overlap
+                    assert kwargs['coalesce'] is True    # Merge missed runs
+                    assert kwargs['replace_existing'] is True
+                    assert 'misfire_grace_time' in kwargs
+
+                scheduler_instance.start.assert_called_once()
+                scheduler_instance.shutdown.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_scheduler_skips_jobs_without_schedule(self, mock_config):
@@ -159,40 +168,42 @@ class TestStartScheduler:
             "job_b": mock_job_b  # This one has no schedule
         }
 
-        with patch('scheduler.AsyncIOScheduler') as MockScheduler:
-            scheduler_instance = MockScheduler.return_value
-            scheduler_instance.get_jobs.return_value = [1]
+        with patch('scheduler.SQLAlchemyJobStore'):
+            with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+                scheduler_instance = MockScheduler.return_value
+                scheduler_instance.get_jobs.return_value = [1]
 
-            stop_event = asyncio.Event()
-            stop_event.set()  # Stop immediately
+                stop_event = asyncio.Event()
+                stop_event.set()  # Stop immediately
 
-            await start_scheduler(job_registry, stop_event)
+                await start_scheduler(job_registry, stop_event)
 
-            # Only job_a should be added
-            assert scheduler_instance.add_job.call_count == 1
-            call_kwargs = scheduler_instance.add_job.call_args.kwargs
-            assert call_kwargs['id'] == 'job_a'
+                # Only job_a should be added
+                assert scheduler_instance.add_job.call_count == 1
+                call_kwargs = scheduler_instance.add_job.call_args.kwargs
+                assert call_kwargs['id'] == 'job_a'
 
     @pytest.mark.asyncio
     async def test_scheduler_handles_cancellation(self, mock_config):
         """Test graceful shutdown on cancellation."""
         job_registry = {}
 
-        with patch('scheduler.AsyncIOScheduler') as MockScheduler:
-            scheduler_instance = MockScheduler.return_value
-            scheduler_instance.get_jobs.return_value = []
+        with patch('scheduler.SQLAlchemyJobStore'):
+            with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+                scheduler_instance = MockScheduler.return_value
+                scheduler_instance.get_jobs.return_value = []
 
-            stop_event = asyncio.Event()
+                stop_event = asyncio.Event()
 
-            # Create task and cancel it
-            task = asyncio.create_task(start_scheduler(job_registry, stop_event))
-            await asyncio.sleep(0.01)
-            task.cancel()
+                # Create task and cancel it
+                task = asyncio.create_task(start_scheduler(job_registry, stop_event))
+                await asyncio.sleep(0.01)
+                task.cancel()
 
-            with pytest.raises(asyncio.CancelledError):
-                await task
+                with pytest.raises(asyncio.CancelledError):
+                    await task
 
-            scheduler_instance.shutdown.assert_called_once()
+                scheduler_instance.shutdown.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_scheduler_uses_cron_triggers(self, mock_config):
@@ -202,19 +213,20 @@ class TestStartScheduler:
 
         job_registry = {"job_a": mock_job}
 
-        with patch('scheduler.AsyncIOScheduler') as MockScheduler:
-            scheduler_instance = MockScheduler.return_value
-            scheduler_instance.get_jobs.return_value = [1]
+        with patch('scheduler.SQLAlchemyJobStore'):
+            with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+                scheduler_instance = MockScheduler.return_value
+                scheduler_instance.get_jobs.return_value = [1]
 
-            stop_event = asyncio.Event()
-            stop_event.set()
+                stop_event = asyncio.Event()
+                stop_event.set()
 
-            await start_scheduler(job_registry, stop_event)
+                await start_scheduler(job_registry, stop_event)
 
-            # Check that CronTrigger was used
-            call_kwargs = scheduler_instance.add_job.call_args.kwargs
-            from apscheduler.triggers.cron import CronTrigger
-            assert isinstance(call_kwargs['trigger'], CronTrigger)
+                # Check that CronTrigger was used
+                call_kwargs = scheduler_instance.add_job.call_args.kwargs
+                from apscheduler.triggers.cron import CronTrigger
+                assert isinstance(call_kwargs['trigger'], CronTrigger)
 
 
 class TestGetDirectorySize:
