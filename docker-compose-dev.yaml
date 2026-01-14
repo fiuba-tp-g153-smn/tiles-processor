@@ -7,7 +7,6 @@ services:
     volumes:
       - ${TMP_DIR_HOST}:${TMP_DIR_CONTAINER}
     # Options: process_band_13 or process_band_9
-    command: python3 src/main.py process_band_13
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - BAND_13_SCHEDULE_CRON=${BAND_13_SCHEDULE_CRON}
@@ -17,3 +16,7 @@ services:
       - TZ=${TZ}
       - TMP_DIR_HOST=${TMP_DIR_HOST}
       - TMP_DIR_CONTAINER=${TMP_DIR_CONTAINER}
+      - BOUNDS_MINX=${BOUNDS_MINX}
+      - BOUNDS_MINY=${BOUNDS_MINY}
+      - BOUNDS_MAXX=${BOUNDS_MAXX}
+      - BOUNDS_MAXY=${BOUNDS_MAXY}

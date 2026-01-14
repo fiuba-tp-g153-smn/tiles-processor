@@ -1,233 +1,254 @@
+"""
+Tests for the APScheduler-based job scheduler.
+"""
 import asyncio
 import sys
 import os
 from unittest import mock
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
-# Ensure src is in python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 import pytest
-from scheduler import start_scheduler, _create_enqueue_callback, _run_job, _worker
+from scheduler import start_scheduler, _create_job_runner, _get_directory_size
 
-# Config mock needs to be applied before importing/running scheduler.start_scheduler
-# but start_scheduler imports config.
-# We can mock `config.config.get_job_schedules`
 
 @pytest.fixture
 def mock_config():
-    with mock.patch('scheduler.config.get_job_schedules') as mock_get:
-        yield mock_get
+    """Mock config for scheduler tests."""
+    with mock.patch('scheduler.config') as mock_cfg:
+        mock_cfg.TIMEZONE = 'UTC'
+        mock_cfg.TMP_DIR = '.tmp'
+        mock_cfg.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024 * 1024 * 1024  # 10GB
+        mock_cfg.get_job_schedules.return_value = {
+            "job_a": "*/10 * * * *",
+            "job_b": "0 0 * * *"
+        }
+        yield mock_cfg
 
-@pytest.mark.asyncio
-async def test_start_scheduler_registers_jobs(mock_config):
-    # Setup
-    mock_config.return_value = {
-        "job_a": "*/10 * * * *",
-        "job_b": "0 0 * * *"
-    }
 
-    # Mock config.TIMEZONE
-    with mock.patch('scheduler.config.TIMEZONE', 'America/New_York'):
+class TestCreateJobRunner:
+    """Tests for the _create_job_runner function."""
+
+    @pytest.mark.asyncio
+    async def test_job_runner_executes_job(self, mock_config):
+        """Test that job runner executes the job's run method."""
+        mock_job_instance = MagicMock()
+        mock_job_instance.run = AsyncMock()
+
+        mock_job_cls = MagicMock(return_value=mock_job_instance)
+        mock_job_cls.__name__ = "TestJob"
+
+        runner = _create_job_runner(mock_job_cls, "test_job")
+
+        with patch('scheduler._get_directory_size', return_value=0):
+            await runner()
+
+        mock_job_cls.assert_called_once()
+        mock_job_instance.run.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_job_runner_skips_when_disk_full(self, mock_config):
+        """Test that job runner skips execution when disk limit exceeded."""
+        mock_job_instance = MagicMock()
+        mock_job_instance.run = AsyncMock()
+
+        mock_job_cls = MagicMock(return_value=mock_job_instance)
+        mock_job_cls.__name__ = "TestJob"
+
+        runner = _create_job_runner(mock_job_cls, "test_job")
+
+        # Simulate disk full (11GB > 10GB limit)
+        with patch('scheduler._get_directory_size', return_value=11 * 1024**3):
+            await runner()
+
+        # Job should not be instantiated or run
+        mock_job_cls.assert_not_called()
+        mock_job_instance.run.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_job_runner_handles_exceptions(self, mock_config):
+        """Test that job runner catches exceptions without crashing."""
+        mock_job_instance = MagicMock()
+        mock_job_instance.run = AsyncMock(side_effect=Exception("Job failed"))
+
+        mock_job_cls = MagicMock(return_value=mock_job_instance)
+        mock_job_cls.__name__ = "FailingJob"
+
+        runner = _create_job_runner(mock_job_cls, "failing_job")
+
+        with patch('scheduler._get_directory_size', return_value=0):
+            # Should not raise
+            await runner()
+
+        mock_job_instance.run.assert_awaited_once()
+
+    def test_job_runner_has_correct_name(self, mock_config):
+        """Test that job runner function has descriptive name."""
+        mock_job_cls = MagicMock()
+        mock_job_cls.__name__ = "MyJob"
+
+        runner = _create_job_runner(mock_job_cls, "my_job")
+
+        assert runner.__name__ == "run_my_job"
+
+
+class TestStartScheduler:
+    """Tests for the start_scheduler function."""
+
+    @pytest.mark.asyncio
+    async def test_scheduler_registers_jobs_with_correct_settings(self, mock_config):
+        """Test that scheduler registers jobs with APScheduler best practices."""
         mock_job_a = MagicMock()
         mock_job_a.__name__ = "JobA"
         mock_job_b = MagicMock()
         mock_job_b.__name__ = "JobB"
-        
+
         job_registry = {
             "job_a": mock_job_a,
             "job_b": mock_job_b
         }
 
-    # Mock APScheduler
-        with mock.patch('scheduler.AsyncIOScheduler') as MockScheduler:
+        with patch('scheduler.AsyncIOScheduler') as MockScheduler:
             scheduler_instance = MockScheduler.return_value
-            scheduler_instance.start = MagicMock()
-            scheduler_instance.shutdown = MagicMock()
-            scheduler_instance.get_jobs.return_value = [1, 2] # just for the logging count
+            scheduler_instance.get_jobs.return_value = [1, 2]
 
-            # We need to interrupt the infinite wait in start_scheduler
-            # start_scheduler waits on `stop_event.wait()`
-            # We can mock asyncio.Event to return immediately or throw CancelledError
-            
-            # Mock asyncio.Queue and create_task
-            
-            # Define plain worker func to avoid Mock return values (which might be misinterpreted)
-            def simple_worker(queue):
-                return None
+            stop_event = asyncio.Event()
 
-            with mock.patch('asyncio.Queue') as MockQueue, \
-                 mock.patch('asyncio.create_task') as mock_create_task, \
-                 mock.patch('scheduler._worker', side_effect=simple_worker) as mock_worker, \
-                 mock.patch('asyncio.Event') as MockEvent:
-                
-                queue_instance = MockQueue.return_value
-                event_instance = MockEvent.return_value
-                
-                async def wait():
-                    return True
-                event_instance.wait = wait
+            # Schedule stop after brief delay
+            async def stop_after_delay():
+                await asyncio.sleep(0.05)
+                stop_event.set()
 
-                # Make create_task return an awaitable mock (Future)
-                mock_worker_task = asyncio.Future()
-                mock_worker_task.set_result(None) # Make it completed so await finishes
-                
-                # Replace cancel with a MagicMock
-                mock_worker_task.cancel = MagicMock()
-                
-                mock_create_task.return_value = mock_worker_task
+            asyncio.create_task(stop_after_delay())
 
-                await start_scheduler(job_registry)
-                
-                # Check Scheduler init timezone
-                MockScheduler.assert_called_with(timezone='America/New_York')
+            await start_scheduler(job_registry, stop_event)
 
-                # Verification
-                assert scheduler_instance.add_job.call_count == 2
-                
-                # Check queue creation
-                MockQueue.assert_called_once()
-                
-                # Check worker startup
-                mock_create_task.assert_called_once()
-                
-                # Verify triggers
-                calls = scheduler_instance.add_job.call_args_list
-                from apscheduler.triggers.cron import CronTrigger
-                
-                # Check job_a (*/10 * * * *)
-                job_a_call = next(c for c in calls if c.kwargs['id'] == 'job_a')
-                trigger_a = job_a_call.kwargs['trigger']
-                assert isinstance(trigger_a, CronTrigger)
-                assert "minute='*/10'" in str(trigger_a) 
-                assert str(trigger_a.timezone) == 'America/New_York'
+            # Verify scheduler was created with correct timezone
+            MockScheduler.assert_called_once_with(timezone='UTC')
 
-                # Check job_b (0 0 * * *)
-                job_b_call = next(c for c in calls if c.kwargs['id'] == 'job_b')
-                trigger_b = job_b_call.kwargs['trigger']
-                assert isinstance(trigger_b, CronTrigger)
-                assert "hour='0', minute='0'" in str(trigger_b)
-                assert str(trigger_b.timezone) == 'America/New_York'
-            
+            # Verify add_job was called twice
+            assert scheduler_instance.add_job.call_count == 2
+
+            # Verify APScheduler best practices are used
+            for call in scheduler_instance.add_job.call_args_list:
+                kwargs = call.kwargs
+                assert kwargs['max_instances'] == 1  # Prevent overlap
+                assert kwargs['coalesce'] is True    # Merge missed runs
+                assert kwargs['replace_existing'] is True
+                assert 'misfire_grace_time' in kwargs
+
             scheduler_instance.start.assert_called_once()
             scheduler_instance.shutdown.assert_called_once()
 
-@pytest.mark.asyncio
-async def test_create_enqueue_callback():
-    mock_queue = AsyncMock()
-    mock_job_cls = MagicMock()
-    mock_job_cls.__name__ = "TestJob"
-    
-    callback = _create_enqueue_callback(mock_queue, mock_job_cls, "test_job")
-    await callback()
-    
-    # Check that it put something in the queue
-    mock_queue.put.assert_called_once()
-    args = mock_queue.put.call_args[0][0]
-    # args should be (func, job_name)
-    assert args[1] == "test_job"
-    assert callable(args[0])
+    @pytest.mark.asyncio
+    async def test_scheduler_skips_jobs_without_schedule(self, mock_config):
+        """Test that jobs without schedules are skipped."""
+        mock_config.get_job_schedules.return_value = {
+            "job_a": "*/10 * * * *"
+            # job_b has no schedule
+        }
+
+        mock_job_a = MagicMock()
+        mock_job_a.__name__ = "JobA"
+        mock_job_b = MagicMock()
+        mock_job_b.__name__ = "JobB"
+
+        job_registry = {
+            "job_a": mock_job_a,
+            "job_b": mock_job_b  # This one has no schedule
+        }
+
+        with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+            scheduler_instance = MockScheduler.return_value
+            scheduler_instance.get_jobs.return_value = [1]
+
+            stop_event = asyncio.Event()
+            stop_event.set()  # Stop immediately
+
+            await start_scheduler(job_registry, stop_event)
+
+            # Only job_a should be added
+            assert scheduler_instance.add_job.call_count == 1
+            call_kwargs = scheduler_instance.add_job.call_args.kwargs
+            assert call_kwargs['id'] == 'job_a'
+
+    @pytest.mark.asyncio
+    async def test_scheduler_handles_cancellation(self, mock_config):
+        """Test graceful shutdown on cancellation."""
+        job_registry = {}
+
+        with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+            scheduler_instance = MockScheduler.return_value
+            scheduler_instance.get_jobs.return_value = []
+
+            stop_event = asyncio.Event()
+
+            # Create task and cancel it
+            task = asyncio.create_task(start_scheduler(job_registry, stop_event))
+            await asyncio.sleep(0.01)
+            task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            scheduler_instance.shutdown.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_scheduler_uses_cron_triggers(self, mock_config):
+        """Test that CRON triggers are created correctly."""
+        mock_job = MagicMock()
+        mock_job.__name__ = "TestJob"
+
+        job_registry = {"job_a": mock_job}
+
+        with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+            scheduler_instance = MockScheduler.return_value
+            scheduler_instance.get_jobs.return_value = [1]
+
+            stop_event = asyncio.Event()
+            stop_event.set()
+
+            await start_scheduler(job_registry, stop_event)
+
+            # Check that CronTrigger was used
+            call_kwargs = scheduler_instance.add_job.call_args.kwargs
+            from apscheduler.triggers.cron import CronTrigger
+            assert isinstance(call_kwargs['trigger'], CronTrigger)
 
 
-@pytest.mark.asyncio
-async def test_worker():
-    mock_queue = MagicMock()
-    # Configure get to be async
-    mock_queue.get = AsyncMock()
-    mock_job_func = AsyncMock()
-    
-    # Setup queue to return one job then block or cancel
-    # We can throw CancelledError on the second get() to stop the worker
-    mock_queue.get.side_effect = [
-        (mock_job_func, "test_job"),
-        asyncio.CancelledError
-    ]
-    
-    try:
-        await _worker(mock_queue)
-    except asyncio.CancelledError:
-        pass
-        
-    
-    mock_job_func.assert_called_once()
-    mock_queue.task_done.assert_called()
+class TestGetDirectorySize:
+    """Tests for the _get_directory_size function."""
 
+    def test_returns_zero_for_nonexistent_path(self, tmp_path):
+        """Test that non-existent path returns 0."""
+        result = _get_directory_size(tmp_path / "nonexistent")
+        assert result == 0
 
-@pytest.mark.asyncio
-async def test_worker_processes_two_jobs_same_type():
-    mock_queue = MagicMock()
-    mock_queue.get = AsyncMock()
-    mock_job_func = AsyncMock()
+    def test_calculates_size_correctly(self, tmp_path):
+        """Test that directory size is calculated correctly."""
+        # Create some files
+        (tmp_path / "file1.txt").write_bytes(b"a" * 100)
+        (tmp_path / "file2.txt").write_bytes(b"b" * 200)
 
-    # Same job function twice
-    mock_queue.get.side_effect = [
-        (mock_job_func, "duplicate_job"),
-        (mock_job_func, "duplicate_job"),
-        asyncio.CancelledError
-    ]
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "file3.txt").write_bytes(b"c" * 300)
 
-    try:
-        await _worker(mock_queue)
-    except asyncio.CancelledError:
-        pass
+        result = _get_directory_size(tmp_path)
+        assert result == 600
 
-    assert mock_job_func.await_count == 2
-    assert mock_queue.task_done.call_count == 2
+    def test_skips_symlinks(self, tmp_path):
+        """Test that symbolic links are not counted."""
+        real_file = tmp_path / "real.txt"
+        real_file.write_bytes(b"x" * 100)
 
+        link_file = tmp_path / "link.txt"
+        try:
+            link_file.symlink_to(real_file)
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
 
-@pytest.mark.asyncio
-async def test_worker_processes_multiple_jobs_different_types():
-    mock_queue = MagicMock()
-    mock_queue.get = AsyncMock()
-    
-    # We need mock functions that we can track being awaited
-    mock_job_a = AsyncMock()
-    mock_job_b = AsyncMock()
-
-    mock_queue.get.side_effect = [
-        (mock_job_a, "job_a"),
-        (mock_job_b, "job_b"),
-        asyncio.CancelledError
-    ]
-
-    try:
-        await _worker(mock_queue)
-    except asyncio.CancelledError:
-        pass
-
-    mock_job_a.assert_awaited_once()
-    mock_job_b.assert_awaited_once()
-    assert mock_queue.task_done.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_run_job_respects_size_limit(mock_config):
-    # Setup
-    mock_instance = MagicMock()
-    call_tracker = MagicMock()
-    
-    async def run_job():
-        call_tracker()
-        
-    mock_instance.run = run_job
-
-    def mock_job_cls():
-        return mock_instance
-    mock_job_cls.__name__ = "TestJob"
-    
-    # Mock _get_directory_size
-    with mock.patch('scheduler._get_directory_size') as mock_get_size:
-        # Mock config values
-        with mock.patch('scheduler.config.MAX_TMP_DIR_SIZE_BYTES', 1000):
-            
-            # Case 1: Size OK (500 < 1000)
-            mock_get_size.return_value = 500
-            await _run_job(mock_job_cls)
-            call_tracker.assert_called_once()
-            call_tracker.reset_mock()
-
-            # Case 2: Size Exceeded (1500 > 1000)
-            mock_get_size.return_value = 1500
-            await _run_job(mock_job_cls)
-            call_tracker.assert_not_called()
-
+        result = _get_directory_size(tmp_path)
+        # Should only count real.txt, not the symlink
+        assert result == 100
