@@ -16,7 +16,67 @@ AVAILABLE_JOBS = {
     "process_band_9": ProcessBand9Job,
 }
 
-async def main():
+EXIT_ERROR_CODE = 1
+EXIT_SUCCESS_CODE = 0
+
+
+def get_enabled_jobs(logger: logging.Logger) -> dict:
+    """Filter available jobs based on configuration settings."""
+    enabled_jobs = {}
+
+    if config.ENABLE_BAND_13:
+        enabled_jobs["process_band_13"] = AVAILABLE_JOBS["process_band_13"]
+    else:
+        logger.warning("Band 13 processing is DISABLED in config.")
+
+    if config.ENABLE_BAND_9:
+        enabled_jobs["process_band_9"] = AVAILABLE_JOBS["process_band_9"]
+    else:
+        logger.warning("Band 9 processing is DISABLED in config.")
+
+    return enabled_jobs
+
+
+def get_target_jobs(job_name: str, logger: logging.Logger) -> dict | None:
+    """Determine which jobs to run based on the job name argument.
+
+    Returns None if no valid jobs are found or enabled.
+    """
+    if job_name == "scheduler":
+        logger.info("Starting scheduler mode for ALL jobs")
+        target_jobs = get_enabled_jobs(logger)
+
+        if not target_jobs:
+            logger.error("No jobs are enabled. Exiting.")
+            return None
+    else:
+        job_class = AVAILABLE_JOBS.get(job_name)
+        if not job_class:
+            logger.error(
+                f"Job '{job_name}' not found. Available jobs: {list(AVAILABLE_JOBS.keys())}"
+            )
+            return None
+
+        logger.info(f"Starting scheduler mode for SINGLE job: {job_name}")
+        target_jobs = {job_name: job_class}
+
+    return target_jobs
+
+
+def setup_signal_handlers(
+    loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event, logger: logging.Logger
+) -> None:
+    """Setup graceful shutdown signal handlers."""
+
+    def handle_signal(sig):
+        logger.info(f"Received exit signal {sig.name}...")
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda s=sig: handle_signal(s))
+
+
+async def main() -> int:
     # Setup logging first thing
     setup_logging(log_level=config.LOG_LEVEL)
     logger = logging.getLogger(__name__)
@@ -25,55 +85,27 @@ async def main():
 
     if len(sys.argv) < 2:
         logger.error("Usage: python3 ./src/main.py <job_name|scheduler>")
-        return
+        return EXIT_ERROR_CODE
 
     job_name = sys.argv[1]
 
-    target_jobs = {}
-    if job_name == "scheduler":
-        logger.info("Starting scheduler mode for ALL jobs")
-        # Filter jobs based on configuration
-        if config.ENABLE_BAND_13:
-             target_jobs["process_band_13"] = AVAILABLE_JOBS["process_band_13"]
-        else:
-             logger.warning("Band 13 processing is DISABLED in config.")
+    target_jobs = get_target_jobs(job_name, logger)
+    if target_jobs is None:
+        return EXIT_ERROR_CODE
 
-        if config.ENABLE_BAND_9:
-             target_jobs["process_band_9"] = AVAILABLE_JOBS["process_band_9"]
-        else:
-             logger.warning("Band 9 processing is DISABLED in config.")
-        
-        if not target_jobs:
-            logger.error("No jobs are enabled. Exiting.")
-            return
-    else:
-        job_class = AVAILABLE_JOBS.get(job_name)
-        if not job_class:
-            logger.error(f"Job '{job_name}' not found. Available jobs: {list(AVAILABLE_JOBS.keys())}")
-            return
-        
-        logger.info(f"Starting scheduler mode for SINGLE job: {job_name}")
-        target_jobs = {job_name: job_class}
-
-    
-    # Graceful shutdown setup
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
 
-    def handle_signal(sig):
-        logger.info(f"Received exit signal {sig.name}...")
-        stop_event.set()
-        # Optionally, we could cancel tasks here if stop_event.wait() wasn't enough,
-        # but stop_event is what start_scheduler waits on.
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: handle_signal(s))
+    setup_signal_handlers(loop, stop_event, logger)
 
     await start_scheduler(target_jobs, stop_event=stop_event)
+    
+    return EXIT_SUCCESS_CODE
+
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        exit_code = asyncio.run(main())
+        sys.exit(exit_code)
     except (KeyboardInterrupt, SystemExit):
-        pass # Handle any remaining interrupt that might bubble up if strictly synchronous code ran
-
+        sys.exit(EXIT_ERROR_CODE)

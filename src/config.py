@@ -37,12 +37,12 @@ def validate_cron_expression(expr: str, name: str) -> str:
 
 class Config:
     # General
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
-    
-    # Timezone (defaults to UTC)
+    LOG_LEVEL: str = get_required_env("LOG_LEVEL").upper()
+
+    # Timezone
     # Examples: "UTC", "America/New_York", "Europe/London", "Asia/Tokyo", "America/Argentina/Buenos_Aires"
-    TIMEZONE: str = os.getenv("TZ", "UTC")
-    
+    TIMEZONE: str = get_required_env("TZ")
+
     # Scheduler
     # Format: Full cron expression (e.g. "*/10 * * * *")
     # Examples:
@@ -57,22 +57,21 @@ class Config:
     BAND_9_SCHEDULE_CRON: str = validate_cron_expression(
         get_required_env("BAND_9_SCHEDULE_CRON"), "BAND_9_SCHEDULE_CRON"
     )
-    
+
     # Feature Toggles
-    # Default to True to maintain backward compatibility if env vars are missing
-    ENABLE_BAND_13: bool = os.getenv("ENABLE_BAND_13", "true").lower() in ("true", "1")
-    ENABLE_BAND_9: bool = os.getenv("ENABLE_BAND_9", "true").lower() in ("true", "1")
-    
+    ENABLE_BAND_13: bool = get_required_env("ENABLE_BAND_13").lower() in ("true", "1")
+    ENABLE_BAND_9: bool = get_required_env("ENABLE_BAND_9").lower() in ("true", "1")
+
     # Paths
-    TMP_DIR: str = os.getenv("TMP_DIR_CONTAINER", ".tmp")
+    TMP_DIR: str = get_required_env("TMP_DIR_CONTAINER")
     MAX_TMP_DIR_SIZE_BYTES: int = 10 * 1024 * 1024 * 1024  # 10 GB
 
-    # Bounding box for clipping satellite imagery (defaults to Argentina region)
+    # Bounding box for clipping satellite imagery
     # Coordinates are in EPSG:4326 (longitude/latitude)
-    BOUNDS_MINX: float = float(os.getenv("BOUNDS_MINX", "-90.0"))   # West longitude
-    BOUNDS_MINY: float = float(os.getenv("BOUNDS_MINY", "-60.0"))   # South latitude
-    BOUNDS_MAXX: float = float(os.getenv("BOUNDS_MAXX", "-30.0"))   # East longitude
-    BOUNDS_MAXY: float = float(os.getenv("BOUNDS_MAXY", "-15.0"))   # North latitude
+    BOUNDS_MINX: float = float(get_required_env("BOUNDS_MINX"))   # West longitude
+    BOUNDS_MINY: float = float(get_required_env("BOUNDS_MINY"))   # South latitude
+    BOUNDS_MAXX: float = float(get_required_env("BOUNDS_MAXX"))   # East longitude
+    BOUNDS_MAXY: float = float(get_required_env("BOUNDS_MAXY"))   # North latitude
 
     @classmethod
     def get_bounds(cls) -> Dict[str, float]:
@@ -99,10 +98,15 @@ class Config:
         logger.info(f"LOG_LEVEL: {cls.LOG_LEVEL}")
         logger.info(f"TIMEZONE: {cls.TIMEZONE}")
         logger.info(f"BAND_13_SCHEDULE_CRON: {cls.BAND_13_SCHEDULE_CRON}")
-        logger.info(f"ENABLE_BAND_13: {cls.ENABLE_BAND_13}")
         logger.info(f"BAND_9_SCHEDULE_CRON: {cls.BAND_9_SCHEDULE_CRON}")
+        logger.info(f"ENABLE_BAND_13: {cls.ENABLE_BAND_13}")
         logger.info(f"ENABLE_BAND_9: {cls.ENABLE_BAND_9}")
         logger.info(f"TMP_DIR: {cls.TMP_DIR}")
+        logger.info(f"MAX_TMP_DIR_SIZE_BYTES: {cls.MAX_TMP_DIR_SIZE_BYTES}")
+        logger.info(f"BOUNDS_MINX: {cls.BOUNDS_MINX}")
+        logger.info(f"BOUNDS_MINY: {cls.BOUNDS_MINY}")
+        logger.info(f"BOUNDS_MAXX: {cls.BOUNDS_MAXX}")
+        logger.info(f"BOUNDS_MAXY: {cls.BOUNDS_MAXY}")
         logger.info("=====================")
 
 config = Config()
