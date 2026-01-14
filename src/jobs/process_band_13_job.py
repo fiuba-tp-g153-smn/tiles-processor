@@ -83,8 +83,12 @@ class ProcessBand13Job:
     async def run(self):
         current_time = datetime.now(UTC)
 
+        # Prepare raw directory for caching downloads
+        raw_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "raw"
+        raw_output_dir.mkdir(parents=True, exist_ok=True)
+
         # Download files from the last hour (6 files)
-        downloaded_files = await self._download_last_hour_files(current_time)
+        downloaded_files = await self._download_last_hour_files(current_time, raw_output_dir)
         
         georreferenced_data = await SetupGOESGeorreferencingService(
             downloaded_files
@@ -110,7 +114,7 @@ class ProcessBand13Job:
         await GenerateTilesService(geotiff_files, tiles_output_dir).run()
         logger.info("Tiles generation completed.")
 
-    async def _download_last_hour_files(self, current_time: datetime) -> dict[str, bytes]:
+    async def _download_last_hour_files(self, current_time: datetime, local_cache_dir: Path) -> dict[str, bytes]:
         """
         Download the last 24 images (4 hours of data, 1 image every 10 minutes).
         Example for 13:23 UTC:
@@ -137,6 +141,7 @@ class ProcessBand13Job:
                 hour_files = await self._s3_client.download_folder(
                     search_path,
                     file_pattern=self._product_base_file_pattern,
+                    local_cache_dir=local_cache_dir,
                 )
             else:
                 # Previous hours: filter by minutes if necessary
@@ -155,12 +160,14 @@ class ProcessBand13Job:
                         search_path,
                         file_pattern=self._product_base_file_pattern,
                         file_filter=minute_filter,
+                        local_cache_dir=local_cache_dir,
                     )
                 else:
                     # We need all files from this hour
                     hour_files = await self._s3_client.download_folder(
                         search_path,
                         file_pattern=self._product_base_file_pattern,
+                        local_cache_dir=local_cache_dir,
                     )
             
             all_files.update(hour_files)

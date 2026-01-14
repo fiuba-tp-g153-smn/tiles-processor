@@ -36,6 +36,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from config import config
+from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,9 @@ def run_job(job_name: str, job_cls: Type):
         job_name: Name of the job to execute
         job_cls: The job class to instantiate and run (passed explicitly for process safety)
     """
+    # Initialize logging in the worker process
+    setup_logging(log_level=config.LOG_LEVEL)
+    
     if not job_monitor.ensure_execution_safe(job_name):
         return
 
@@ -210,7 +214,26 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
             logger.warning("No schedule found for job '%s'. Skipping.", job_name)
             continue
 
-        # Add job using module-level run_job function with job_name as argument
+        # Check if job already exists in the store
+        # If it doesn't exist, we schedule it to run immediately (in addition to the cron schedule)
+        # to ensure the system starts processing right away on first deployment.
+        existing_job = scheduler.get_job(job_name)
+        next_run_time = None
+        
+        if not existing_job:
+            logger.info("Job '%s' not found in store. Scheduling separate one-off job for immediate execution.", job_name)
+            # Schedule a separate one-off job for immediate execution
+            # We use the same run_job function but with a different ID
+            scheduler.add_job(
+                run_job,
+                args=[job_name, job_cls],
+                id=f"{job_name}_startup",
+                name=f"{job_name} (Startup)",
+                misfire_grace_time=MISFIRE_GRACE_TIME,
+                replace_existing=True,
+            )
+
+        # Add recurring job using module-level run_job function with job_name as argument
         # This allows APScheduler to serialize the job for SQLite persistence
         scheduler.add_job(
             run_job,                  # Module-level function (serializable)

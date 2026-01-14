@@ -3,7 +3,9 @@ import asyncio
 from botocore import UNSIGNED
 from botocore.config import Config as BotoConfig
 import logging
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
+import os
+from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
@@ -31,7 +33,11 @@ class S3Client:
         self._session = aioboto3.Session()
 
     async def download_file(
-        self, s3_client, relative_file_path: str, retries: int = 3
+        self,
+        s3_client,
+        relative_file_path: str,
+        retries: int = 3,
+        local_cache_dir: Optional[Path] = None,
     ) -> tuple:
         for attempt in range(retries):
             try:
@@ -41,9 +47,18 @@ class S3Client:
                     )
                     async with response["Body"] as stream:
                         content = await stream.read()
-                    logger.info(
-                        f"✓ Downloaded: {relative_file_path} ({len(content)} bytes)"
-                    )
+                    
+                    if local_cache_dir:
+                        file_name = Path(relative_file_path).name
+                        cache_path = local_cache_dir / file_name
+                        # Write to cache asynchronously
+                        await asyncio.to_thread(cache_path.write_bytes, content)
+                        logger.info(f"✓ Downloaded and cached: {relative_file_path}")
+                    else:
+                        logger.info(
+                            f"✓ Downloaded: {relative_file_path} ({len(content)} bytes)"
+                        )
+                    
                     return relative_file_path, content
             except Exception as e:
                 logger.warning(
@@ -61,6 +76,7 @@ class S3Client:
         folder_path: str,
         file_pattern: str = "",
         file_filter: Callable[[str], bool] = None,
+        local_cache_dir: Optional[Path] = None,
     ) -> Dict[str, bytes]:
         """
         Download files from a folder.
@@ -69,6 +85,7 @@ class S3Client:
             folder_path: S3 folder path
             file_pattern: Pattern to match in file names
             file_filter: Optional function to filter file paths before downloading
+            local_cache_dir: Optional directory to check/store cached files
         """
         file_paths = await self._get_folder_file_paths(folder_path, file_pattern)
         
@@ -80,7 +97,28 @@ class S3Client:
             file_paths = [fp for fp in file_paths if file_filter(fp)]
 
         files = {}
-        if not file_paths:
+        files_to_download = []
+
+        # Check cache if enabled
+        if local_cache_dir:
+            for fp in file_paths:
+                file_name = Path(fp).name
+                cache_path = local_cache_dir / file_name
+                if cache_path.exists():
+                    try:
+                        # Read from cache asynchronously
+                        content = await asyncio.to_thread(cache_path.read_bytes)
+                        files[fp] = content
+                        logger.info(f"✓ Loaded from cache: {fp}")
+                    except Exception as e:
+                        logger.warning(f"Error reading from cache {cache_path}: {e}")
+                        files_to_download.append(fp)
+                else:
+                    files_to_download.append(fp)
+        else:
+            files_to_download = file_paths
+
+        if not files_to_download:
             return files
             
         async with self._session.client(
@@ -88,7 +126,7 @@ class S3Client:
             endpoint_url=self._endpoint_url,
             config=BotoConfig(signature_version=UNSIGNED),
         ) as s3_client:
-            tasks = [self.download_file(s3_client, fp) for fp in file_paths]
+            tasks = [self.download_file(s3_client, fp, local_cache_dir=local_cache_dir) for fp in files_to_download]
             results = await asyncio.gather(*tasks, return_exceptions=False)
 
             for file_path, content in results:
@@ -96,7 +134,7 @@ class S3Client:
                     files[file_path] = content
 
         logger.info(
-            f"Download completed: {len(files)}/{len(file_paths)} files downloaded successfully"
+            f"Download/Cache load completed: {len(files)}/{len(file_paths)} files available"
         )
         return files
 
