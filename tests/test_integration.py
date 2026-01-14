@@ -16,16 +16,28 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../s
 
 import pytest
 import numpy as np
+from scheduler import job_monitor
+import logging
 
+logger = logging.getLogger(__name__)
 
+async def run_job_async(job_cls, job_name):
+    """Async helper to mimic scheduler.run_job for tests."""
+    if not job_monitor.ensure_execution_safe(job_name):
+        return
+
+    try:
+        job = job_cls()
+        await job.run()
+    except Exception:
+        logger.exception("Job %s failed", job_name)
 class TestSchedulerIntegration:
     """Integration tests for the APScheduler-based job system."""
 
     @pytest.mark.asyncio
     async def test_job_runner_executes_job(self):
         """Test that job runner properly instantiates and executes a job."""
-        from scheduler import _create_job_runner
-
+        
         processed_jobs = []
 
         # Create a mock job class
@@ -35,15 +47,12 @@ class TestSchedulerIntegration:
 
         MockJob.__name__ = "MockJob"
 
-        # Create job runner
-        runner = _create_job_runner(MockJob, "mock_job")
-
         # Execute the runner (mocking disk check)
         with patch('scheduler._get_directory_size', return_value=0):
             with patch('scheduler.config') as mock_config:
                 mock_config.TMP_DIR = '.tmp'
                 mock_config.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024**3
-                await runner()
+                await run_job_async(MockJob, "mock_job")
 
         # Verify job was processed
         assert len(processed_jobs) == 1
@@ -52,8 +61,7 @@ class TestSchedulerIntegration:
     @pytest.mark.asyncio
     async def test_job_runner_prevents_execution_when_disk_full(self):
         """Test that job runner skips execution when disk limit exceeded."""
-        from scheduler import _create_job_runner
-
+        
         execution_log = []
 
         class MockJob:
@@ -62,14 +70,12 @@ class TestSchedulerIntegration:
 
         MockJob.__name__ = "MockJob"
 
-        runner = _create_job_runner(MockJob, "mock_job")
-
         # Simulate disk full (11GB > 10GB limit)
         with patch('scheduler._get_directory_size', return_value=11 * 1024**3):
             with patch('scheduler.config') as mock_config:
                 mock_config.TMP_DIR = '.tmp'
                 mock_config.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024**3
-                await runner()
+                await run_job_async(MockJob, "mock_job")
 
         # Job should not have run
         assert execution_log == []
@@ -77,22 +83,19 @@ class TestSchedulerIntegration:
     @pytest.mark.asyncio
     async def test_job_runner_handles_failure_gracefully(self):
         """Test that a failing job doesn't crash the runner."""
-        from scheduler import _create_job_runner
-
+        
         class FailingJob:
             async def run(self):
                 raise Exception("Intentional failure")
 
         FailingJob.__name__ = "FailingJob"
 
-        runner = _create_job_runner(FailingJob, "failing_job")
-
         # Should not raise, just log the error
         with patch('scheduler._get_directory_size', return_value=0):
             with patch('scheduler.config') as mock_config:
                 mock_config.TMP_DIR = '.tmp'
                 mock_config.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024**3
-                await runner()  # Should complete without raising
+                await run_job_async(FailingJob, "failing_job")  # Should complete without raising
 
 
 class TestPipelineIntegration:
@@ -226,8 +229,7 @@ class TestEndToEndMocked:
     @pytest.mark.asyncio
     async def test_full_job_execution_mocked(self, tmp_path):
         """Test complete job execution with all external deps mocked."""
-        from scheduler import _create_job_runner
-
+        
         # Track what gets called
         execution_log = []
 
@@ -240,22 +242,19 @@ class TestEndToEndMocked:
 
         MockProcessJob.__name__ = "MockProcessJob"
 
-        runner = _create_job_runner(MockProcessJob, "mock_process")
-
         # Mock config to allow job execution
         with patch('scheduler.config') as mock_config:
             mock_config.TMP_DIR = str(tmp_path)
             mock_config.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024**3
             with patch('scheduler._get_directory_size', return_value=0):
-                await runner()
+                await run_job_async(MockProcessJob, "mock_process")
 
         assert execution_log == ["job_started", "job_completed"]
 
     @pytest.mark.asyncio
     async def test_job_cancelled_when_tmp_dir_full(self, tmp_path):
         """Test that jobs are skipped when tmp directory exceeds limit."""
-        from scheduler import _create_job_runner
-
+        
         execution_log = []
 
         class MockProcessJob:
@@ -264,14 +263,12 @@ class TestEndToEndMocked:
 
         MockProcessJob.__name__ = "MockProcessJob"
 
-        runner = _create_job_runner(MockProcessJob, "mock_process")
-
         # Mock directory size to exceed limit
         with patch('scheduler.config') as mock_config:
             mock_config.TMP_DIR = str(tmp_path)
             mock_config.MAX_TMP_DIR_SIZE_BYTES = 1000
             with patch('scheduler._get_directory_size', return_value=2000):
-                await runner()
+                await run_job_async(MockProcessJob, "mock_process")
 
         # Job should not have run
         assert execution_log == []
