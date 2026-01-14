@@ -1,3 +1,36 @@
+"""
+GOES-19 Band 9 (Water Vapor) Processing Job.
+
+This module processes GOES-19 ABI Band 9 (6.93 µm - Mid-Level Water Vapor) satellite
+imagery to generate web map tiles for atmospheric moisture visualization.
+
+Pipeline Overview:
+    1. DOWNLOAD: Fetches 24 images (4 hours) from NOAA's noaa-goes19 S3 bucket
+    2. GEOREFERENCE: Applies GOES satellite projection and coordinate transformation
+    3. BRIGHTNESS TEMP: Converts radiance to temperature using Planck equation
+    4. GEOTIFF: Creates colorized RGBA GeoTIFFs clipped to configured bounds
+    5. TILES: Generates XYZ web tiles (zoom 3-7, WEBP format, Leaflet-compatible)
+
+Band 9 Specifications:
+    - Wavelength: 6.93 µm (Mid-Level Water Vapor)
+    - Purpose: Atmospheric moisture analysis, jet stream tracking
+    - Temperature range: 220K to 260K (-53°C to -13°C) - narrower range for WV
+    - Color palette: Maroon → Orange → Gray → Blue (SMN style, inverted)
+
+Execution Frequency:
+    GOES-19 publishes Full Disk images every 10 minutes.
+    Recommended schedule: */30 * * * * (every 30 minutes)
+
+File Handling:
+    - GOES files have unique timestamps in filenames (no collisions)
+    - GeoTIFFs are atomically overwritten if same timestamp is reprocessed
+    - Tile directories are deleted and replaced on reprocessing
+    - Output: .tmp/band_9/geotiff/*.tif and .tmp/band_9/tiles/*_tiles/
+
+Example GOES-19 filename:
+    OR_ABI-L1b-RadF-M6C09_G19_s20250141230210_e20250141239518_c20250141239557.nc
+    └── s20250141230210 = start time: 2025, day 014, 12:30:21.0 UTC
+"""
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 import logging
@@ -16,6 +49,34 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessBand9Job:
+    """
+    Scheduled job for processing GOES-19 Band 9 (Water Vapor) imagery.
+
+    This job downloads the last 24 satellite images (4 hours of data at 10-minute
+    intervals), processes them through the full pipeline, and generates web map
+    tiles for visualization.
+
+    Attributes:
+        _bucket_name: NOAA's public S3 bucket (noaa-goes19)
+        _l1b_products_path: S3 prefix for ABI Level 1b Full Disk products
+        _product_base_file_pattern: Filter pattern for Band 9 files (C09_G19)
+        _s3_client: Async S3 client with concurrency limiting
+
+    Pipeline stages:
+        1. Download → SetupGOESGeorreferencingService (georeferencing)
+        2. → ComputeBrightnessTemperaturesService (Planck equation)
+        3. → GenerateGeoTIFFFilesService (colorized GeoTIFFs)
+        4. → GenerateTilesService (XYZ web tiles)
+
+    Output directories:
+        - GeoTIFFs: {TMP_DIR}/band_9/geotiff/
+        - Tiles: {TMP_DIR}/band_9/tiles/
+
+    Note on temperature range:
+        Band 9 uses a narrower temperature range (220K-260K) compared to Band 13
+        (183K-323K) because water vapor channel brightness temperatures are
+        concentrated in a smaller range. This maximizes color palette utilization.
+    """
     def __init__(self):
         self._bucket_name = constants.GOES19_BUCKET_NAME
         self._l1b_products_path = "ABI-L1b-RadF"

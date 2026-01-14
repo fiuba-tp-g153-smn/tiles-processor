@@ -1,3 +1,36 @@
+"""
+GOES-19 Band 13 (Cloud Tops) Processing Job.
+
+This module processes GOES-19 ABI Band 13 (10.33 µm - Clean IR Window) satellite
+imagery to generate web map tiles for cloud top temperature visualization.
+
+Pipeline Overview:
+    1. DOWNLOAD: Fetches 24 images (4 hours) from NOAA's noaa-goes19 S3 bucket
+    2. GEOREFERENCE: Applies GOES satellite projection and coordinate transformation
+    3. BRIGHTNESS TEMP: Converts radiance to temperature using Planck equation
+    4. GEOTIFF: Creates colorized RGBA GeoTIFFs clipped to configured bounds
+    5. TILES: Generates XYZ web tiles (zoom 3-7, WEBP format, Leaflet-compatible)
+
+Band 13 Specifications:
+    - Wavelength: 10.33 µm (Clean Infrared Window)
+    - Purpose: Cloud top temperature monitoring, storm tracking
+    - Temperature range: 183.15K to 323.15K (-90°C to +50°C)
+    - Color palette: Grayscale → Red (cold clouds appear red)
+
+Execution Frequency:
+    GOES-19 publishes Full Disk images every 10 minutes.
+    Recommended schedule: */30 * * * * (every 30 minutes)
+
+File Handling:
+    - GOES files have unique timestamps in filenames (no collisions)
+    - GeoTIFFs are atomically overwritten if same timestamp is reprocessed
+    - Tile directories are deleted and replaced on reprocessing
+    - Output: .tmp/band_13/geotiff/*.tif and .tmp/band_13/tiles/*_tiles/
+
+Example GOES-19 filename:
+    OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
+    └── s20250141230210 = start time: 2025, day 014, 12:30:21.0 UTC
+"""
 import logging
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
@@ -16,6 +49,29 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessBand13Job:
+    """
+    Scheduled job for processing GOES-19 Band 13 (Cloud Tops) imagery.
+
+    This job downloads the last 24 satellite images (4 hours of data at 10-minute
+    intervals), processes them through the full pipeline, and generates web map
+    tiles for visualization.
+
+    Attributes:
+        _bucket_name: NOAA's public S3 bucket (noaa-goes19)
+        _l1b_products_path: S3 prefix for ABI Level 1b Full Disk products
+        _product_base_file_pattern: Filter pattern for Band 13 files (C13_G19)
+        _s3_client: Async S3 client with concurrency limiting
+
+    Pipeline stages:
+        1. Download → SetupGOESGeorreferencingService (georeferencing)
+        2. → ComputeBrightnessTemperaturesService (Planck equation)
+        3. → GenerateGeoTIFFFilesService (colorized GeoTIFFs)
+        4. → GenerateTilesService (XYZ web tiles)
+
+    Output directories:
+        - GeoTIFFs: {TMP_DIR}/band_13/geotiff/
+        - Tiles: {TMP_DIR}/band_13/tiles/
+    """
     def __init__(self):
         self._bucket_name = constants.GOES19_BUCKET_NAME
         self._l1b_products_path = "ABI-L1b-RadF"

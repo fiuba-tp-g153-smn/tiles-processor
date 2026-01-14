@@ -1,3 +1,31 @@
+"""
+GeoTIFF Generation Service.
+
+This service creates colorized RGBA GeoTIFF files from brightness temperature
+data for web visualization. It handles reprojection, clipping, and color mapping.
+
+Processing Steps:
+    1. Reproject from GOES geostationary to EPSG:4326 (lat/lon)
+    2. Clip to configured bounding box (reduces file size significantly)
+    3. Normalize temperature values to 0-255 range
+    4. Apply color palette lookup to create RGB values
+    5. Create alpha channel (transparent for NaN/no-data)
+    6. Save as RGBA GeoTIFF with atomic write pattern
+
+Color Palettes:
+    - CLOUD_TOPS_PALETTE: Grayscale → Red (256 colors) for Band 13
+      Cold cloud tops (low temps) appear red, warm surfaces appear gray
+    - WATER_VAPOR_PALETTE: Maroon → Blue (256 colors, SMN style) for Band 9
+      Dry air (low temps) appears maroon, moist air appears blue
+
+Atomic Writes:
+    Files are written to a temporary UUID-named file, then atomically renamed
+    to the final destination. This prevents corrupted files if processing fails.
+
+File Overwrites:
+    If a file with the same name exists, it is atomically replaced.
+    GOES filenames include timestamps, so same-name = same data (idempotent).
+"""
 import asyncio
 import gc
 import logging
@@ -17,6 +45,38 @@ logger = logging.getLogger(__name__)
 
 
 class GenerateGeoTIFFFilesService:
+    """
+    Generates colorized RGBA GeoTIFF files from brightness temperature data.
+
+    This service takes brightness temperature DataArrays and creates web-ready
+    GeoTIFF files with custom color palettes for visualization.
+
+    Processing pipeline:
+        1. Remove grid_mapping attribute (can cause issues with rioxarray)
+        2. Reproject to EPSG:4326 (WGS84 lat/lon)
+        3. Clip to configured bounds (from config.get_bounds())
+        4. Normalize temperatures to [vmin, vmax] → [0, 255]
+        5. Apply color palette via index lookup
+        6. Create alpha channel (255=opaque, 0=transparent for NaN)
+        7. Stack into RGBA DataArray
+        8. Write to GeoTIFF with atomic rename
+
+    Args:
+        brightness_temperatures: Dict mapping filenames to temperature DataArrays
+        output_dir: Directory for output GeoTIFF files
+        color_palette: List of 256 hex color strings (default: CLOUD_TOPS_PALETTE)
+        vmin: Minimum temperature for normalization (default: 183.15K = -90°C)
+        vmax: Maximum temperature for normalization (default: 323.15K = +50°C)
+        product_name: Name for the output DataArray (default: "Cloud_Tops")
+
+    Returns:
+        List of Path objects pointing to generated GeoTIFF files
+
+    Memory Management:
+        Explicit gc.collect() and del statements are used throughout to
+        manage memory when processing large satellite imagery arrays.
+        This is critical for processing multiple images without memory exhaustion.
+    """
     # Default bounding box (Argentina with margin)
     DEFAULT_BOUNDS = {
         "minx": -90.0,  # 90°W - Pacific (includes Chile, Peru)
