@@ -74,7 +74,7 @@ class S3Client:
         
         logger.info(f"Found {len(file_paths)} files matching pattern '{file_pattern}' in {folder_path}")
         
-        # Aplicar filtro adicional si se proporciona
+        # Apply additional filter if provided
         if file_filter is not None:
             original_count = len(file_paths)
             file_paths = [fp for fp in file_paths if file_filter(fp)]
@@ -112,7 +112,7 @@ class S3Client:
             ) as s3_client:
                 logger.debug(f"Listing objects in bucket '{self._bucket_name}' with prefix '{folder_path}'")
                 
-                # Usar paginator para manejar más de 1000 objetos
+                # Use paginator to handle more than 1000 objects
                 paginator = s3_client.get_paginator("list_objects_v2")
                 async for page in paginator.paginate(
                     Bucket=self._bucket_name, Prefix=folder_path

@@ -15,41 +15,41 @@ logger = logging.getLogger(__name__)
 
 
 class GenerateGeoTIFFFilesService:
-    # Argentina bounding box (with some margin)
-    ARGENTINA_BOUNDS = {
-        "minx": -90.0,  # 90°W - Pacífico (incluye Chile, Perú)
-        "miny": -60.0,  # 60°S - Más al sur (océano/Antártida)
-        "maxx": -30.0,  # 30°W - Medio del Atlántico
-        "maxy": -15.0,  # 15°S - Norte (Bolivia/Brasil)
+    # Default bounding box (Argentina with margin)
+    DEFAULT_BOUNDS = {
+        "minx": -90.0,  # 90°W - Pacific (includes Chile, Peru)
+        "miny": -60.0,  # 60°S - Further south (ocean/Antarctica)
+        "maxx": -30.0,  # 30°W - Middle of Atlantic
+        "maxy": -15.0,  # 15°S - North (Bolivia/Brazil)
     }
 
-    # Paleta para Canal 9 - Water Vapor (Vapor de Agua Niveles Medios)
-    # Colores apagados estilo SMN: bordó → naranja → gris claro → gris oscuro → azul medio
+    # Palette for Band 9 - Water Vapor (Mid-Level Water Vapor)
+    # Muted colors SMN style: maroon -> orange -> light gray -> dark gray -> medium blue
     WATER_VAPOR_PALETTE_BASE = [
-        # Muy seco/frío alto - bordó oscuro a rojo apagado
+        # Very dry/cold high - dark maroon to muted red
         "#400000", "#500000", "#600000", "#700000", "#800000", "#8b0000",
         "#900000", "#a00000", "#a52a2a", "#b22222",
         
-        # Transición a naranja/marrón (no amarillo brillante)
+        # Transition to orange/brown (no bright yellow)
         "#c04000", "#d04000", "#d05000", "#d06000", "#e06000", 
         "#e07000", "#f07000", "#f08000", "#ff8c00", "#ffa500",
         
-        # Naranja claro a beige/gris cálido
+        # Light orange to beige/warm gray
         "#ffb366", "#ffc080", "#ffcc99", "#e6d5b8", "#d9c7a8",
         "#ccb899", "#bfaa88", "#b39b77",
         
-        # Grises claros (zonas intermedias)
+        # Light grays (intermediate zones)
         "#d3d3d3", "#c0c0c0", "#b0b0b0", "#a8a8a8", "#a0a0a0",
         "#989898", "#909090", "#888888",
         
-        # Grises medios/oscuros (más húmedo)
+        # Medium/dark grays (more humid)
         "#808080", "#787878", "#707070", "#686868", "#606060",
         "#585858", "#505050", "#484848",
         
-        # Azul grisáceo (húmedo) - NO cyan brillante
+        # Grayish blue (humid) - NO bright cyan
         "#4a5a6a", "#3f5266", "#354a60", "#2b4257", "#213a4e",
         
-        # Azul medio apagado (muy húmedo)
+        # Muted medium blue (very humid)
         "#1c3a52", "#183654", "#143256", "#102e58", "#0c2a5a",
         "#08265c", "#04225e", "#001e60",
     ]
@@ -60,10 +60,10 @@ class GenerateGeoTIFFFilesService:
         idx = np.linspace(0, len(palette) - 1, 256).astype(int)
         return [palette[i] for i in idx]
 
-    # Invertir la paleta para que coincida con la referencia del SMN
+    # Invert the palette to match the SMN reference
     WATER_VAPOR_PALETTE = _expand_palette_to_256(WATER_VAPOR_PALETTE_BASE[::-1])
 
-    # Paleta para Canal 13 - Cloud Tops (Topes Nubosos)
+    # Palette for Band 13 - Cloud Tops
     CLOUD_TOPS_PALETTE = [
         "#ffffff", "#f2f2f2", "#e5e5e5", "#d7d7d7", "#cacaca", "#bcbcbc", "#afafaf", "#a2a2a2",
         "#949494", "#878787", "#797979", "#6c6c6c", "#5e5e5e", "#515151", "#444444", "#363636",
@@ -139,10 +139,10 @@ class GenerateGeoTIFFFilesService:
 
         # 2. Clip to Argentina bounds to reduce processing area
         c13_clipped = c13_reproj.rio.clip_box(
-            minx=self.ARGENTINA_BOUNDS["minx"],
-            miny=self.ARGENTINA_BOUNDS["miny"],
-            maxx=self.ARGENTINA_BOUNDS["maxx"],
-            maxy=self.ARGENTINA_BOUNDS["maxy"],
+            minx=self.DEFAULT_BOUNDS["minx"],
+            miny=self.DEFAULT_BOUNDS["miny"],
+            maxx=self.DEFAULT_BOUNDS["maxx"],
+            maxy=self.DEFAULT_BOUNDS["maxy"],
         )
 
         # Free memory from full reprojection
