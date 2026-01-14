@@ -90,8 +90,29 @@ class ProcessBand13Job:
         # Download files from the last hour (6 files)
         downloaded_files = await self._download_last_hour_files(current_time, raw_output_dir)
         
+        # Filter out files that have already been processed
+        tiles_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "tiles"
+        files_to_process = {}
+
+        for file_path, content in downloaded_files.items():
+            # Derive the expected tile directory name from the input file stem
+            # Example: OR_ABI-L1b-RadF-M6C13_G19_s2026... -> OR_ABI-L1b-RadF-M6C13_G19_s2026..._tiles
+            file_stem = Path(file_path).stem
+            expected_tile_dir = tiles_output_dir / f"{file_stem}_tiles"
+
+            if expected_tile_dir.exists():
+                logger.info(f"Skipping {file_path}: Tiles already exist at {expected_tile_dir}")
+            else:
+                files_to_process[file_path] = content
+
+        if not files_to_process:
+            logger.info("All files have already been processed. Nothing to do.")
+            return
+
+        logger.info(f"Processing {len(files_to_process)} new files...")
+
         georreferenced_data = await SetupGOESGeorreferencingService(
-            downloaded_files
+            files_to_process
         ).run()
         logger.info("Georreferencing completed.")
         brightness_temperature_data = await ComputeBrightnessTemperaturesService(
@@ -110,7 +131,6 @@ class ProcessBand13Job:
         ).run()
         logger.info("GeoTIFF generation completed.")
 
-        tiles_output_dir = Path.cwd() / config.TMP_DIR / "band_13" / "tiles"
         await GenerateTilesService(geotiff_files, tiles_output_dir).run()
         logger.info("Tiles generation completed.")
 
