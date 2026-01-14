@@ -131,38 +131,6 @@ def run_job(job_name: str, job_cls: Type):
         logger.exception("Job %s failed with error", job_name)
 
 
-def _create_job_runner(job_cls: Type, job_name: str):
-    """
-    Create an async job runner function for APScheduler (non-persistent mode).
-
-    This is used when testing without persistence. For persistent job stores,
-    the module-level run_job function is used instead.
-
-    Args:
-        job_cls: The job class to instantiate and run
-        job_name: Human-readable job name for logging
-
-    Returns:
-        Async function that APScheduler can execute
-    """
-    async def _run_job():
-        # Delegate check to the monitor
-        if not job_monitor.ensure_execution_safe(job_name):
-            return
-
-        try:
-            job = job_cls()
-            logger.info("Starting job: %s", job_name)
-            await job.run()
-            logger.info("Job completed: %s", job_name)
-        except Exception:
-            logger.exception("Job %s failed with error", job_name)
-
-    # Set function name for APScheduler logging
-    _run_job.__name__ = f"run_{job_name}"
-    return _run_job
-
-
 async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Event):
     """
     Start APScheduler with jobs defined in the registry.

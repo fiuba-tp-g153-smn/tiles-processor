@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 import pytest
-from scheduler import start_scheduler, _create_job_runner, _get_directory_size
+from scheduler import start_scheduler, _get_directory_size
 
 
 @pytest.fixture
@@ -26,72 +26,6 @@ def mock_config(tmp_path):
             "job_b": "0 0 * * *"
         }
         yield mock_cfg
-
-
-class TestCreateJobRunner:
-    """Tests for the _create_job_runner function."""
-
-    @pytest.mark.asyncio
-    async def test_job_runner_executes_job(self, mock_config):
-        """Test that job runner executes the job's run method."""
-        mock_job_instance = MagicMock()
-        mock_job_instance.run = AsyncMock()
-
-        mock_job_cls = MagicMock(return_value=mock_job_instance)
-        mock_job_cls.__name__ = "TestJob"
-
-        runner = _create_job_runner(mock_job_cls, "test_job")
-
-        with patch('scheduler._get_directory_size', return_value=0):
-            await runner()
-
-        mock_job_cls.assert_called_once()
-        mock_job_instance.run.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_job_runner_skips_when_disk_full(self, mock_config):
-        """Test that job runner skips execution when disk limit exceeded."""
-        mock_job_instance = MagicMock()
-        mock_job_instance.run = AsyncMock()
-
-        mock_job_cls = MagicMock(return_value=mock_job_instance)
-        mock_job_cls.__name__ = "TestJob"
-
-        runner = _create_job_runner(mock_job_cls, "test_job")
-
-        # Simulate disk full (11GB > 10GB limit)
-        with patch('scheduler._get_directory_size', return_value=11 * 1024**3):
-            await runner()
-
-        # Job should not be instantiated or run
-        mock_job_cls.assert_not_called()
-        mock_job_instance.run.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_job_runner_handles_exceptions(self, mock_config):
-        """Test that job runner catches exceptions without crashing."""
-        mock_job_instance = MagicMock()
-        mock_job_instance.run = AsyncMock(side_effect=Exception("Job failed"))
-
-        mock_job_cls = MagicMock(return_value=mock_job_instance)
-        mock_job_cls.__name__ = "FailingJob"
-
-        runner = _create_job_runner(mock_job_cls, "failing_job")
-
-        with patch('scheduler._get_directory_size', return_value=0):
-            # Should not raise
-            await runner()
-
-        mock_job_instance.run.assert_awaited_once()
-
-    def test_job_runner_has_correct_name(self, mock_config):
-        """Test that job runner function has descriptive name."""
-        mock_job_cls = MagicMock()
-        mock_job_cls.__name__ = "MyJob"
-
-        runner = _create_job_runner(mock_job_cls, "my_job")
-
-        assert runner.__name__ == "run_my_job"
 
 
 class TestStartScheduler:
