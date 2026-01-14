@@ -1,11 +1,39 @@
 import os
 from typing import Dict
 
+from apscheduler.triggers.cron import CronTrigger
+
+
 def get_required_env(key: str) -> str:
+    """Get a required environment variable, raising if not set."""
     value = os.getenv(key)
     if not value or not value.strip():
         raise ValueError(f"Environment variable '{key}' is required but not set or empty.")
     return value
+
+
+def validate_cron_expression(expr: str, name: str) -> str:
+    """
+    Validate a CRON expression at startup using APScheduler's CronTrigger.
+
+    Args:
+        expr: The CRON expression to validate (5-field format)
+        name: The name of the config variable (for error messages)
+
+    Returns:
+        The validated expression if valid
+
+    Raises:
+        ValueError: If the expression is invalid
+    """
+    try:
+        CronTrigger.from_crontab(expr)
+        return expr
+    except (ValueError, KeyError) as e:
+        raise ValueError(
+            f"Invalid CRON expression for {name}: '{expr}'. "
+            f"Expected 5-field format (minute hour day month weekday). Error: {e}"
+        )
 
 class Config:
     # General
@@ -23,8 +51,12 @@ class Config:
     #   "0 0 * * 1"     -> Every Monday at 00:00 UTC
     #   "30 18 * * 5"   -> Every Friday at 18:30 UTC
     #   "0 0 1,15 * *"  -> On the 1st and 15th of every month at 00:00 UTC
-    BAND_13_SCHEDULE_CRON: str = get_required_env("BAND_13_SCHEDULE_CRON")
-    BAND_9_SCHEDULE_CRON: str = get_required_env("BAND_9_SCHEDULE_CRON")
+    BAND_13_SCHEDULE_CRON: str = validate_cron_expression(
+        get_required_env("BAND_13_SCHEDULE_CRON"), "BAND_13_SCHEDULE_CRON"
+    )
+    BAND_9_SCHEDULE_CRON: str = validate_cron_expression(
+        get_required_env("BAND_9_SCHEDULE_CRON"), "BAND_9_SCHEDULE_CRON"
+    )
     
     # Feature Toggles
     # Default to True to maintain backward compatibility if env vars are missing

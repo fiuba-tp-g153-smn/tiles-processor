@@ -6,7 +6,7 @@ import sys
 # Ensure src is in python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
-from config import Config, get_required_env
+from config import Config, get_required_env, validate_cron_expression
 
 def test_get_required_env_valid():
     with mock.patch.dict(os.environ, {"TEST_VAR": "value"}):
@@ -44,10 +44,74 @@ def test_config_valid_schedules():
 
 def test_timezone_default():
     # Since config is already imported, we can just check the default if no env var was set during import
-    # But usually we want to control env vars. 
-    # Because Config is a singleton-like class instantiated at module level, 
+    # But usually we want to control env vars.
+    # Because Config is a singleton-like class instantiated at module level,
     # we can't easily change it without reload.
     # We'll just verify it has a default.
     assert hasattr(Config, 'TIMEZONE')
     # Default is UTC or whatever was in env when tests started.
+
+
+class TestValidateCronExpression:
+    """Tests for CRON expression validation."""
+
+    def test_valid_every_10_minutes(self):
+        """Test valid expression: every 10 minutes."""
+        result = validate_cron_expression("*/10 * * * *", "TEST_CRON")
+        assert result == "*/10 * * * *"
+
+    def test_valid_daily_at_9am(self):
+        """Test valid expression: daily at 9:00."""
+        result = validate_cron_expression("0 9 * * *", "TEST_CRON")
+        assert result == "0 9 * * *"
+
+    def test_valid_weekly_monday(self):
+        """Test valid expression: every Monday at midnight."""
+        result = validate_cron_expression("0 0 * * 1", "TEST_CRON")
+        assert result == "0 0 * * 1"
+
+    def test_valid_monthly_first_and_fifteenth(self):
+        """Test valid expression: 1st and 15th of month."""
+        result = validate_cron_expression("0 0 1,15 * *", "TEST_CRON")
+        assert result == "0 0 1,15 * *"
+
+    def test_valid_complex_expression(self):
+        """Test valid complex expression with ranges and steps."""
+        result = validate_cron_expression("0-30/5 9-17 * * 1-5", "TEST_CRON")
+        assert result == "0-30/5 9-17 * * 1-5"
+
+    def test_invalid_too_few_fields(self):
+        """Test that expression with too few fields raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid CRON expression"):
+            validate_cron_expression("* * *", "TEST_CRON")
+
+    def test_invalid_too_many_fields(self):
+        """Test that expression with too many fields raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid CRON expression"):
+            validate_cron_expression("* * * * * *", "TEST_CRON")
+
+    def test_invalid_out_of_range_minute(self):
+        """Test that invalid minute value raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid CRON expression"):
+            validate_cron_expression("60 * * * *", "TEST_CRON")
+
+    def test_invalid_out_of_range_hour(self):
+        """Test that invalid hour value raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid CRON expression"):
+            validate_cron_expression("0 25 * * *", "TEST_CRON")
+
+    def test_invalid_syntax(self):
+        """Test that invalid syntax raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid CRON expression"):
+            validate_cron_expression("not a cron", "TEST_CRON")
+
+    def test_error_message_includes_variable_name(self):
+        """Test that error message includes the variable name."""
+        with pytest.raises(ValueError, match="MY_SCHEDULE_CRON"):
+            validate_cron_expression("invalid", "MY_SCHEDULE_CRON")
+
+    def test_error_message_includes_expression(self):
+        """Test that error message includes the invalid expression."""
+        with pytest.raises(ValueError, match="'bad-expr'"):
+            validate_cron_expression("bad-expr", "TEST_CRON")
 
