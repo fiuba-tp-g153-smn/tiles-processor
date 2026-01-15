@@ -42,6 +42,34 @@ def get_enabled_jobs(config: Config, logger: logging.Logger) -> dict:
     return enabled_jobs
 
 
+def get_scheduler_jobs(config: Config, logger: logging.Logger) -> dict | None:
+    logger.info("Starting scheduler mode for ALL jobs")
+    target_jobs = get_enabled_jobs(config, logger)
+
+    if not target_jobs:
+        logger.error("No jobs are enabled. Exiting.")
+        return None
+    return target_jobs
+
+
+def get_single_job(job_name: str, logger: logging.Logger) -> dict | None:
+    job_class = AVAILABLE_JOBS.get(job_name)
+    if not job_class:
+        logger.error(
+            f"Job '{job_name}' not found. Available jobs: {list(AVAILABLE_JOBS.keys())}"
+        )
+        return None
+
+    logger.info(f"Starting scheduler mode for SINGLE job: {job_name}")
+    target_jobs = {job_name: job_class}
+
+    # Always run heartbeat for healthchecks, even in single-job mode
+    if "heartbeat" in AVAILABLE_JOBS and job_name != "heartbeat":
+        target_jobs["heartbeat"] = AVAILABLE_JOBS["heartbeat"]
+
+    return target_jobs
+
+
 def get_target_jobs(
     config: Config, job_name: str, logger: logging.Logger
 ) -> dict | None:
@@ -50,28 +78,9 @@ def get_target_jobs(
     Returns None if no valid jobs are found or enabled.
     """
     if job_name == "scheduler":
-        logger.info("Starting scheduler mode for ALL jobs")
-        target_jobs = get_enabled_jobs(config, logger)
+        return get_scheduler_jobs(config, logger)
 
-        if not target_jobs:
-            logger.error("No jobs are enabled. Exiting.")
-            return None
-    else:
-        job_class = AVAILABLE_JOBS.get(job_name)
-        if not job_class:
-            logger.error(
-                f"Job '{job_name}' not found. Available jobs: {list(AVAILABLE_JOBS.keys())}"
-            )
-            return None
-
-        logger.info(f"Starting scheduler mode for SINGLE job: {job_name}")
-        target_jobs = {job_name: job_class}
-
-        # Always run heartbeat for healthchecks, even in single-job mode
-        if "heartbeat" in AVAILABLE_JOBS and job_name != "heartbeat":
-            target_jobs["heartbeat"] = AVAILABLE_JOBS["heartbeat"]
-
-    return target_jobs
+    return get_single_job(job_name, logger)
 
 
 def setup_signal_handlers(
