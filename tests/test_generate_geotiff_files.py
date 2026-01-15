@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import os
 from pathlib import Path
@@ -12,6 +13,38 @@ import pytest
 import numpy as np
 
 from services.generate_geotiff_files import GenerateGeoTIFFFilesService
+from config import Config
+
+
+@pytest.fixture
+def temp_settings_file(tmp_path):
+    """Create a temporary settings.json file."""
+    settings = {
+        "timezone": "UTC",
+        "scheduler": {"band_13_cron": "*/10 * * * *", "band_9_cron": "0 * * * *"},
+        "features": {"enable_band_13": True, "enable_band_9": True},
+        "bounds": {"minx": -90.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
+    }
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps(settings))
+    return settings_path
+
+
+@pytest.fixture
+def env_vars(tmp_path):
+    """Required environment variables for Config."""
+    return {
+        "LOG_LEVEL": "DEBUG",
+        "TMP_DIR_CONTAINER": str(tmp_path / ".tmp"),
+        "SCHEDULER_DB_PATH": str(tmp_path / "scheduler.db"),
+    }
+
+
+@pytest.fixture
+def config_fixture(temp_settings_file, env_vars):
+    """Create a Config instance for testing."""
+    with mock.patch.dict(os.environ, env_vars, clear=True):
+        return Config(settings_path=temp_settings_file)
 
 
 class TestExpandPalette:
@@ -50,11 +83,12 @@ class TestNormalizeWithCustomPalette:
     """Tests for the normalization and palette application."""
 
     @pytest.fixture
-    def service(self, tmp_path):
+    def service(self, tmp_path, config_fixture):
         """Create a service instance for testing."""
         return GenerateGeoTIFFFilesService(
             brightness_temperatures={},
             output_dir=tmp_path,
+            config=config_fixture,
             vmin=200.0,
             vmax=300.0,
         )
@@ -149,21 +183,23 @@ class TestGenerateGeoTIFFService:
         return mock_da
 
     @pytest.fixture
-    def service(self, tmp_path, mock_xarray_data):
+    def service(self, tmp_path, mock_xarray_data, config_fixture):
         """Create service with mock data."""
         return GenerateGeoTIFFFilesService(
             brightness_temperatures={"test_file.nc": mock_xarray_data},
             output_dir=tmp_path / "output",
+            config=config_fixture,
             vmin=183.15,
             vmax=323.15,
             product_name="Test_Product",
         )
 
-    def test_init_sets_defaults(self, tmp_path):
+    def test_init_sets_defaults(self, tmp_path, config_fixture):
         """Test that __init__ sets correct defaults."""
         service = GenerateGeoTIFFFilesService(
             brightness_temperatures={},
             output_dir=tmp_path,
+            config=config_fixture,
         )
 
         assert service._vmin == 183.15
@@ -171,12 +207,13 @@ class TestGenerateGeoTIFFService:
         assert service._product_name == "Cloud_Tops"
         assert service._color_palette == GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE
 
-    def test_init_accepts_custom_palette(self, tmp_path):
+    def test_init_accepts_custom_palette(self, tmp_path, config_fixture):
         """Test that custom palette can be provided."""
         custom_palette = ["#000000"] * 256
         service = GenerateGeoTIFFFilesService(
             brightness_temperatures={},
             output_dir=tmp_path,
+            config=config_fixture,
             color_palette=custom_palette,
         )
 
@@ -197,11 +234,9 @@ class TestGenerateGeoTIFFService:
         assert bounds["maxx"] == -30.0
         assert bounds["maxy"] == -15.0
 
-    def test_config_bounds_structure(self):
+    def test_config_bounds_structure(self, config_fixture):
         """Test that config.get_bounds() returns correct structure."""
-        from config import config
-
-        bounds = config.get_bounds()
+        bounds = config_fixture.get_bounds()
 
         assert "minx" in bounds
         assert "miny" in bounds
@@ -215,12 +250,13 @@ class TestGenerateGeoTIFFService:
         assert isinstance(bounds["maxy"], float)
 
     @pytest.mark.asyncio
-    async def test_run_creates_output_directory(self, tmp_path):
+    async def test_run_creates_output_directory(self, tmp_path, config_fixture):
         """Test that run() creates output directory."""
         output_dir = tmp_path / "new_output"
         service = GenerateGeoTIFFFilesService(
             brightness_temperatures={},
             output_dir=output_dir,
+            config=config_fixture,
         )
 
         await service.run()
@@ -228,13 +264,14 @@ class TestGenerateGeoTIFFService:
         assert output_dir.exists()
 
     @pytest.mark.asyncio
-    async def test_run_processes_all_files(self, tmp_path):
+    async def test_run_processes_all_files(self, tmp_path, config_fixture):
         """Test that run() processes all brightness temperature files."""
         mock_data = {f"file_{i}.nc": MagicMock() for i in range(3)}
 
         service = GenerateGeoTIFFFilesService(
             brightness_temperatures=mock_data,
             output_dir=tmp_path / "output",
+            config=config_fixture,
         )
 
         processed = []
@@ -277,7 +314,7 @@ class TestGenerateGeoTIFFService:
 class TestGeoTIFFAtomicWrite:
     """Tests for atomic write behavior."""
 
-    def test_atomic_write_uses_temp_file(self, tmp_path):
+    def test_atomic_write_uses_temp_file(self, tmp_path, config_fixture):
         """Test that atomic write pattern uses temporary file."""
         output_dir = tmp_path / "output"
         output_dir.mkdir()
@@ -285,6 +322,7 @@ class TestGeoTIFFAtomicWrite:
         service = GenerateGeoTIFFFilesService(
             brightness_temperatures={},
             output_dir=output_dir,
+            config=config_fixture,
         )
 
         # Create minimal mock data
@@ -327,11 +365,12 @@ class TestGeoTIFFAtomicWrite:
 class TestMemoryManagement:
     """Tests for memory management with gc.collect()."""
 
-    def test_gc_collect_called_during_generation(self, tmp_path):
+    def test_gc_collect_called_during_generation(self, tmp_path, config_fixture):
         """Test that gc.collect() is called to manage memory."""
         service = GenerateGeoTIFFFilesService(
             brightness_temperatures={},
             output_dir=tmp_path,
+            config=config_fixture,
         )
 
         mock_data = MagicMock()

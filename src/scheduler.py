@@ -27,16 +27,15 @@ This design ensures:
 import asyncio
 import logging
 import os
-import threading
 from pathlib import Path
-from typing import Dict, Type, Optional
+from typing import Dict, Type
 
 from apscheduler.executors.pool import ProcessPoolExecutor
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from config import config
+from config import Config
 from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -59,50 +58,6 @@ def _get_directory_size(path: Path) -> int:
     return total_size
 
 
-class JobMonitor:
-    """
-    Thread-safe monitor for managing job registry and ensuring execution preconditions.
-    """
-
-    def __init__(self):
-        self._registry: Dict[str, Type] = {}
-        self._lock = threading.RLock()
-
-    def register_jobs(self, jobs: Dict[str, Type]):
-        """Register multiple jobs safely."""
-        with self._lock:
-            self._registry.update(jobs)
-
-    def get_job(self, name: str) -> Optional[Type]:
-        """Retrieve a job class by name safely."""
-        with self._lock:
-            return self._registry.get(name)
-
-    def ensure_execution_safe(self, job_name: str) -> bool:
-        """
-        Check if it is safe to execute the job (e.g., disk space limits).
-        Returns True if safe, False otherwise.
-        """
-        # Check tmp directory size before execution
-        tmp_path = Path.cwd() / config.TMP_DIR
-        current_size = _get_directory_size(tmp_path)
-
-        if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
-            logger.error(
-                "Job %s skipped: temp directory %s size (%.2f GB) exceeds limit (%.2f GB)",
-                job_name,
-                tmp_path,
-                current_size / (1024**3),
-                config.MAX_TMP_DIR_SIZE_BYTES / (1024**3),
-            )
-            return False
-        return True
-
-
-# Global instance of JobMonitor
-job_monitor = JobMonitor()
-
-
 def run_job(job_name: str, job_cls: Type):
     """
     Execute a job by name. This is a module-level function for APScheduler serialization.
@@ -118,10 +73,24 @@ def run_job(job_name: str, job_cls: Type):
         job_name: Name of the job to execute
         job_cls: The job class to instantiate and run (passed explicitly for process safety)
     """
-    # Initialize logging in the worker process
-    setup_logging(log_level=config.LOG_LEVEL)
+    # Each worker process creates its own config from env vars and settings.json
+    config = Config()
 
-    if not job_monitor.ensure_execution_safe(job_name):
+    # Initialize logging in the worker process
+    setup_logging(config)
+
+    # Check tmp directory size before execution
+    tmp_path = Path.cwd() / config.TMP_DIR
+    current_size = _get_directory_size(tmp_path)
+
+    if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
+        logger.error(
+            "Job %s skipped: temp directory %s size (%.2f GB) exceeds limit (%.2f GB)",
+            job_name,
+            tmp_path,
+            current_size / (1024**3),
+            config.MAX_TMP_DIR_SIZE_BYTES / (1024**3),
+        )
         return
 
     try:
@@ -133,7 +102,9 @@ def run_job(job_name: str, job_cls: Type):
         logger.exception("Job %s failed with error", job_name)
 
 
-async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Event):
+async def start_scheduler(
+    config: Config, job_registry: Dict[str, Type], stop_event: asyncio.Event
+):
     """
     Start APScheduler with jobs defined in the registry.
 
@@ -143,6 +114,7 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         - misfire_grace_time: Handles delayed starts gracefully
 
     Args:
+        config: Application configuration
         job_registry: Dict mapping job names to job classes
         stop_event: Event to signal graceful shutdown
 
@@ -151,11 +123,8 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
             "process_band_13": ProcessBand13Job,
             "process_band_9": ProcessBand9Job,
         }
-        await start_scheduler(job_registry, stop_event)
+        await start_scheduler(config, job_registry, stop_event)
     """
-    # Populate the global monitor
-    job_monitor.register_jobs(job_registry)
-
     # Configure SQLite job store for persistence
     db_path = Path(config.SCHEDULER_DB_PATH)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +156,6 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         # If it doesn't exist, we schedule it to run immediately (in addition to the cron schedule)
         # to ensure the system starts processing right away on first deployment.
         existing_job = scheduler.get_job(job_name)
-        next_run_time = None
 
         if not existing_job:
             logger.info(

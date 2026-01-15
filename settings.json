@@ -1,0 +1,17 @@
+{
+  "timezone": "America/Argentina/Buenos_Aires",
+  "scheduler": {
+    "band_13_cron": "*/5 * * * *",
+    "band_9_cron": "*/5 * * * *"
+  },
+  "features": {
+    "enable_band_13": true,
+    "enable_band_9": true
+  },
+  "bounds": {
+    "minx": -90.0,
+    "miny": -60.0,
+    "maxx": -30.0,
+    "maxy": -15.0
+  }
+}

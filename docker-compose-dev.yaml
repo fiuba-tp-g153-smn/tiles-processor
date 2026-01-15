@@ -7,17 +7,8 @@ services:
     volumes:
       - ${TMP_DIR_HOST}:${TMP_DIR_CONTAINER}
       - ${SCHEDULER_DB_HOST_DIR}:${SCHEDULER_DB_CONTAINER_DIR}
+      - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
-      - BAND_13_SCHEDULE_CRON=${BAND_13_SCHEDULE_CRON}
-      - BAND_9_SCHEDULE_CRON=${BAND_9_SCHEDULE_CRON}
-      - ENABLE_BAND_13=${ENABLE_BAND_13}
-      - ENABLE_BAND_9=${ENABLE_BAND_9}
-      - TZ=${TZ}
-      - TMP_DIR_HOST=${TMP_DIR_HOST}
       - TMP_DIR_CONTAINER=${TMP_DIR_CONTAINER}
-      - BOUNDS_MINX=${BOUNDS_MINX}
-      - BOUNDS_MINY=${BOUNDS_MINY}
-      - BOUNDS_MAXX=${BOUNDS_MAXX}
-      - BOUNDS_MAXY=${BOUNDS_MAXY}
       - SCHEDULER_DB_PATH=${SCHEDULER_DB_PATH}

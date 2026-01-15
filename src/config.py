@@ -1,123 +1,123 @@
+import json
+import logging
 import os
-from typing import Dict
+from pathlib import Path
+from typing import Any, Dict
 
 from apscheduler.triggers.cron import CronTrigger
 
 
-def get_required_env(key: str) -> str:
-    """Get a required environment variable, raising if not set."""
-    value = os.getenv(key)
-    if not value or not value.strip():
-        raise ValueError(
-            f"Environment variable '{key}' is required but not set or empty."
-        )
-    return value
-
-
-def validate_cron_expression(expr: str, name: str) -> str:
-    """
-    Validate a CRON expression at startup using APScheduler's CronTrigger.
-
-    Args:
-        expr: The CRON expression to validate (5-field format)
-        name: The name of the config variable (for error messages)
-
-    Returns:
-        The validated expression if valid
-
-    Raises:
-        ValueError: If the expression is invalid
-    """
-    try:
-        CronTrigger.from_crontab(expr)
-        return expr
-    except (ValueError, KeyError) as e:
-        raise ValueError(
-            f"Invalid CRON expression for {name}: '{expr}'. "
-            f"Expected 5-field format (minute hour day month weekday). Error: {e}"
-        )
-
-
 class Config:
-    # General
-    LOG_LEVEL: str = get_required_env("LOG_LEVEL").upper()
+    def __init__(self, settings_path: Path | None = None):
+        if settings_path is None:
+            settings_path = Path(__file__).parent.parent / "settings.json"
 
-    # Timezone
-    # Examples: "UTC", "America/New_York", "Europe/London", "Asia/Tokyo", "America/Argentina/Buenos_Aires"
-    TIMEZONE: str = get_required_env("TZ")
+        settings = self._load_settings(settings_path)
 
-    # Scheduler
-    # Format: Full cron expression (e.g. "*/10 * * * *")
-    # Examples:
-    #   "*/10 * * * *"  -> Every 10 minutes
-    #   "0 9 * * *"     -> Every day at 09:00 UTC
-    #   "0 0 * * 1"     -> Every Monday at 00:00 UTC
-    #   "30 18 * * 5"   -> Every Friday at 18:30 UTC
-    #   "0 0 1,15 * *"  -> On the 1st and 15th of every month at 00:00 UTC
-    BAND_13_SCHEDULE_CRON: str = validate_cron_expression(
-        get_required_env("BAND_13_SCHEDULE_CRON"), "BAND_13_SCHEDULE_CRON"
-    )
-    BAND_9_SCHEDULE_CRON: str = validate_cron_expression(
-        get_required_env("BAND_9_SCHEDULE_CRON"), "BAND_9_SCHEDULE_CRON"
-    )
+        # Environment variables
+        self.LOG_LEVEL: str = self._get_required_env("LOG_LEVEL").upper()
+        self.TMP_DIR: str = self._get_required_env("TMP_DIR_CONTAINER")
+        self.SCHEDULER_DB_PATH: str = self._get_required_env("SCHEDULER_DB_PATH")
 
-    # Feature Toggles
-    ENABLE_BAND_13: bool = get_required_env("ENABLE_BAND_13").lower() in ("true", "1")
-    ENABLE_BAND_9: bool = get_required_env("ENABLE_BAND_9").lower() in ("true", "1")
+        # Settings from JSON
+        self.TIMEZONE: str = settings["timezone"]
 
-    # Paths
-    TMP_DIR: str = get_required_env("TMP_DIR_CONTAINER")
-    MAX_TMP_DIR_SIZE_BYTES: int = 10 * 1024 * 1024 * 1024  # 10 GB
+        # Scheduler (from JSON, validated)
+        self.BAND_13_SCHEDULE_CRON: str = self._validate_cron_expression(
+            settings["scheduler"]["band_13_cron"], "scheduler.band_13_cron"
+        )
+        self.BAND_9_SCHEDULE_CRON: str = self._validate_cron_expression(
+            settings["scheduler"]["band_9_cron"], "scheduler.band_9_cron"
+        )
 
-    # Scheduler persistence
-    # Path to SQLite database for APScheduler job persistence
-    # Jobs survive container restarts when stored in a mounted volume
-    SCHEDULER_DB_PATH: str = get_required_env("SCHEDULER_DB_PATH")
+        # Feature Toggles (from JSON)
+        self.ENABLE_BAND_13: bool = settings["features"]["enable_band_13"]
+        self.ENABLE_BAND_9: bool = settings["features"]["enable_band_9"]
 
-    # Bounding box for clipping satellite imagery
-    # Coordinates are in EPSG:4326 (longitude/latitude)
-    BOUNDS_MINX: float = float(get_required_env("BOUNDS_MINX"))  # West longitude
-    BOUNDS_MINY: float = float(get_required_env("BOUNDS_MINY"))  # South latitude
-    BOUNDS_MAXX: float = float(get_required_env("BOUNDS_MAXX"))  # East longitude
-    BOUNDS_MAXY: float = float(get_required_env("BOUNDS_MAXY"))  # North latitude
+        # Bounding box (from JSON)
+        # Coordinates are in EPSG:4326 (longitude/latitude)
+        self.BOUNDS_MINX: float = settings["bounds"]["minx"]  # West longitude
+        self.BOUNDS_MINY: float = settings["bounds"]["miny"]  # South latitude
+        self.BOUNDS_MAXX: float = settings["bounds"]["maxx"]  # East longitude
+        self.BOUNDS_MAXY: float = settings["bounds"]["maxy"]  # North latitude
 
-    @classmethod
-    def get_bounds(cls) -> Dict[str, float]:
+        # Constants
+        self.MAX_TMP_DIR_SIZE_BYTES: int = 10 * 1024 * 1024 * 1024  # 10 GB
+
+    @staticmethod
+    def _get_required_env(key: str) -> str:
+        """Get a required environment variable, raising if not set."""
+        value = os.getenv(key)
+        if not value or not value.strip():
+            raise ValueError(
+                f"Environment variable '{key}' is required but not set or empty."
+            )
+        return value
+
+    @staticmethod
+    def _load_settings(settings_path: Path) -> Dict[str, Any]:
+        """Load settings from JSON file."""
+        if not settings_path.exists():
+            raise FileNotFoundError(
+                f"Settings file not found at '{settings_path}'. "
+                "Please create a settings.json file in the project root."
+            )
+        with open(settings_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    @staticmethod
+    def _validate_cron_expression(expr: str, name: str) -> str:
+        """
+        Validate a CRON expression at startup using APScheduler's CronTrigger.
+
+        Args:
+            expr: The CRON expression to validate (5-field format)
+            name: The name of the config variable (for error messages)
+
+        Returns:
+            The validated expression if valid
+
+        Raises:
+            ValueError: If the expression is invalid
+        """
+        try:
+            CronTrigger.from_crontab(expr)
+            return expr
+        except (ValueError, KeyError) as e:
+            raise ValueError(
+                f"Invalid CRON expression for {name}: '{expr}'. "
+                f"Expected 5-field format (minute hour day month weekday). Error: {e}"
+            )
+
+    def get_bounds(self) -> Dict[str, float]:
         """Get the bounding box configuration for clipping."""
         return {
-            "minx": cls.BOUNDS_MINX,
-            "miny": cls.BOUNDS_MINY,
-            "maxx": cls.BOUNDS_MAXX,
-            "maxy": cls.BOUNDS_MAXY,
+            "minx": self.BOUNDS_MINX,
+            "miny": self.BOUNDS_MINY,
+            "maxx": self.BOUNDS_MAXX,
+            "maxy": self.BOUNDS_MAXY,
         }
 
-    @classmethod
-    def get_job_schedules(cls) -> Dict[str, str]:
+    def get_job_schedules(self) -> Dict[str, str]:
         return {
-            "process_band_13": cls.BAND_13_SCHEDULE_CRON,
-            "process_band_9": cls.BAND_9_SCHEDULE_CRON,
+            "process_band_13": self.BAND_13_SCHEDULE_CRON,
+            "process_band_9": self.BAND_9_SCHEDULE_CRON,
         }
 
-    @classmethod
-    def log_config(cls):
-        import logging
-
+    def log_config(self) -> None:
         logger = logging.getLogger(__name__)
         logger.info("=== Configuration ===")
-        logger.info(f"LOG_LEVEL: {cls.LOG_LEVEL}")
-        logger.info(f"TIMEZONE: {cls.TIMEZONE}")
-        logger.info(f"BAND_13_SCHEDULE_CRON: {cls.BAND_13_SCHEDULE_CRON}")
-        logger.info(f"BAND_9_SCHEDULE_CRON: {cls.BAND_9_SCHEDULE_CRON}")
-        logger.info(f"ENABLE_BAND_13: {cls.ENABLE_BAND_13}")
-        logger.info(f"ENABLE_BAND_9: {cls.ENABLE_BAND_9}")
-        logger.info(f"TMP_DIR: {cls.TMP_DIR}")
-        logger.info(f"MAX_TMP_DIR_SIZE_BYTES: {cls.MAX_TMP_DIR_SIZE_BYTES}")
-        logger.info(f"SCHEDULER_DB_PATH: {cls.SCHEDULER_DB_PATH}")
-        logger.info(f"BOUNDS_MINX: {cls.BOUNDS_MINX}")
-        logger.info(f"BOUNDS_MINY: {cls.BOUNDS_MINY}")
-        logger.info(f"BOUNDS_MAXX: {cls.BOUNDS_MAXX}")
-        logger.info(f"BOUNDS_MAXY: {cls.BOUNDS_MAXY}")
+        logger.info(f"LOG_LEVEL: {self.LOG_LEVEL}")
+        logger.info(f"TIMEZONE: {self.TIMEZONE}")
+        logger.info(f"BAND_13_SCHEDULE_CRON: {self.BAND_13_SCHEDULE_CRON}")
+        logger.info(f"BAND_9_SCHEDULE_CRON: {self.BAND_9_SCHEDULE_CRON}")
+        logger.info(f"ENABLE_BAND_13: {self.ENABLE_BAND_13}")
+        logger.info(f"ENABLE_BAND_9: {self.ENABLE_BAND_9}")
+        logger.info(f"TMP_DIR: {self.TMP_DIR}")
+        logger.info(f"MAX_TMP_DIR_SIZE_BYTES: {self.MAX_TMP_DIR_SIZE_BYTES}")
+        logger.info(f"SCHEDULER_DB_PATH: {self.SCHEDULER_DB_PATH}")
+        logger.info(f"BOUNDS_MINX: {self.BOUNDS_MINX}")
+        logger.info(f"BOUNDS_MINY: {self.BOUNDS_MINY}")
+        logger.info(f"BOUNDS_MAXX: {self.BOUNDS_MAXX}")
+        logger.info(f"BOUNDS_MAXY: {self.BOUNDS_MAXY}")
         logger.info("=====================")
-
-
-config = Config()

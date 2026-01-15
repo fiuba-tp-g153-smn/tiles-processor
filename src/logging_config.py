@@ -3,7 +3,7 @@ import sys
 from datetime import datetime
 import pytz
 
-from config import config
+from config import Config
 
 
 class TimezoneFormatter(logging.Formatter):
@@ -21,13 +21,13 @@ class TimezoneFormatter(logging.Formatter):
         return dt.isoformat()
 
 
-def setup_logging(log_level: str = "INFO"):
+def setup_logging(config: Config):
     """
     Configures the root logger with a consistent format and configured timezone.
     """
-    numeric_level = getattr(logging, log_level.upper(), None)
+    numeric_level = getattr(logging, config.LOG_LEVEL.upper(), None)
     if not isinstance(numeric_level, int):
-        print(f"Invalid log level: {log_level}. Defaulting to INFO.")
+        print(f"Invalid log level: {config.LOG_LEVEL}. Defaulting to INFO.")
         numeric_level = logging.INFO
 
     # Create handler

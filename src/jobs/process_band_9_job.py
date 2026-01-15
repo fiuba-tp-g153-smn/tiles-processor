@@ -37,7 +37,7 @@ from pathlib import Path
 import logging
 
 from constants import constants
-from config import config
+from config import Config
 from clients import s3_client
 from services.compute_brightness_temperatures import (
     ComputeBrightnessTemperaturesService,
@@ -80,6 +80,7 @@ class ProcessBand9Job:
     """
 
     def __init__(self):
+        self._config = Config()
         self._bucket_name = constants.GOES19_BUCKET_NAME
         self._l1b_products_path = "ABI-L1b-RadF"
         self._product_base_file_pattern = "C09_G19"
@@ -102,10 +103,11 @@ class ProcessBand9Job:
         ).run()
         logger.info("Brightness temperature computation completed.")
 
-        geotiff_output_dir = Path.cwd() / config.TMP_DIR / "band_9" / "geotiff"
+        geotiff_output_dir = Path.cwd() / self._config.TMP_DIR / "band_9" / "geotiff"
         geotiff_files = await GenerateGeoTIFFFilesService(
             brightness_temperature_data,
             geotiff_output_dir,
+            self._config,
             color_palette=GenerateGeoTIFFFilesService.WATER_VAPOR_PALETTE,
             vmin=220.0,  # ~ -53°C - Adjusted range for water vapor
             vmax=260.0,  # ~ -13°C - Concentrates real values across the palette
@@ -113,7 +115,7 @@ class ProcessBand9Job:
         ).run()
         logger.info("GeoTIFF generation completed.")
 
-        tiles_output_dir = Path.cwd() / config.TMP_DIR / "band_9" / "tiles"
+        tiles_output_dir = Path.cwd() / self._config.TMP_DIR / "band_9" / "tiles"
         await GenerateTilesService(geotiff_files, tiles_output_dir).run()
         logger.info("Tiles generation completed.")
 

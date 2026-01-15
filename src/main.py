@@ -3,7 +3,7 @@ import logging
 import sys
 import signal
 
-from config import config
+from config import Config
 from logging_config import setup_logging
 from jobs.process_band_13_job import ProcessBand13Job
 from jobs.process_band_9_job import ProcessBand9Job
@@ -20,7 +20,7 @@ EXIT_ERROR_CODE = 1
 EXIT_SUCCESS_CODE = 0
 
 
-def get_enabled_jobs(logger: logging.Logger) -> dict:
+def get_enabled_jobs(config: Config, logger: logging.Logger) -> dict:
     """Filter available jobs based on configuration settings."""
     enabled_jobs = {}
 
@@ -37,14 +37,16 @@ def get_enabled_jobs(logger: logging.Logger) -> dict:
     return enabled_jobs
 
 
-def get_target_jobs(job_name: str, logger: logging.Logger) -> dict | None:
+def get_target_jobs(
+    config: Config, job_name: str, logger: logging.Logger
+) -> dict | None:
     """Determine which jobs to run based on the job name argument.
 
     Returns None if no valid jobs are found or enabled.
     """
     if job_name == "scheduler":
         logger.info("Starting scheduler mode for ALL jobs")
-        target_jobs = get_enabled_jobs(logger)
+        target_jobs = get_enabled_jobs(config, logger)
 
         if not target_jobs:
             logger.error("No jobs are enabled. Exiting.")
@@ -78,7 +80,8 @@ def setup_signal_handlers(
 
 async def main() -> int:
     # Setup logging first thing
-    setup_logging(log_level=config.LOG_LEVEL)
+    config = Config()
+    setup_logging(config)
     logger = logging.getLogger(__name__)
 
     config.log_config()
@@ -89,7 +92,7 @@ async def main() -> int:
 
     job_name = sys.argv[1]
 
-    target_jobs = get_target_jobs(job_name, logger)
+    target_jobs = get_target_jobs(config, job_name, logger)
     if target_jobs is None:
         return EXIT_ERROR_CODE
 
@@ -98,7 +101,7 @@ async def main() -> int:
 
     setup_signal_handlers(loop, stop_event, logger)
 
-    await start_scheduler(target_jobs, stop_event=stop_event)
+    await start_scheduler(config, target_jobs, stop_event=stop_event)
 
     return EXIT_SUCCESS_CODE
 

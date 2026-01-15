@@ -38,7 +38,7 @@ import numpy as np
 import xarray as xr
 import rioxarray
 
-from config import config
+from config import Config
 
 # Note: Ensure you have rioxarray installed to use the rio accessor
 
@@ -430,6 +430,7 @@ class GenerateGeoTIFFFilesService:
         self,
         brightness_temperatures: Dict[str, xr.DataArray],
         output_dir: Path,
+        config: Config,
         color_palette: List[str] = None,
         vmin: float = 183.15,
         vmax: float = 323.15,
@@ -437,6 +438,7 @@ class GenerateGeoTIFFFilesService:
     ):
         self._brightness_temperatures = brightness_temperatures
         self._output_dir = output_dir
+        self._config = config
         self._color_palette = color_palette or self.CLOUD_TOPS_PALETTE
         self._vmin = vmin
         self._vmax = vmax
@@ -464,7 +466,7 @@ class GenerateGeoTIFFFilesService:
         c13_reproj = c13_reproj.rio.write_nodata(np.nan, inplace=False)
 
         # 2. Clip to configured bounds to reduce processing area
-        bounds = config.get_bounds()
+        bounds = self._config.get_bounds()
         c13_clipped = c13_reproj.rio.clip_box(
             minx=bounds["minx"],
             miny=bounds["miny"],

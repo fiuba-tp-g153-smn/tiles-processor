@@ -38,7 +38,7 @@ from datetime import datetime, UTC, timedelta
 from pathlib import Path
 
 from constants import constants
-from config import config
+from config import Config
 from clients import s3_client
 from services.compute_brightness_temperatures import (
     ComputeBrightnessTemperaturesService,
@@ -82,6 +82,7 @@ class ProcessBand13Job:
     """
 
     def __init__(self):
+        self._config = Config()
         self._bucket_name = constants.GOES19_BUCKET_NAME
         self._l1b_products_path = "ABI-L1b-RadF"
         self._product_base_file_pattern = "C13_G19"
@@ -104,7 +105,7 @@ class ProcessBand13Job:
         self._perform_cleanup(dirs)
 
     def _prepare_directories(self) -> dict[str, Path]:
-        base = Path.cwd() / config.TMP_DIR / "band_13"
+        base = Path.cwd() / self._config.TMP_DIR / "band_13"
         dirs = {
             "raw": base / "raw",
             "tiles": base / "tiles",
@@ -144,6 +145,7 @@ class ProcessBand13Job:
         geotiff_files = await GenerateGeoTIFFFilesService(
             bt_data,
             dirs["geotiff"],
+            self._config,
             color_palette=GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE,
             vmin=183.15,
             vmax=323.15,

@@ -6,6 +6,7 @@ These tests verify the full processing pipeline with mocked external dependencie
 """
 
 import asyncio
+import json
 import sys
 import os
 from pathlib import Path
@@ -17,15 +18,59 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 import pytest
 import numpy as np
-from scheduler import job_monitor
+from scheduler import _get_directory_size
+from config import Config
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-async def run_job_async(job_cls, job_name):
+@pytest.fixture
+def temp_settings_file(tmp_path):
+    """Create a temporary settings.json file."""
+    settings = {
+        "timezone": "UTC",
+        "scheduler": {
+            "band_13_cron": "*/10 * * * *",
+            "band_9_cron": "0 * * * *",
+        },
+        "features": {
+            "enable_band_13": True,
+            "enable_band_9": True,
+        },
+        "bounds": {
+            "minx": -90.0,
+            "miny": -60.0,
+            "maxx": -30.0,
+            "maxy": -15.0,
+        },
+    }
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps(settings))
+    return settings_path
+
+
+@pytest.fixture
+def env_vars(tmp_path):
+    """Required environment variables for Config."""
+    return {
+        "LOG_LEVEL": "DEBUG",
+        "TMP_DIR_CONTAINER": str(tmp_path / ".tmp"),
+        "SCHEDULER_DB_PATH": str(tmp_path / "scheduler.db"),
+    }
+
+
+async def run_job_async(config: Config, job_cls, job_name):
     """Async helper to mimic scheduler.run_job for tests."""
-    if not job_monitor.ensure_execution_safe(job_name):
+    tmp_path = Path(config.TMP_DIR)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    current_size = _get_directory_size(tmp_path)
+
+    if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
+        logger.error(
+            "Job %s skipped: temp directory size exceeds limit",
+            job_name,
+        )
         return
 
     try:
@@ -39,7 +84,7 @@ class TestSchedulerIntegration:
     """Integration tests for the APScheduler-based job system."""
 
     @pytest.mark.asyncio
-    async def test_job_runner_executes_job(self):
+    async def test_job_runner_executes_job(self, temp_settings_file, env_vars):
         """Test that job runner properly instantiates and executes a job."""
 
         processed_jobs = []
@@ -51,19 +96,20 @@ class TestSchedulerIntegration:
 
         MockJob.__name__ = "MockJob"
 
-        # Execute the runner (mocking disk check)
-        with patch("scheduler._get_directory_size", return_value=0):
-            with patch("scheduler.config") as mock_config:
-                mock_config.TMP_DIR = ".tmp"
-                mock_config.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024**3
-                await run_job_async(MockJob, "mock_job")
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+
+            # Execute the runner
+            await run_job_async(config, MockJob, "mock_job")
 
         # Verify job was processed
         assert len(processed_jobs) == 1
         assert processed_jobs[0] == "MockJob executed"
 
     @pytest.mark.asyncio
-    async def test_job_runner_prevents_execution_when_disk_full(self):
+    async def test_job_runner_prevents_execution_when_disk_full(
+        self, temp_settings_file, env_vars
+    ):
         """Test that job runner skips execution when disk limit exceeded."""
 
         execution_log = []
@@ -74,18 +120,25 @@ class TestSchedulerIntegration:
 
         MockJob.__name__ = "MockJob"
 
-        # Simulate disk full (11GB > 10GB limit)
-        with patch("scheduler._get_directory_size", return_value=11 * 1024**3):
-            with patch("scheduler.config") as mock_config:
-                mock_config.TMP_DIR = ".tmp"
-                mock_config.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024**3
-                await run_job_async(MockJob, "mock_job")
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            # Override max size to be very small
+            config.MAX_TMP_DIR_SIZE_BYTES = 1000
+
+            # Simulate disk full by creating a file larger than the limit
+            tmp_dir = Path(config.TMP_DIR)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            (tmp_dir / "large_file.bin").write_bytes(b"x" * 2000)
+
+            await run_job_async(config, MockJob, "mock_job")
 
         # Job should not have run
         assert execution_log == []
 
     @pytest.mark.asyncio
-    async def test_job_runner_handles_failure_gracefully(self):
+    async def test_job_runner_handles_failure_gracefully(
+        self, temp_settings_file, env_vars
+    ):
         """Test that a failing job doesn't crash the runner."""
 
         class FailingJob:
@@ -94,14 +147,13 @@ class TestSchedulerIntegration:
 
         FailingJob.__name__ = "FailingJob"
 
-        # Should not raise, just log the error
-        with patch("scheduler._get_directory_size", return_value=0):
-            with patch("scheduler.config") as mock_config:
-                mock_config.TMP_DIR = ".tmp"
-                mock_config.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024**3
-                await run_job_async(
-                    FailingJob, "failing_job"
-                )  # Should complete without raising
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+
+            # Should not raise, just log the error
+            await run_job_async(
+                config, FailingJob, "failing_job"
+            )  # Should complete without raising
 
 
 class TestPipelineIntegration:
@@ -135,35 +187,41 @@ class TestPipelineIntegration:
         return mock_ds
 
     @pytest.mark.asyncio
-    async def test_geotiff_generation_pipeline(self, tmp_path, mock_xarray_dataset):
+    async def test_geotiff_generation_pipeline(
+        self, tmp_path, mock_xarray_dataset, temp_settings_file, env_vars
+    ):
         """Test the GeoTIFF generation service with mocked data."""
         from services.generate_geotiff_files import GenerateGeoTIFFFilesService
 
         output_dir = tmp_path / "geotiff_output"
 
-        service = GenerateGeoTIFFFilesService(
-            brightness_temperatures={"test_image.nc": mock_xarray_dataset},
-            output_dir=output_dir,
-            vmin=183.15,
-            vmax=323.15,
-            product_name="Test_Product",
-        )
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
 
-        # Mock the internal _generate_geotiff to create actual files
-        generated_files = []
+            service = GenerateGeoTIFFFilesService(
+                brightness_temperatures={"test_image.nc": mock_xarray_dataset},
+                output_dir=output_dir,
+                config=config,
+                vmin=183.15,
+                vmax=323.15,
+                product_name="Test_Product",
+            )
 
-        def mock_generate(file_name, dataset):
-            output_file = output_dir / f"{Path(file_name).stem}.tif"
-            output_file.parent.mkdir(parents=True, exist_ok=True)
-            output_file.write_bytes(b"mock tiff content")
-            generated_files.append(output_file)
-            return output_file
+            # Mock the internal _generate_geotiff to create actual files
+            generated_files = []
 
-        with patch.object(service, "_generate_geotiff", side_effect=mock_generate):
-            results = await service.run()
+            def mock_generate(file_name, dataset):
+                output_file = output_dir / f"{Path(file_name).stem}.tif"
+                output_file.parent.mkdir(parents=True, exist_ok=True)
+                output_file.write_bytes(b"mock tiff content")
+                generated_files.append(output_file)
+                return output_file
 
-        assert len(generated_files) == 1
-        assert generated_files[0].exists()
+            with patch.object(service, "_generate_geotiff", side_effect=mock_generate):
+                results = await service.run()
+
+            assert len(generated_files) == 1
+            assert generated_files[0].exists()
 
     @pytest.mark.asyncio
     async def test_tiles_generation_pipeline(self, tmp_path):
@@ -232,7 +290,9 @@ class TestEndToEndMocked:
     """End-to-end tests with fully mocked external dependencies."""
 
     @pytest.mark.asyncio
-    async def test_full_job_execution_mocked(self, tmp_path):
+    async def test_full_job_execution_mocked(
+        self, tmp_path, temp_settings_file, env_vars
+    ):
         """Test complete job execution with all external deps mocked."""
 
         # Track what gets called
@@ -247,17 +307,16 @@ class TestEndToEndMocked:
 
         MockProcessJob.__name__ = "MockProcessJob"
 
-        # Mock config to allow job execution
-        with patch("scheduler.config") as mock_config:
-            mock_config.TMP_DIR = str(tmp_path)
-            mock_config.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024**3
-            with patch("scheduler._get_directory_size", return_value=0):
-                await run_job_async(MockProcessJob, "mock_process")
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            await run_job_async(config, MockProcessJob, "mock_process")
 
         assert execution_log == ["job_started", "job_completed"]
 
     @pytest.mark.asyncio
-    async def test_job_cancelled_when_tmp_dir_full(self, tmp_path):
+    async def test_job_cancelled_when_tmp_dir_full(
+        self, tmp_path, temp_settings_file, env_vars
+    ):
         """Test that jobs are skipped when tmp directory exceeds limit."""
 
         execution_log = []
@@ -268,12 +327,16 @@ class TestEndToEndMocked:
 
         MockProcessJob.__name__ = "MockProcessJob"
 
-        # Mock directory size to exceed limit
-        with patch("scheduler.config") as mock_config:
-            mock_config.TMP_DIR = str(tmp_path)
-            mock_config.MAX_TMP_DIR_SIZE_BYTES = 1000
-            with patch("scheduler._get_directory_size", return_value=2000):
-                await run_job_async(MockProcessJob, "mock_process")
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            config.MAX_TMP_DIR_SIZE_BYTES = 1000
+
+            # Create a file larger than the limit
+            tmp_dir = Path(config.TMP_DIR)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            (tmp_dir / "large_file.bin").write_bytes(b"x" * 2000)
+
+            await run_job_async(config, MockProcessJob, "mock_process")
 
         # Job should not have run
         assert execution_log == []
@@ -282,33 +345,38 @@ class TestEndToEndMocked:
 class TestConfigIntegration:
     """Integration tests for configuration loading."""
 
-    def test_config_bounds_used_in_geotiff_service(self):
+    def test_config_bounds_used_in_geotiff_service(self, temp_settings_file, env_vars):
         """Test that config bounds are properly used in GeoTIFF service."""
-        from config import config
         from services.generate_geotiff_files import GenerateGeoTIFFFilesService
 
-        # Get configured bounds
-        bounds = config.get_bounds()
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
 
-        # Verify bounds have expected structure
-        assert all(key in bounds for key in ["minx", "miny", "maxx", "maxy"])
-        assert all(isinstance(v, float) for v in bounds.values())
+            # Get configured bounds
+            bounds = config.get_bounds()
 
-        # Verify service can access DEFAULT_BOUNDS as fallback reference
-        default_bounds = GenerateGeoTIFFFilesService.DEFAULT_BOUNDS
-        assert all(key in default_bounds for key in ["minx", "miny", "maxx", "maxy"])
+            # Verify bounds have expected structure
+            assert all(key in bounds for key in ["minx", "miny", "maxx", "maxy"])
+            assert all(isinstance(v, float) for v in bounds.values())
 
-    def test_cron_schedules_are_validated(self):
+            # Verify service can access DEFAULT_BOUNDS as fallback reference
+            default_bounds = GenerateGeoTIFFFilesService.DEFAULT_BOUNDS
+            assert all(
+                key in default_bounds for key in ["minx", "miny", "maxx", "maxy"]
+            )
+
+    def test_cron_schedules_are_validated(self, temp_settings_file, env_vars):
         """Test that CRON schedules in config are valid."""
-        from config import config
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
 
-        # These should not raise - they were validated at import time
-        schedules = config.get_job_schedules()
+            # These should not raise - they were validated at init time
+            schedules = config.get_job_schedules()
 
-        assert "process_band_13" in schedules
-        assert "process_band_9" in schedules
+            assert "process_band_13" in schedules
+            assert "process_band_9" in schedules
 
-        # Verify they're non-empty strings
-        for job_name, cron_expr in schedules.items():
-            assert isinstance(cron_expr, str)
-            assert len(cron_expr) > 0
+            # Verify they're non-empty strings
+            for job_name, cron_expr in schedules.items():
+                assert isinstance(cron_expr, str)
+                assert len(cron_expr) > 0
