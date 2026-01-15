@@ -7,13 +7,13 @@ services:
       dockerfile: Dockerfile
       args:
         - LOG_LEVEL=${LOG_LEVEL}
-        - DATA_DIR_CONTAINER=${DATA_DIR_CONTAINER}
+        - DATA_DIR_CONTAINER=/app/data
     volumes:
-      - tiles_data:${DATA_DIR_CONTAINER}
+      - tiles_data:/app/data
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
-      - DATA_DIR_CONTAINER=${DATA_DIR_CONTAINER}
+      - DATA_DIR_CONTAINER=/app/data
 
 volumes:
   tiles_data:
