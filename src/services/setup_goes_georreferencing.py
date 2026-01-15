@@ -48,19 +48,40 @@ class SetupGOESGeorreferencingService:
         to avoid issues with closed file handles in async processing.
     """
 
-    def __init__(self, goes_data: Dict[str, bytes]):
+    def __init__(self, goes_data: Dict[str, bytes], max_concurrency: int = 4):
         self._goes_data = goes_data
+        self._max_concurrency = max_concurrency
 
     async def run(self) -> Dict[str, xr.Dataset]:
+        """
+        Async Concurrency Pattern: Semaphore + to_thread + gather.
+
+        This pattern enables controlled parallelism for CPU-bound georeferencing tasks:
+        1. Semaphore limits concurrent executions (default: 4) to prevent memory exhaustion.
+        2. asyncio.to_thread runs blocking netCDF/numpy operations in a separate thread.
+        3. asyncio.gather coordinates all tasks and collects results.
+
+        This approach ensures the event loop remains responsive while processing heavy
+        satellite data files, without overwhelming system resources.
+        """
         import logging
 
         logger = logging.getLogger(__name__)
         tasks = []
         file_names = []
 
+        # Semaphore limits concurrent georeferencing to prevent memory exhaustion
+        semaphore = asyncio.Semaphore(self._max_concurrency)
+
+        async def bounded_georeferencing(content: bytes):
+            # Acquire semaphore permit (blocks if max_concurrency reached)
+            async with semaphore:
+                # Offload CPU-bound georeferencing to thread pool
+                return await asyncio.to_thread(self._apply_georeferencing, content)
+
         for file_name, content in self._goes_data.items():
             file_names.append(file_name)
-            tasks.append(asyncio.to_thread(self._apply_georeferencing, content))
+            tasks.append(bounded_georeferencing(content))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 

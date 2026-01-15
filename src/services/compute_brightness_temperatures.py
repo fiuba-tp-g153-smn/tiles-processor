@@ -64,24 +64,72 @@ class ComputeBrightnessTemperaturesService:
         when processing large satellite imagery arrays.
     """
 
-    def __init__(self, georreferenced_datasets: dict[str, xr.Dataset]):
+    def __init__(
+        self, georreferenced_datasets: dict[str, xr.Dataset], max_concurrency: int = 4
+    ):
         self._georreferenced_datasets = georreferenced_datasets
+        self._max_concurrency = max_concurrency
 
     async def run(self) -> dict[str, xr.DataArray]:
+        """
+        Async Concurrency Pattern: Semaphore + to_thread + gather.
+
+        This implements a common pattern for CPU-bound async processing:
+
+        1. SEMAPHORE (asyncio.Semaphore):
+           - Limits concurrent executions to max_concurrency (default: 4)
+           - Prevents memory exhaustion from processing too many arrays at once
+           - Acts as a "ticket system" - tasks wait for a permit before proceeding
+
+        2. TO_THREAD (asyncio.to_thread):
+           - Offloads CPU-bound _compute_brightness_temperatures to thread pool
+           - Prevents blocking the event loop during numpy/xarray computations
+           - Allows other coroutines to run while computation executes
+
+        3. GATHER (asyncio.gather with return_exceptions=True):
+           - Schedules all tasks concurrently (but Semaphore limits actual parallelism)
+           - return_exceptions=True collects errors instead of failing fast
+           - Enables graceful error reporting for partial failures
+
+        Execution Flow:
+            ┌─────────────────────────────────────────────────────────┐
+            │  asyncio.gather([task1, task2, task3, task4, ...])      │
+            │                                                          │
+            │  Semaphore(4) allows only 4 concurrent executions:       │
+            │    [task1, task2, task3, task4] → running                │
+            │    [task5, task6, ...] → waiting for semaphore release   │
+            │                                                          │
+            │  Each task runs to_thread(_compute_brightness_temps)     │
+            │  freeing the event loop while numpy crunches numbers     │
+            └─────────────────────────────────────────────────────────┘
+        """
         import logging
 
         logger = logging.getLogger(__name__)
         tasks = []
         file_names = []
 
+        # Semaphore limits concurrent processing to prevent memory exhaustion
+        semaphore = asyncio.Semaphore(self._max_concurrency)
+
+        async def bounded_computation(dataset):
+            # Acquire semaphore permit (blocks if max_concurrency reached)
+            async with semaphore:
+                # Run CPU-bound computation in thread pool to avoid blocking event loop
+                return await asyncio.to_thread(
+                    self._compute_brightness_temperatures, dataset
+                )
+
+        # Create tasks for all datasets (tasks don't start until gathered)
         for file_name, dataset in self._georreferenced_datasets.items():
             file_names.append(file_name)
-            tasks.append(
-                asyncio.to_thread(self._compute_brightness_temperatures, dataset)
-            )
+            tasks.append(bounded_computation(dataset))
 
+        # Execute all tasks concurrently (Semaphore controls actual parallelism)
+        # return_exceptions=True: collect errors instead of failing on first exception
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
+        # Separate successful results from failures
         brightness_temperature_data = {}
         failed = []
 
@@ -91,6 +139,7 @@ class ComputeBrightnessTemperaturesService:
             else:
                 brightness_temperature_data[file_name] = result
 
+        # Report all failures together (not fail-fast behavior)
         if failed:
             for name, err in failed:
                 logger.error(f"Brightness temp computation failed for {name}: {err}")

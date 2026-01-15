@@ -435,6 +435,7 @@ class GenerateGeoTIFFFilesService:
         vmin: float = 183.15,
         vmax: float = 323.15,
         product_name: str = "Cloud_Tops",
+        max_concurrency: int = 4,
     ):
         self._brightness_temperatures = brightness_temperatures
         self._output_dir = output_dir
@@ -443,8 +444,26 @@ class GenerateGeoTIFFFilesService:
         self._vmin = vmin
         self._vmax = vmax
         self._product_name = product_name
+        self._max_concurrency = max_concurrency
 
     async def run(self) -> List[Path]:
+        """
+        Async Concurrency Pattern: Semaphore + to_thread + gather.
+
+        Same pattern as ComputeBrightnessTemperaturesService, optimized for
+        CPU-bound GeoTIFF generation (reprojection, clipping, colorization).
+
+        Why this pattern works well for GeoTIFF generation:
+            - _generate_geotiff is CPU-intensive (numpy, rioxarray operations)
+            - Memory usage is significant per file (~100MB+ during reprojection)
+            - Semaphore(4) balances parallelism vs memory consumption
+            - Thread pool allows event loop to remain responsive
+
+        Key async components:
+            - bounded_generation: Wrapper that acquires semaphore before execution
+            - asyncio.to_thread: Offloads blocking I/O and CPU work to threads
+            - asyncio.gather: Coordinates all tasks, collects results/exceptions
+        """
         import logging
 
         logger = logging.getLogger(__name__)
@@ -452,12 +471,27 @@ class GenerateGeoTIFFFilesService:
         tasks = []
         file_names = []
 
+        # Limit concurrent GeoTIFF generation to control memory usage
+        semaphore = asyncio.Semaphore(self._max_concurrency)
+
+        async def bounded_generation(file_name, dataset):
+            # Semaphore ensures only max_concurrency tasks run simultaneously
+            async with semaphore:
+                # Thread pool execution prevents event loop blocking during
+                # heavy numpy/rioxarray operations (reproject, clip, colorize)
+                return await asyncio.to_thread(
+                    self._generate_geotiff, file_name, dataset
+                )
+
+        # Schedule all tasks (semaphore controls actual concurrency)
         for file_name, dataset in self._brightness_temperatures.items():
             file_names.append(file_name)
-            tasks.append(asyncio.to_thread(self._generate_geotiff, file_name, dataset))
+            tasks.append(bounded_generation(file_name, dataset))
 
+        # Run all tasks, collecting exceptions rather than failing fast
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
+        # Partition results into successes and failures
         successful = []
         failed = []
 
@@ -467,6 +501,7 @@ class GenerateGeoTIFFFilesService:
             else:
                 successful.append(result)
 
+        # Aggregate error reporting for better debugging
         if failed:
             for name, err in failed:
                 logger.error(f"GeoTIFF generation failed for {name}: {err}")

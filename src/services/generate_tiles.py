@@ -86,15 +86,34 @@ class GenerateTilesService:
         self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_TILES)
 
     async def run(self):
+        """
+        Async Concurrency Pattern: Semaphore + to_thread + gather.
+
+        Tile generation uses subprocess calls to gdal2tiles.py, which is both
+        CPU-intensive and spawns its own child processes (--processes=2).
+
+        Concurrency Design:
+            - MAX_CONCURRENT_TILES=2: Only 2 gdal2tiles jobs run at once
+            - GDAL_PROCESSES=2: Each gdal2tiles job uses 2 internal processes
+            - Total parallelism: 2 * 2 = 4 CPU cores utilized
+
+        Why lower concurrency than other services:
+            - gdal2tiles is already multi-process internally
+            - Each job writes many small tile files (I/O intensive)
+            - subprocess.run blocks until gdal2tiles completes
+            - Memory usage per job is moderate but tile I/O can saturate disk
+        """
         self._output_dir.mkdir(parents=True, exist_ok=True)
         tasks = []
 
+        # Schedule all tile generation tasks
         for geotiff_path in self._geotiff_files:
             tasks.append(self._generate_tiles_with_limit(geotiff_path))
 
+        # Execute with semaphore-controlled parallelism
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Check for any failures and log them
+        # Collect and report failures
         failed = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
@@ -108,7 +127,15 @@ class GenerateTilesService:
             )
 
     async def _generate_tiles_with_limit(self, geotiff_path: Path):
+        """
+        Semaphore-bounded task wrapper.
+
+        The semaphore (MAX_CONCURRENT_TILES=2) prevents too many gdal2tiles
+        processes from running simultaneously. Since gdal2tiles itself uses
+        multiprocessing (--processes=2), we keep the outer limit low.
+        """
         async with self._semaphore:
+            # Run subprocess in thread pool to avoid blocking event loop
             await asyncio.to_thread(self._generate_tiles, geotiff_path)
 
     def _generate_tiles(self, geotiff_path: Path):

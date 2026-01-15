@@ -89,11 +89,36 @@ class ProcessBand9Job:
         )
 
     async def run(self):
+        """
+        Async Pipeline Execution Pattern:
+
+        This method orchestrates the full processing pipeline by awaiting each
+        async service sequentially. Each service internally parallelizes its work
+        using asyncio.Semaphore + asyncio.to_thread for CPU-bound operations.
+
+        Execution Flow:
+            1. await _download_last_hour_files() - S3 downloads (I/O-bound, concurrent)
+            2. await SetupGOESGeorreferencingService.run() - Parallel georeferencing
+            3. await ComputeBrightnessTemperaturesService.run() - Parallel temp calc
+            4. await GenerateGeoTIFFFilesService.run() - Parallel TIFF generation
+            5. await GenerateTilesService.run() - Parallel tile generation
+
+        Concurrency Model:
+            - Services are awaited sequentially (pipeline stages depend on prior output)
+            - Within each service, multiple files are processed concurrently
+            - Semaphores limit parallelism (default max_concurrency=4 per service)
+            - asyncio.to_thread offloads CPU-bound work to avoid blocking event loop
+        """
         current_time = datetime.now(UTC)
 
         # Download files from the last hour (6 files)
+        # S3Client uses internal Semaphore for concurrent downloads (max=6)
         downloaded_files = await self._download_last_hour_files(current_time)
 
+        # Each service below uses asyncio.gather + Semaphore pattern:
+        # - Creates tasks for all files
+        # - Semaphore limits concurrent execution
+        # - asyncio.to_thread moves CPU work off the event loop
         georreferenced_data = await SetupGOESGeorreferencingService(
             downloaded_files
         ).run()

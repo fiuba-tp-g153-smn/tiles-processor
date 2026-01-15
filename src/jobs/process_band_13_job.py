@@ -139,44 +139,89 @@ class ProcessBand13Job:
         return {k: v for k, v in downloaded.items() if v is not None}
 
     async def _run_processing_pipeline(self, files: dict, dirs: dict[str, Path]):
+        """
+        Async Pipeline Execution Pattern:
+
+        This method orchestrates multiple async services sequentially, with each
+        service internally parallelizing its work using asyncio.Semaphore for
+        concurrency control.
+
+        Execution Flow:
+            1. Files are processed in batches (BATCH_SIZE=4) to limit memory
+            2. Each batch awaits 3 async services sequentially (geo → temp → tiff)
+            3. Within each service, files are processed concurrently via Semaphore
+            4. After all batches, tile generation runs once on all GeoTIFFs
+
+        Memory Management:
+            - Batching prevents loading all 24 datasets into memory at once
+            - gc.collect() forces garbage collection between pipeline stages
+            - del statements explicitly release large numpy arrays
+        """
+        import gc
+
         file_count = len(files)
+        # Process in batches to control memory usage
+        # 24 files / 4 = 6 batches. This prevents holding all datasets in memory.
+        BATCH_SIZE = 4
 
-        try:
-            # 1. Georeference
-            logger.info(f"[1/4] Georeferencing {file_count} images...")
-            geo_data = await SetupGOESGeorreferencingService(files).run()
-            logger.info(f"[1/4] Georeferencing complete")
+        all_geotiff_files = []
+        file_items = list(files.items())
 
-            # 2. Brightness Temp
+        for i in range(0, file_count, BATCH_SIZE):
+            batch_items = file_items[i : i + BATCH_SIZE]
+            batch_files = dict(batch_items)
+            batch_num = (i // BATCH_SIZE) + 1
+            total_batches = (file_count + BATCH_SIZE - 1) // BATCH_SIZE
+
             logger.info(
-                f"[2/4] Computing brightness temperatures for {file_count} images..."
+                f"Processing Batch {batch_num}/{total_batches} ({len(batch_files)} files)"
             )
-            bt_data = await ComputeBrightnessTemperaturesService(geo_data).run()
-            logger.info(f"[2/4] Brightness temperature computation complete")
 
-            # 3. GeoTIFF
-            logger.info(f"[3/4] Generating {file_count} colorized GeoTIFFs...")
-            geotiff_files = await GenerateGeoTIFFFilesService(
-                bt_data,
-                dirs["geotiff"],
-                self._config,
-                color_palette=GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE,
-                vmin=183.15,
-                vmax=323.15,
-                product_name="Cloud_Tops",
-            ).run()
-            logger.info(f"[3/4] GeoTIFF generation complete")
+            try:
+                # 1. Georeference
+                logger.info(f"  [1/3] Georeferencing...")
+                geo_data = await SetupGOESGeorreferencingService(batch_files).run()
 
-            # 4. Tiles
+                # 2. Brightness Temp
+                logger.info(f"  [2/3] Computing brightness temperatures...")
+                bt_data = await ComputeBrightnessTemperaturesService(geo_data).run()
+
+                # Clear georeferenced data to free memory
+                del geo_data
+                gc.collect()
+
+                # 3. GeoTIFF
+                logger.info(f"  [3/3] Generating GeoTIFFs...")
+                geotiff_files = await GenerateGeoTIFFFilesService(
+                    bt_data,
+                    dirs["geotiff"],
+                    self._config,
+                    color_palette=GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE,
+                    vmin=183.15,
+                    vmax=323.15,
+                    product_name="Cloud_Tops",
+                ).run()
+
+                all_geotiff_files.extend(geotiff_files)
+
+                # Clear brightness temp data to free memory
+                del bt_data
+                del geotiff_files
+                gc.collect()  # Force garbage collection after each batch check
+
+                logger.info(f"Batch {batch_num} complete")
+
+            except Exception as e:
+                logger.exception(f"Pipeline failed during batch {batch_num}: {e}")
+                raise
+
+        # 4. Tiles (Process all tiles at once as it iterates files from disk)
+        if all_geotiff_files:
             logger.info(
-                f"[4/4] Generating web tiles for {len(geotiff_files)} GeoTIFFs..."
+                f"[4/4] Generating web tiles for {len(all_geotiff_files)} GeoTIFFs..."
             )
-            await GenerateTilesService(geotiff_files, dirs["tiles"]).run()
+            await GenerateTilesService(all_geotiff_files, dirs["tiles"]).run()
             logger.info(f"[4/4] Tile generation complete")
-
-        except Exception as e:
-            logger.exception(f"Pipeline failed during processing: {e}")
-            raise
 
     def _perform_cleanup(self, dirs: dict[str, Path]):
         retention = 26
@@ -204,6 +249,18 @@ class ProcessBand13Job:
         local_cache_dir: Path,
         skip_if: Callable[[str], bool] = None,
     ) -> dict[str, bytes]:
+        """
+        Async Download with Concurrency-Limited S3 Client.
+
+        This method coordinates multiple async S3 downloads across hourly buckets.
+        The S3Client internally limits concurrent downloads (max_concurrent_downloads=6)
+        using asyncio.Semaphore to prevent overwhelming the network or S3 rate limits.
+
+        Pattern:
+            - Sequential iteration over hours (current → past)
+            - Each hour's download is an async operation with internal parallelism
+            - skip_if callback enables smart caching (skip already-processed files)
+        """
         target_files = 24
         all_files = {}
         hours_back = 0
