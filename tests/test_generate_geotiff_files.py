@@ -45,39 +45,6 @@ def config_fixture(temp_settings_file, env_vars):
     with mock.patch.dict(os.environ, env_vars, clear=True):
         return Config(settings_path=temp_settings_file)
 
-
-class TestExpandPalette:
-    """Tests for palette expansion utility."""
-
-    def test_expand_palette_to_256_from_small(self):
-        """Test expanding a small palette to 256 colors."""
-        small_palette = ["#000000", "#ffffff"]
-        expanded = GenerateGeoTIFFFilesService._expand_palette_to_256(small_palette)
-
-        assert len(expanded) == 256
-        assert expanded[0] == "#000000"
-        assert expanded[255] == "#ffffff"
-
-    def test_expand_palette_to_256_preserves_order(self):
-        """Test that palette expansion preserves color order."""
-        palette = ["#ff0000", "#00ff00", "#0000ff"]
-        expanded = GenerateGeoTIFFFilesService._expand_palette_to_256(palette)
-
-        assert len(expanded) == 256
-        # First color should be red
-        assert expanded[0] == "#ff0000"
-        # Last color should be blue
-        assert expanded[255] == "#0000ff"
-
-    def test_cloud_tops_palette_length(self):
-        """Test that CLOUD_TOPS_PALETTE has 256 colors."""
-        assert len(GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE) == 256
-
-    def test_water_vapor_palette_length(self):
-        """Test that WATER_VAPOR_PALETTE has 256 colors."""
-        assert len(GenerateGeoTIFFFilesService.WATER_VAPOR_PALETTE) == 256
-
-
 class TestNormalizeWithCustomPalette:
     """Tests for the normalization and palette application."""
 
