@@ -41,12 +41,10 @@ ENV PYTHONPATH=/app/src
 
 # Build arguments for environment variables
 ARG LOG_LEVEL
-ARG TMP_DIR_CONTAINER
-ARG SCHEDULER_DB_PATH
+ARG DATA_DIR_CONTAINER
 
 ENV LOG_LEVEL=$LOG_LEVEL
-ENV TMP_DIR_CONTAINER=$TMP_DIR_CONTAINER
-ENV SCHEDULER_DB_PATH=$SCHEDULER_DB_PATH
+ENV DATA_DIR_CONTAINER=$DATA_DIR_CONTAINER
 
 # Options: process_band_13, process_band_9 or scheduler
 CMD ["python3", "src/main.py", "process_band_13"]

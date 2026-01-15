@@ -35,8 +35,7 @@ def env_vars(tmp_path):
     """Required environment variables for Config."""
     return {
         "LOG_LEVEL": "DEBUG",
-        "TMP_DIR_CONTAINER": str(tmp_path / ".tmp"),
-        "SCHEDULER_DB_PATH": str(tmp_path / "scheduler.db"),
+        "DATA_DIR_CONTAINER": str(tmp_path / "data"),
     }
 
 

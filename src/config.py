@@ -16,8 +16,9 @@ class Config:
 
         # Environment variables
         self.LOG_LEVEL: str = self._get_required_env("LOG_LEVEL").upper()
-        self.TMP_DIR: str = self._get_required_env("TMP_DIR_CONTAINER")
-        self.SCHEDULER_DB_PATH: str = self._get_required_env("SCHEDULER_DB_PATH")
+        data_dir = Path(self._get_required_env("DATA_DIR_CONTAINER"))
+        self.TMP_DIR: str = str(data_dir / "tmp")
+        self.SCHEDULER_DB_PATH: str = str(data_dir / "scheduler" / "jobs.db")
 
         # Settings from JSON
         self.TIMEZONE: str = settings["timezone"]

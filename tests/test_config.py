@@ -43,8 +43,7 @@ class TestConfig:
         """Required environment variables for Config."""
         return {
             "LOG_LEVEL": "DEBUG",
-            "TMP_DIR_CONTAINER": "/tmp/test",
-            "SCHEDULER_DB_PATH": "/tmp/test/scheduler.db",
+            "DATA_DIR_CONTAINER": "/tmp/test",
         }
 
     def test_config_loads_from_settings_file(self, temp_settings_file, env_vars):
@@ -68,8 +67,8 @@ class TestConfig:
             config = Config(settings_path=temp_settings_file)
 
             assert config.LOG_LEVEL == "DEBUG"
-            assert config.TMP_DIR == "/tmp/test"
-            assert config.SCHEDULER_DB_PATH == "/tmp/test/scheduler.db"
+            assert config.TMP_DIR == "/tmp/test/tmp"
+            assert config.SCHEDULER_DB_PATH == "/tmp/test/scheduler/jobs.db"
 
     def test_config_raises_on_missing_env_var(self, temp_settings_file):
         """Test that Config raises ValueError when required env var is missing."""
@@ -81,8 +80,7 @@ class TestConfig:
         """Test that Config raises ValueError when env var is empty."""
         env_vars = {
             "LOG_LEVEL": "",
-            "TMP_DIR_CONTAINER": "/tmp/test",
-            "SCHEDULER_DB_PATH": "/tmp/test/scheduler.db",
+            "DATA_DIR_CONTAINER": "/tmp/test",
         }
         with mock.patch.dict(os.environ, env_vars, clear=True):
             with pytest.raises(ValueError, match="LOG_LEVEL.*is required"):
@@ -140,8 +138,7 @@ class TestValidateCronExpression:
     def env_vars(self):
         return {
             "LOG_LEVEL": "INFO",
-            "TMP_DIR_CONTAINER": "/tmp/test",
-            "SCHEDULER_DB_PATH": "/tmp/test/scheduler.db",
+            "DATA_DIR_CONTAINER": "/tmp/test",
         }
 
     def test_valid_every_10_minutes(self, temp_settings_file, env_vars):

@@ -5,10 +5,8 @@ services:
       context: .
       dockerfile: Dockerfile
     volumes:
-      - ${TMP_DIR_HOST}:${TMP_DIR_CONTAINER}
-      - ${SCHEDULER_DB_HOST_DIR}:${SCHEDULER_DB_CONTAINER_DIR}
+      - ${DATA_DIR_HOST}:${DATA_DIR_CONTAINER}
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
-      - TMP_DIR_CONTAINER=${TMP_DIR_CONTAINER}
-      - SCHEDULER_DB_PATH=${SCHEDULER_DB_PATH}
+      - DATA_DIR_CONTAINER=${DATA_DIR_CONTAINER}
