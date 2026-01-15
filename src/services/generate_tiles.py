@@ -92,7 +92,20 @@ class GenerateTilesService:
         for geotiff_path in self._geotiff_files:
             tasks.append(self._generate_tiles_with_limit(geotiff_path))
 
-        await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Check for any failures and log them
+        failed = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                failed.append((self._geotiff_files[i].name, result))
+
+        if failed:
+            for name, err in failed:
+                logger.error(f"Tile generation failed for {name}: {err}")
+            raise RuntimeError(
+                f"Tile generation failed for {len(failed)}/{len(tasks)} files"
+            )
 
     async def _generate_tiles_with_limit(self, geotiff_path: Path):
         async with self._semaphore:

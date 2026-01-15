@@ -445,13 +445,36 @@ class GenerateGeoTIFFFilesService:
         self._product_name = product_name
 
     async def run(self) -> List[Path]:
+        import logging
+
+        logger = logging.getLogger(__name__)
         self._output_dir.mkdir(parents=True, exist_ok=True)
         tasks = []
+        file_names = []
 
         for file_name, dataset in self._brightness_temperatures.items():
+            file_names.append(file_name)
             tasks.append(asyncio.to_thread(self._generate_geotiff, file_name, dataset))
 
-        return await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        successful = []
+        failed = []
+
+        for file_name, result in zip(file_names, results):
+            if isinstance(result, Exception):
+                failed.append((file_name, result))
+            else:
+                successful.append(result)
+
+        if failed:
+            for name, err in failed:
+                logger.error(f"GeoTIFF generation failed for {name}: {err}")
+            raise RuntimeError(
+                f"GeoTIFF generation failed for {len(failed)}/{len(tasks)} files"
+            )
+
+        return successful
 
     def _generate_geotiff(self, file_name: str, c13_data: xr.DataArray) -> Path:
         # Remove grid_mapping if present

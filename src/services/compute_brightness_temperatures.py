@@ -68,6 +68,9 @@ class ComputeBrightnessTemperaturesService:
         self._georreferenced_datasets = georreferenced_datasets
 
     async def run(self) -> dict[str, xr.DataArray]:
+        import logging
+
+        logger = logging.getLogger(__name__)
         tasks = []
         file_names = []
 
@@ -77,11 +80,23 @@ class ComputeBrightnessTemperaturesService:
                 asyncio.to_thread(self._compute_brightness_temperatures, dataset)
             )
 
-        brightness_temperature_datasets = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         brightness_temperature_data = {}
-        for file_name, data_array in zip(file_names, brightness_temperature_datasets):
-            brightness_temperature_data[file_name] = data_array
+        failed = []
+
+        for file_name, result in zip(file_names, results):
+            if isinstance(result, Exception):
+                failed.append((file_name, result))
+            else:
+                brightness_temperature_data[file_name] = result
+
+        if failed:
+            for name, err in failed:
+                logger.error(f"Brightness temp computation failed for {name}: {err}")
+            raise RuntimeError(
+                f"Brightness temp computation failed for {len(failed)}/{len(tasks)} files"
+            )
 
         return brightness_temperature_data
 

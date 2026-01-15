@@ -94,13 +94,19 @@ class ProcessBand13Job:
         current_time = datetime.now(UTC)
         dirs = self._prepare_directories()
 
+        logger.info(
+            "Starting Band 13 job - searching for last 24 satellite images (4 hours)"
+        )
+
         files_to_process = await self._get_files_to_process(current_time, dirs)
         if not files_to_process:
-            logger.info("No new files to process.")
+            logger.info("No new files to process - all images already have tiles")
             self._perform_cleanup(dirs)
             return
 
-        logger.info(f"Processing {len(files_to_process)} new files...")
+        logger.info(
+            f"Found {len(files_to_process)} new images to process (tiles not yet generated)"
+        )
         await self._run_processing_pipeline(files_to_process, dirs)
         self._perform_cleanup(dirs)
 
@@ -133,29 +139,44 @@ class ProcessBand13Job:
         return {k: v for k, v in downloaded.items() if v is not None}
 
     async def _run_processing_pipeline(self, files: dict, dirs: dict[str, Path]):
-        # 1. Georeference
-        geo_data = await SetupGOESGeorreferencingService(files).run()
-        logger.info("Georreferencing completed.")
+        file_count = len(files)
 
-        # 2. Brightness Temp
-        bt_data = await ComputeBrightnessTemperaturesService(geo_data).run()
-        logger.info("Brightness temperature computation completed.")
+        try:
+            # 1. Georeference
+            logger.info(f"[1/4] Georeferencing {file_count} images...")
+            geo_data = await SetupGOESGeorreferencingService(files).run()
+            logger.info(f"[1/4] Georeferencing complete")
 
-        # 3. GeoTIFF
-        geotiff_files = await GenerateGeoTIFFFilesService(
-            bt_data,
-            dirs["geotiff"],
-            self._config,
-            color_palette=GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE,
-            vmin=183.15,
-            vmax=323.15,
-            product_name="Cloud_Tops",
-        ).run()
-        logger.info("GeoTIFF generation completed.")
+            # 2. Brightness Temp
+            logger.info(
+                f"[2/4] Computing brightness temperatures for {file_count} images..."
+            )
+            bt_data = await ComputeBrightnessTemperaturesService(geo_data).run()
+            logger.info(f"[2/4] Brightness temperature computation complete")
 
-        # 4. Tiles
-        await GenerateTilesService(geotiff_files, dirs["tiles"]).run()
-        logger.info("Tiles generation completed.")
+            # 3. GeoTIFF
+            logger.info(f"[3/4] Generating {file_count} colorized GeoTIFFs...")
+            geotiff_files = await GenerateGeoTIFFFilesService(
+                bt_data,
+                dirs["geotiff"],
+                self._config,
+                color_palette=GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE,
+                vmin=183.15,
+                vmax=323.15,
+                product_name="Cloud_Tops",
+            ).run()
+            logger.info(f"[3/4] GeoTIFF generation complete")
+
+            # 4. Tiles
+            logger.info(
+                f"[4/4] Generating web tiles for {len(geotiff_files)} GeoTIFFs..."
+            )
+            await GenerateTilesService(geotiff_files, dirs["tiles"]).run()
+            logger.info(f"[4/4] Tile generation complete")
+
+        except Exception as e:
+            logger.exception(f"Pipeline failed during processing: {e}")
+            raise
 
     def _perform_cleanup(self, dirs: dict[str, Path]):
         retention = 26
@@ -200,13 +221,19 @@ class ProcessBand13Job:
             all_files.update(batch)
             hours_back += 1
 
+        logger.info(
+            f"Download complete: collected {len(all_files)}/{target_files} images"
+        )
         return all_files
 
     async def _download_hour_batch(
         self, time: datetime, needed: int, cache_dir: Path, skip_if: Callable
     ) -> dict:
         path = self._build_directory_path(time)
-        logger.info(f"Checking {path} (needs {needed} more)")
+        hour_str = time.strftime("%Y-%m-%d %H:00 UTC")
+        logger.info(
+            f"Searching S3 for images from {hour_str} (need {needed} more to reach 24)"
+        )
 
         # For previous hours (needed < 6), only get the newest files (minutes 50,40,30...)
         # Logic: 1 file every 10 mins = 6 files/hour.

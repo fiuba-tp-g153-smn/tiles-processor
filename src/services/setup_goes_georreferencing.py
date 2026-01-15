@@ -52,6 +52,9 @@ class SetupGOESGeorreferencingService:
         self._goes_data = goes_data
 
     async def run(self) -> Dict[str, xr.Dataset]:
+        import logging
+
+        logger = logging.getLogger(__name__)
         tasks = []
         file_names = []
 
@@ -59,11 +62,23 @@ class SetupGOESGeorreferencingService:
             file_names.append(file_name)
             tasks.append(asyncio.to_thread(self._apply_georeferencing, content))
 
-        georeferenced_contents = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         georeferenced_data = {}
-        for file_name, content in zip(file_names, georeferenced_contents):
-            georeferenced_data[file_name] = content
+        failed = []
+
+        for file_name, result in zip(file_names, results):
+            if isinstance(result, Exception):
+                failed.append((file_name, result))
+            else:
+                georeferenced_data[file_name] = result
+
+        if failed:
+            for name, err in failed:
+                logger.error(f"Georeferencing failed for {name}: {err}")
+            raise RuntimeError(
+                f"Georeferencing failed for {len(failed)}/{len(tasks)} files"
+            )
 
         return georeferenced_data
 
