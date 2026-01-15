@@ -9,8 +9,12 @@ services:
         - LOG_LEVEL=${LOG_LEVEL}
         - DATA_DIR_CONTAINER=${DATA_DIR_CONTAINER}
     volumes:
-      - ${DATA_DIR_HOST}:${DATA_DIR_CONTAINER}
+      - tiles_data:${DATA_DIR_CONTAINER}
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR_CONTAINER=${DATA_DIR_CONTAINER}
+
+volumes:
+  tiles_data:
+    external: true
