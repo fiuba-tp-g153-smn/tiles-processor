@@ -5,8 +5,7 @@ import logging
 from pathlib import Path
 from config import Config
 from logging_config import setup_logging
-from config import Config
-from logging_config import setup_logging
+
 
 """
 Application Health Check Script.
@@ -31,7 +30,7 @@ EXIT CODES:
 # Maximum age of the heartbeat file in seconds (e.g., 2 minutes)
 # Logic: Scheduler runs job every 1 min. If > 2 min, something is stuck.
 MAX_DELAY_SECONDS = 120
-HEALTH_FILE = Path("/tmp/healthy")
+HEALTH_FILE = Path("/app/data/tmp/healthy")
 
 EXIT_ERROR_CODE = 1
 EXIT_SUCCESS_CODE = 0
