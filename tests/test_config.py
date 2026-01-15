@@ -115,6 +115,7 @@ class TestConfig:
             assert schedules == {
                 "process_band_13": "*/10 * * * *",
                 "process_band_9": "0 * * * *",
+                "heartbeat": "* * * * *",
             }
 
 
