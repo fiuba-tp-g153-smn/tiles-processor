@@ -191,6 +191,17 @@ async def start_scheduler(
     logger.info("Resuming scheduler with %d jobs", len(scheduler.get_jobs()))
     scheduler.resume()
 
+    # Log the next run time for all scheduled jobs for better observability
+    for job in scheduler.get_jobs():
+        if job.next_run_time:
+            logger.info(
+                "Job '%s' next run scheduled for: %s",
+                job.id,
+                job.next_run_time.isoformat(),
+            )
+        else:
+            logger.info("Job '%s' is paused or has no next run time", job.id)
+
     try:
         await stop_event.wait()
     except asyncio.CancelledError:
