@@ -65,7 +65,16 @@ class TestStartScheduler:
         with patch("scheduler.SQLAlchemyJobStore") as MockJobStore:
             with patch("scheduler.AsyncIOScheduler") as MockScheduler:
                 scheduler_instance = MockScheduler.return_value
-                scheduler_instance.get_jobs.return_value = [1, 2]
+                mock_job_instance = MagicMock()
+                mock_job_instance.id = "test_job"
+                mock_job_instance.next_run_time = MagicMock()
+                mock_job_instance.next_run_time.isoformat.return_value = (
+                    "2023-01-01T00:00:00"
+                )
+                scheduler_instance.get_jobs.return_value = [
+                    mock_job_instance,
+                    mock_job_instance,
+                ]
                 scheduler_instance.get_job.return_value = None  # Jobs don't exist yet
 
                 stop_event = asyncio.Event()
@@ -136,7 +145,10 @@ class TestStartScheduler:
         with patch("scheduler.SQLAlchemyJobStore"):
             with patch("scheduler.AsyncIOScheduler") as MockScheduler:
                 scheduler_instance = MockScheduler.return_value
-                scheduler_instance.get_jobs.return_value = [1]
+                mock_job_instance = MagicMock()
+                mock_job_instance.id = "test_job"
+                mock_job_instance.next_run_time = None
+                scheduler_instance.get_jobs.return_value = [mock_job_instance]
                 scheduler_instance.get_job.return_value = None
 
                 stop_event = asyncio.Event()
@@ -182,7 +194,13 @@ class TestStartScheduler:
         with patch("scheduler.SQLAlchemyJobStore"):
             with patch("scheduler.AsyncIOScheduler") as MockScheduler:
                 scheduler_instance = MockScheduler.return_value
-                scheduler_instance.get_jobs.return_value = [1]
+                mock_job_instance = MagicMock()
+                mock_job_instance.id = "test_job"
+                mock_job_instance.next_run_time = MagicMock()
+                mock_job_instance.next_run_time.isoformat.return_value = (
+                    "2023-01-01T00:00:00"
+                )
+                scheduler_instance.get_jobs.return_value = [mock_job_instance]
                 scheduler_instance.get_job.return_value = MagicMock()  # Job exists
 
                 stop_event = asyncio.Event()
