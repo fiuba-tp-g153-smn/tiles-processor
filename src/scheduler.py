@@ -58,6 +58,23 @@ def _get_directory_size(path: Path) -> int:
     return total_size
 
 
+def check_tmp_dir_usage(config: Config, job_name: str) -> bool:
+    """Check if temp directory usage is within limits. Returns True if OK, False if limit exceeded."""
+    tmp_path = Path.cwd() / config.TMP_DIR
+    current_size = _get_directory_size(tmp_path)
+
+    if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
+        logger.error(
+            "Job %s skipped: temp directory %s size (%.2f GB) exceeds limit (%.2f GB)",
+            job_name,
+            tmp_path,
+            current_size / (1024**3),
+            config.MAX_TMP_DIR_SIZE_BYTES / (1024**3),
+        )
+        return False
+    return True
+
+
 def run_job(job_name: str, job_cls: Type):
     """
     Execute a job by name. This is a module-level function for APScheduler serialization.
@@ -79,18 +96,7 @@ def run_job(job_name: str, job_cls: Type):
     # Initialize logging in the worker process
     setup_logging(config)
 
-    # Check tmp directory size before execution
-    tmp_path = Path.cwd() / config.TMP_DIR
-    current_size = _get_directory_size(tmp_path)
-
-    if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
-        logger.error(
-            "Job %s skipped: temp directory %s size (%.2f GB) exceeds limit (%.2f GB)",
-            job_name,
-            tmp_path,
-            current_size / (1024**3),
-            config.MAX_TMP_DIR_SIZE_BYTES / (1024**3),
-        )
+    if not check_tmp_dir_usage(config, job_name):
         return
 
     try:
