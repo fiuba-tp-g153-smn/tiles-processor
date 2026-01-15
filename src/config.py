@@ -8,7 +8,9 @@ def get_required_env(key: str) -> str:
     """Get a required environment variable, raising if not set."""
     value = os.getenv(key)
     if not value or not value.strip():
-        raise ValueError(f"Environment variable '{key}' is required but not set or empty.")
+        raise ValueError(
+            f"Environment variable '{key}' is required but not set or empty."
+        )
     return value
 
 
@@ -34,6 +36,7 @@ def validate_cron_expression(expr: str, name: str) -> str:
             f"Invalid CRON expression for {name}: '{expr}'. "
             f"Expected 5-field format (minute hour day month weekday). Error: {e}"
         )
+
 
 class Config:
     # General
@@ -73,10 +76,10 @@ class Config:
 
     # Bounding box for clipping satellite imagery
     # Coordinates are in EPSG:4326 (longitude/latitude)
-    BOUNDS_MINX: float = float(get_required_env("BOUNDS_MINX"))   # West longitude
-    BOUNDS_MINY: float = float(get_required_env("BOUNDS_MINY"))   # South latitude
-    BOUNDS_MAXX: float = float(get_required_env("BOUNDS_MAXX"))   # East longitude
-    BOUNDS_MAXY: float = float(get_required_env("BOUNDS_MAXY"))   # North latitude
+    BOUNDS_MINX: float = float(get_required_env("BOUNDS_MINX"))  # West longitude
+    BOUNDS_MINY: float = float(get_required_env("BOUNDS_MINY"))  # South latitude
+    BOUNDS_MAXX: float = float(get_required_env("BOUNDS_MAXX"))  # East longitude
+    BOUNDS_MAXY: float = float(get_required_env("BOUNDS_MAXY"))  # North latitude
 
     @classmethod
     def get_bounds(cls) -> Dict[str, float]:
@@ -98,6 +101,7 @@ class Config:
     @classmethod
     def log_config(cls):
         import logging
+
         logger = logging.getLogger(__name__)
         logger.info("=== Configuration ===")
         logger.info(f"LOG_LEVEL: {cls.LOG_LEVEL}")
@@ -114,5 +118,6 @@ class Config:
         logger.info(f"BOUNDS_MAXX: {cls.BOUNDS_MAXX}")
         logger.info(f"BOUNDS_MAXY: {cls.BOUNDS_MAXY}")
         logger.info("=====================")
+
 
 config = Config()

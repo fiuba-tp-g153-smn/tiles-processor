@@ -19,10 +19,11 @@ os.environ.setdefault("SCHEDULER_DB_PATH", "/tmp/test_scheduler.db")
 # Also set TMP_DIR for local tests (simulating container behavior or just providing a path)
 os.environ.setdefault("TMP_DIR", ".tmp")
 
+
 @pytest.fixture(autouse=True)
 def mock_env_vars(monkeypatch):
     """
-    Ensure these vars are present for all tests, 
+    Ensure these vars are present for all tests,
     though the global setdefault above handles import-time config.
     """
     pass

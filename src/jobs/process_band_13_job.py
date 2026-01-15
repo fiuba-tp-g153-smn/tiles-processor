@@ -31,6 +31,7 @@ Example GOES-19 filename:
     OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
     └── s20250141230210 = start time: 2025, day 014, 12:30:21.0 UTC
 """
+
 import logging
 from typing import Callable, Optional
 from datetime import datetime, UTC, timedelta
@@ -79,6 +80,7 @@ class ProcessBand13Job:
         - GeoTIFFs: {TMP_DIR}/band_13/geotiff/ (Intermediate)
         - Tiles: {TMP_DIR}/band_13/tiles/ (Final Output)
     """
+
     def __init__(self):
         self._bucket_name = constants.GOES19_BUCKET_NAME
         self._l1b_products_path = "ABI-L1b-RadF"
@@ -112,20 +114,20 @@ class ProcessBand13Job:
             d.mkdir(parents=True, exist_ok=True)
         return dirs
 
-    async def _get_files_to_process(self, current_time: datetime, dirs: dict[str, Path]) -> dict:
+    async def _get_files_to_process(
+        self, current_time: datetime, dirs: dict[str, Path]
+    ) -> dict:
         """Download missing files and filter out those already processed."""
-        
+
         def check_tiles_exist(s3_key: str) -> bool:
             stem = Path(s3_key).stem
             # Check if tile directory exists and is valid
             return (dirs["tiles"] / f"{stem}_tiles").exists()
 
         downloaded = await self._download_last_hour_files(
-            current_time, 
-            dirs["raw"], 
-            skip_if=check_tiles_exist
+            current_time, dirs["raw"], skip_if=check_tiles_exist
         )
-        
+
         # files with None content were skipped by skip_if (tiles exist)
         return {k: v for k, v in downloaded.items() if v is not None}
 
@@ -174,36 +176,32 @@ class ProcessBand13Job:
                 logger.warning(f"Cleanup failed for {p}: {e}")
 
     async def _download_last_hour_files(
-        self, 
-        current_time: datetime, 
+        self,
+        current_time: datetime,
         local_cache_dir: Path,
-        skip_if: Callable[[str], bool] = None
+        skip_if: Callable[[str], bool] = None,
     ) -> dict[str, bytes]:
         target_files = 24
         all_files = {}
         hours_back = 0
-        
+
         while len(all_files) < target_files and hours_back <= 5:
             # Determine how many files we still need
             needed = target_files - len(all_files)
             search_time = current_time - timedelta(hours=hours_back)
-            
+
             # Helper to download one hour batch
             batch = await self._download_hour_batch(
                 search_time, needed, local_cache_dir, skip_if
             )
-            
+
             all_files.update(batch)
             hours_back += 1
 
         return all_files
 
     async def _download_hour_batch(
-        self, 
-        time: datetime, 
-        needed: int, 
-        cache_dir: Path, 
-        skip_if: Callable
+        self, time: datetime, needed: int, cache_dir: Path, skip_if: Callable
     ) -> dict:
         path = self._build_directory_path(time)
         logger.info(f"Checking {path} (needs {needed} more)")
@@ -236,7 +234,8 @@ class ProcessBand13Job:
         try:
             filename = file_path.split("/")[-1]
             start_idx = filename.find("_s")
-            if start_idx == -1: return None
+            if start_idx == -1:
+                return None
             # _sYYYYJJJHHMMSSS -> extract MM (idx 9-11 relative to start of timestamp)
             timestamp_str = filename[start_idx + 2 : start_idx + 16]
             return int(timestamp_str[9:11])

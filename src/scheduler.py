@@ -23,6 +23,7 @@ This design ensures:
     - Missed schedules are handled gracefully
     - Job state survives container/application restarts
 """
+
 import asyncio
 import logging
 import os
@@ -62,6 +63,7 @@ class JobMonitor:
     """
     Thread-safe monitor for managing job registry and ensuring execution preconditions.
     """
+
     def __init__(self):
         self._registry: Dict[str, Type] = {}
         self._lock = threading.RLock()
@@ -118,7 +120,7 @@ def run_job(job_name: str, job_cls: Type):
     """
     # Initialize logging in the worker process
     setup_logging(log_level=config.LOG_LEVEL)
-    
+
     if not job_monitor.ensure_execution_safe(job_name):
         return
 
@@ -158,25 +160,19 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
     db_path = Path(config.SCHEDULER_DB_PATH)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    jobstores = {
-        'default': SQLAlchemyJobStore(url=f'sqlite:///{db_path}')
-    }
+    jobstores = {"default": SQLAlchemyJobStore(url=f"sqlite:///{db_path}")}
 
     # allocate 1 process per CPU core
-    executors = {
-        'default': ProcessPoolExecutor(max_workers=os.cpu_count())
-    }
+    executors = {"default": ProcessPoolExecutor(max_workers=os.cpu_count())}
 
     scheduler = AsyncIOScheduler(
-        jobstores=jobstores,
-        executors=executors,
-        timezone=config.TIMEZONE
+        jobstores=jobstores, executors=executors, timezone=config.TIMEZONE
     )
-    
+
     # Start scheduler in paused state to load jobs from the database
     # This allows scheduler.get_job() to correctly detect existing jobs
     scheduler.start(paused=True)
-    
+
     schedules = config.get_job_schedules()
 
     logger.info("Using persistent job store at: %s", db_path)
@@ -192,9 +188,12 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         # to ensure the system starts processing right away on first deployment.
         existing_job = scheduler.get_job(job_name)
         next_run_time = None
-        
+
         if not existing_job:
-            logger.info("Job '%s' not found in store. Scheduling separate one-off job for immediate execution.", job_name)
+            logger.info(
+                "Job '%s' not found in store. Scheduling separate one-off job for immediate execution.",
+                job_name,
+            )
             # Schedule a separate one-off job for immediate execution
             # We use the same run_job function but with a different ID
             scheduler.add_job(
@@ -209,15 +208,15 @@ async def start_scheduler(job_registry: Dict[str, Type], stop_event: asyncio.Eve
         # Add recurring job using module-level run_job function with job_name as argument
         # This allows APScheduler to serialize the job for SQLite persistence
         scheduler.add_job(
-            run_job,                  # Module-level function (serializable)
+            run_job,  # Module-level function (serializable)
             trigger=CronTrigger.from_crontab(schedule_cron, timezone=config.TIMEZONE),
-            args=[job_name, job_cls], # Pass class explicitly for process safety
+            args=[job_name, job_cls],  # Pass class explicitly for process safety
             id=job_name,
             name=job_name,
-            max_instances=1,          # Prevent overlapping runs
-            coalesce=True,            # Merge missed runs into single execution
+            max_instances=1,  # Prevent overlapping runs
+            coalesce=True,  # Merge missed runs into single execution
             misfire_grace_time=MISFIRE_GRACE_TIME,  # Allow delayed execution
-            replace_existing=True,    # Update if job already exists
+            replace_existing=True,  # Update if job already exists
         )
         logger.info("Scheduled job '%s' with cron '%s'", job_name, schedule_cron)
 

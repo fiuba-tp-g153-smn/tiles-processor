@@ -47,7 +47,7 @@ class S3Client:
                     )
                     async with response["Body"] as stream:
                         content = await stream.read()
-                    
+
                     if local_cache_dir:
                         file_name = Path(relative_file_path).name
                         cache_path = local_cache_dir / file_name
@@ -58,7 +58,7 @@ class S3Client:
                         logger.info(
                             f"✓ Downloaded: {relative_file_path} ({len(content)} bytes)"
                         )
-                    
+
                     return relative_file_path, content
             except Exception as e:
                 logger.warning(
@@ -90,9 +90,11 @@ class S3Client:
             skip_if: Optional function to skip download if true (returns None for content)
         """
         file_paths = await self._get_folder_file_paths(folder_path, file_pattern)
-        
-        logger.info(f"Found {len(file_paths)} files matching pattern '{file_pattern}' in {folder_path}")
-        
+
+        logger.info(
+            f"Found {len(file_paths)} files matching pattern '{file_pattern}' in {folder_path}"
+        )
+
         # Apply additional filter if provided
         if file_filter is not None:
             original_count = len(file_paths)
@@ -129,13 +131,16 @@ class S3Client:
 
         if not files_to_download:
             return files
-            
+
         async with self._session.client(
             "s3",
             endpoint_url=self._endpoint_url,
             config=BotoConfig(signature_version=UNSIGNED),
         ) as s3_client:
-            tasks = [self.download_file(s3_client, fp, local_cache_dir=local_cache_dir) for fp in files_to_download]
+            tasks = [
+                self.download_file(s3_client, fp, local_cache_dir=local_cache_dir)
+                for fp in files_to_download
+            ]
             results = await asyncio.gather(*tasks, return_exceptions=False)
 
             for file_path, content in results:
@@ -157,8 +162,10 @@ class S3Client:
                 endpoint_url=self._endpoint_url,
                 config=BotoConfig(signature_version=UNSIGNED),
             ) as s3_client:
-                logger.debug(f"Listing objects in bucket '{self._bucket_name}' with prefix '{folder_path}'")
-                
+                logger.debug(
+                    f"Listing objects in bucket '{self._bucket_name}' with prefix '{folder_path}'"
+                )
+
                 # Use paginator to handle more than 1000 objects
                 paginator = s3_client.get_paginator("list_objects_v2")
                 async for page in paginator.paginate(
@@ -166,14 +173,16 @@ class S3Client:
                 ):
                     contents = page.get("Contents", [])
                     logger.debug(f"Page returned {len(contents)} objects")
-                    
+
                     for obj in contents:
                         key = obj["Key"]
                         if not key.endswith("/") and file_pattern in key:
                             file_paths.append(key)
-                            
-                logger.debug(f"Total files found with pattern '{file_pattern}': {len(file_paths)}")
-                
+
+                logger.debug(
+                    f"Total files found with pattern '{file_pattern}': {len(file_paths)}"
+                )
+
         except Exception as e:
             logger.error(f"Error getting file paths in {folder_path}: {str(e)}")
             raise e

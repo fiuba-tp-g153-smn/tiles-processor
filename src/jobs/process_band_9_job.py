@@ -31,6 +31,7 @@ Example GOES-19 filename:
     OR_ABI-L1b-RadF-M6C09_G19_s20250141230210_e20250141239518_c20250141239557.nc
     └── s20250141230210 = start time: 2025, day 014, 12:30:21.0 UTC
 """
+
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 import logging
@@ -77,6 +78,7 @@ class ProcessBand9Job:
         (183K-323K) because water vapor channel brightness temperatures are
         concentrated in a smaller range. This maximizes color palette utilization.
     """
+
     def __init__(self):
         self._bucket_name = constants.GOES19_BUCKET_NAME
         self._l1b_products_path = "ABI-L1b-RadF"
@@ -90,7 +92,7 @@ class ProcessBand9Job:
 
         # Download files from the last hour (6 files)
         downloaded_files = await self._download_last_hour_files(current_time)
-        
+
         georreferenced_data = await SetupGOESGeorreferencingService(
             downloaded_files
         ).run()
@@ -115,7 +117,9 @@ class ProcessBand9Job:
         await GenerateTilesService(geotiff_files, tiles_output_dir).run()
         logger.info("Tiles generation completed.")
 
-    async def _download_last_hour_files(self, current_time: datetime) -> dict[str, bytes]:
+    async def _download_last_hour_files(
+        self, current_time: datetime
+    ) -> dict[str, bytes]:
         """
         Download the last 24 images (4 hours of data, 1 image every 10 minutes).
         Example for 13:23 UTC:
@@ -128,34 +132,40 @@ class ProcessBand9Job:
         TARGET_FILES = 24
         all_files = {}
         hours_back = 0
-        
+
         while len(all_files) < TARGET_FILES:
             # Calculate the hour to search
             search_time = current_time - timedelta(hours=hours_back)
             search_path = self._build_directory_path(search_time)
-            
+
             files_still_needed = TARGET_FILES - len(all_files)
-            
+
             if hours_back == 0:
                 # Current hour: download all available
-                logger.info(f"Downloading from current hour: {search_path} (time: {search_time.isoformat()})")
+                logger.info(
+                    f"Downloading from current hour: {search_path} (time: {search_time.isoformat()})"
+                )
                 hour_files = await self._s3_client.download_folder(
                     search_path,
                     file_pattern=self._product_base_file_pattern,
                 )
             else:
                 # Previous hours: filter by minutes if necessary
-                logger.info(f"Downloading from hour -{hours_back}: {search_path} (time: {search_time.isoformat()})")
-                
+                logger.info(
+                    f"Downloading from hour -{hours_back}: {search_path} (time: {search_time.isoformat()})"
+                )
+
                 # If we need less than 6 files from this hour, filter by minute
                 if files_still_needed < 6:
                     min_minute = 60 - (files_still_needed * 10)
-                    logger.info(f"Need {files_still_needed} files, filtering minutes >= {min_minute}")
-                    
+                    logger.info(
+                        f"Need {files_still_needed} files, filtering minutes >= {min_minute}"
+                    )
+
                     def minute_filter(file_path: str) -> bool:
                         minute = self._extract_minute_from_filename(file_path)
                         return minute is not None and minute >= min_minute
-                    
+
                     hour_files = await self._s3_client.download_folder(
                         search_path,
                         file_pattern=self._product_base_file_pattern,
@@ -167,17 +177,21 @@ class ProcessBand9Job:
                         search_path,
                         file_pattern=self._product_base_file_pattern,
                     )
-            
+
             all_files.update(hour_files)
-            logger.info(f"Downloaded {len(hour_files)} files from hour -{hours_back}. Total so far: {len(all_files)}")
-            
+            logger.info(
+                f"Downloaded {len(hour_files)} files from hour -{hours_back}. Total so far: {len(all_files)}"
+            )
+
             hours_back += 1
-            
+
             # Safety limit to avoid infinite loops (maximum 5 hours back)
             if hours_back > 5:
-                logger.warning(f"Reached maximum hours back limit. Downloaded {len(all_files)}/{TARGET_FILES} files.")
+                logger.warning(
+                    f"Reached maximum hours back limit. Downloaded {len(all_files)}/{TARGET_FILES} files."
+                )
                 break
-        
+
         logger.info(f"Total files downloaded: {len(all_files)}")
         return all_files
 
@@ -200,7 +214,7 @@ class ProcessBand9Job:
                 return None
             # The format is _sYYYYJJJHHMMSSS
             # Positions: 0-3=year, 4-6=day, 7-8=hour, 9-10=minute, 11-13=second
-            timestamp_str = filename[start_idx + 2:start_idx + 2 + 14]
+            timestamp_str = filename[start_idx + 2 : start_idx + 2 + 14]
             minute = int(timestamp_str[9:11])
             return minute
         except (ValueError, IndexError):

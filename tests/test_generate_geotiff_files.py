@@ -6,7 +6,7 @@ from unittest import mock
 from unittest.mock import MagicMock, patch, PropertyMock
 import gc
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import pytest
 import numpy as np
@@ -68,7 +68,9 @@ class TestNormalizeWithCustomPalette:
         mock_array = MagicMock()
         mock_array.values = data
 
-        r, g, b, a = service._normalize_with_custom_palette(mock_array, vmin=200.0, vmax=300.0)
+        r, g, b, a = service._normalize_with_custom_palette(
+            mock_array, vmin=200.0, vmax=300.0
+        )
 
         # All values are valid, so alpha should be 255
         assert np.all(a == 255)
@@ -85,7 +87,9 @@ class TestNormalizeWithCustomPalette:
         mock_array = MagicMock()
         mock_array.values = data
 
-        r, g, b, a = service._normalize_with_custom_palette(mock_array, vmin=200.0, vmax=300.0)
+        r, g, b, a = service._normalize_with_custom_palette(
+            mock_array, vmin=200.0, vmax=300.0
+        )
 
         # NaN position should have alpha=0
         assert a[0, 0] == 255
@@ -100,7 +104,9 @@ class TestNormalizeWithCustomPalette:
         mock_array = MagicMock()
         mock_array.values = data
 
-        r, g, b, a = service._normalize_with_custom_palette(mock_array, vmin=200.0, vmax=300.0)
+        r, g, b, a = service._normalize_with_custom_palette(
+            mock_array, vmin=200.0, vmax=300.0
+        )
 
         # All non-NaN values should have full alpha
         assert np.all(a == 255)
@@ -112,7 +118,9 @@ class TestNormalizeWithCustomPalette:
         mock_array = MagicMock()
         mock_array.values = data
 
-        r, g, b, a = service._normalize_with_custom_palette(mock_array, vmin=200.0, vmax=300.0)
+        r, g, b, a = service._normalize_with_custom_palette(
+            mock_array, vmin=200.0, vmax=300.0
+        )
 
         assert r.dtype == np.uint8
         assert g.dtype == np.uint8
@@ -235,7 +243,7 @@ class TestGenerateGeoTIFFService:
             processed.append(file_name)
             return tmp_path / f"{file_name}.tif"
 
-        with patch.object(service, '_generate_geotiff', side_effect=track_generate):
+        with patch.object(service, "_generate_geotiff", side_effect=track_generate):
             await service.run()
 
         assert len(processed) == 3
@@ -246,7 +254,7 @@ class TestGenerateGeoTIFFService:
         """Test that grid_mapping attribute is removed."""
         assert "grid_mapping" in mock_xarray_data.attrs
 
-        with patch.object(service, '_normalize_with_custom_palette') as mock_norm:
+        with patch.object(service, "_normalize_with_custom_palette") as mock_norm:
             mock_norm.return_value = (
                 np.zeros((10, 10), dtype=np.uint8),
                 np.zeros((10, 10), dtype=np.uint8),
@@ -254,7 +262,7 @@ class TestGenerateGeoTIFFService:
                 np.ones((10, 10), dtype=np.uint8) * 255,
             )
 
-            with patch('xarray.DataArray') as mock_da_class:
+            with patch("xarray.DataArray") as mock_da_class:
                 mock_rgb = MagicMock()
                 mock_da_class.return_value = mock_rgb
 
@@ -291,7 +299,7 @@ class TestGeoTIFFAtomicWrite:
 
         mock_data.rio.reproject.return_value = mock_reproj
 
-        with patch('xarray.DataArray') as mock_da_class:
+        with patch("xarray.DataArray") as mock_da_class:
             mock_rgb = MagicMock()
             mock_da_class.return_value = mock_rgb
 
@@ -337,8 +345,8 @@ class TestMemoryManagement:
 
         mock_data.rio.reproject.return_value = mock_reproj
 
-        with patch('gc.collect') as mock_gc:
-            with patch('xarray.DataArray') as mock_da_class:
+        with patch("gc.collect") as mock_gc:
+            with patch("xarray.DataArray") as mock_da_class:
                 mock_rgb = MagicMock()
                 mock_da_class.return_value = mock_rgb
 

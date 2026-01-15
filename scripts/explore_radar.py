@@ -30,12 +30,13 @@ for i, (sweep, elev) in enumerate([(0, 0.5), (1, 0.9), (2, 1.3)]):
     display = pyart.graph.RadarDisplay(radar)
     ax = axes[i]
     plt.sca(ax)
-    display.plot_ppi('reflectivity', sweep=sweep, ax=ax, cmap='NWSRef',
-                     title=f'PPI {elev}°')
-    display.plot_range_rings([50, 100, 150, 200], ax=ax, col='gray', ls='--')
+    display.plot_ppi(
+        "reflectivity", sweep=sweep, ax=ax, cmap="NWSRef", title=f"PPI {elev}°"
+    )
+    display.plot_range_rings([50, 100, 150, 200], ax=ax, col="gray", ls="--")
 
 plt.tight_layout()
-plt.savefig('radar_3_elevaciones.png', dpi=150)
+plt.savefig("radar_3_elevaciones.png", dpi=150)
 print("\nImagen guardada: radar_3_elevaciones.png")
 
 # 4. Mostrar info geográfica para generar tiles

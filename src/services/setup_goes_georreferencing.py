@@ -11,6 +11,7 @@ GOES Geostationary Projection:
     2. Extracts CRS from the goes_imager_projection variable
     3. Writes the CRS to the dataset for rioxarray compatibility
 """
+
 import asyncio
 import io
 from pyproj import CRS
@@ -46,6 +47,7 @@ class SetupGOESGeorreferencingService:
         Datasets are loaded into memory (dataset.load()) before returning
         to avoid issues with closed file handles in async processing.
     """
+
     def __init__(self, goes_data: Dict[str, bytes]):
         self._goes_data = goes_data
 

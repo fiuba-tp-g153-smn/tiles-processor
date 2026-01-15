@@ -22,6 +22,7 @@ Physical Validity:
     Brightness temperatures outside 150K-350K are filtered as non-physical.
     This removes sensor artifacts, space views, and calibration errors.
 """
+
 import asyncio
 import gc
 import numpy as np
@@ -62,6 +63,7 @@ class ComputeBrightnessTemperaturesService:
         Uses explicit gc.collect() and del statements to manage memory
         when processing large satellite imagery arrays.
     """
+
     def __init__(self, georreferenced_datasets: dict[str, xr.Dataset]):
         self._georreferenced_datasets = georreferenced_datasets
 

@@ -1,13 +1,14 @@
 """
 Tests for the APScheduler-based job scheduler.
 """
+
 import asyncio
 import sys
 import os
 from unittest import mock
 from unittest.mock import MagicMock, AsyncMock, patch
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import pytest
 from scheduler import start_scheduler, _get_directory_size
@@ -16,14 +17,14 @@ from scheduler import start_scheduler, _get_directory_size
 @pytest.fixture
 def mock_config(tmp_path):
     """Mock config for scheduler tests."""
-    with mock.patch('scheduler.config') as mock_cfg:
-        mock_cfg.TIMEZONE = 'UTC'
-        mock_cfg.TMP_DIR = '.tmp'
+    with mock.patch("scheduler.config") as mock_cfg:
+        mock_cfg.TIMEZONE = "UTC"
+        mock_cfg.TMP_DIR = ".tmp"
         mock_cfg.MAX_TMP_DIR_SIZE_BYTES = 10 * 1024 * 1024 * 1024  # 10GB
-        mock_cfg.SCHEDULER_DB_PATH = str(tmp_path / 'scheduler.db')
+        mock_cfg.SCHEDULER_DB_PATH = str(tmp_path / "scheduler.db")
         mock_cfg.get_job_schedules.return_value = {
             "job_a": "*/10 * * * *",
-            "job_b": "0 0 * * *"
+            "job_b": "0 0 * * *",
         }
         yield mock_cfg
 
@@ -39,13 +40,10 @@ class TestStartScheduler:
         mock_job_b = MagicMock()
         mock_job_b.__name__ = "JobB"
 
-        job_registry = {
-            "job_a": mock_job_a,
-            "job_b": mock_job_b
-        }
+        job_registry = {"job_a": mock_job_a, "job_b": mock_job_b}
 
-        with patch('scheduler.SQLAlchemyJobStore') as MockJobStore:
-            with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+        with patch("scheduler.SQLAlchemyJobStore") as MockJobStore:
+            with patch("scheduler.AsyncIOScheduler") as MockScheduler:
                 scheduler_instance = MockScheduler.return_value
                 scheduler_instance.get_jobs.return_value = [1, 2]
 
@@ -62,14 +60,14 @@ class TestStartScheduler:
 
                 # Verify job store was created with SQLite URL
                 MockJobStore.assert_called_once()
-                assert 'sqlite:///' in MockJobStore.call_args.kwargs['url']
+                assert "sqlite:///" in MockJobStore.call_args.kwargs["url"]
 
                 # Verify scheduler was created with jobstores and timezone
                 MockScheduler.assert_called_once()
                 call_kwargs = MockScheduler.call_args.kwargs
-                assert 'jobstores' in call_kwargs
-                assert 'executors' in call_kwargs
-                assert call_kwargs['timezone'] == 'UTC'
+                assert "jobstores" in call_kwargs
+                assert "executors" in call_kwargs
+                assert call_kwargs["timezone"] == "UTC"
 
                 # Verify add_job was called twice
                 assert scheduler_instance.add_job.call_count == 2
@@ -77,16 +75,18 @@ class TestStartScheduler:
                 # Verify APScheduler best practices are used
                 for call in scheduler_instance.add_job.call_args_list:
                     kwargs = call.kwargs
-                    assert kwargs['max_instances'] == 1  # Prevent overlap
-                    assert kwargs['coalesce'] is True    # Merge missed runs
-                    assert kwargs['replace_existing'] is True
-                    assert 'misfire_grace_time' in kwargs
+                    assert kwargs["max_instances"] == 1  # Prevent overlap
+                    assert kwargs["coalesce"] is True  # Merge missed runs
+                    assert kwargs["replace_existing"] is True
+                    assert "misfire_grace_time" in kwargs
                     # Verify args contain job_name and job_cls
-                    job_args = kwargs['args']
+                    job_args = kwargs["args"]
                     assert len(job_args) == 2
                     assert isinstance(job_args[0], str)
                     # Use logical check instead of strict type check for MagicMock
-                    assert hasattr(job_args[1], '__name__') or isinstance(job_args[1], type)
+                    assert hasattr(job_args[1], "__name__") or isinstance(
+                        job_args[1], type
+                    )
 
                 scheduler_instance.start.assert_called_once()
                 scheduler_instance.shutdown.assert_called_once()
@@ -106,11 +106,11 @@ class TestStartScheduler:
 
         job_registry = {
             "job_a": mock_job_a,
-            "job_b": mock_job_b  # This one has no schedule
+            "job_b": mock_job_b,  # This one has no schedule
         }
 
-        with patch('scheduler.SQLAlchemyJobStore'):
-            with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+        with patch("scheduler.SQLAlchemyJobStore"):
+            with patch("scheduler.AsyncIOScheduler") as MockScheduler:
                 scheduler_instance = MockScheduler.return_value
                 scheduler_instance.get_jobs.return_value = [1]
 
@@ -122,15 +122,15 @@ class TestStartScheduler:
                 # Only job_a should be added
                 assert scheduler_instance.add_job.call_count == 1
                 call_kwargs = scheduler_instance.add_job.call_args.kwargs
-                assert call_kwargs['id'] == 'job_a'
+                assert call_kwargs["id"] == "job_a"
 
     @pytest.mark.asyncio
     async def test_scheduler_handles_cancellation(self, mock_config):
         """Test graceful shutdown on cancellation."""
         job_registry = {}
 
-        with patch('scheduler.SQLAlchemyJobStore'):
-            with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+        with patch("scheduler.SQLAlchemyJobStore"):
+            with patch("scheduler.AsyncIOScheduler") as MockScheduler:
                 scheduler_instance = MockScheduler.return_value
                 scheduler_instance.get_jobs.return_value = []
 
@@ -154,8 +154,8 @@ class TestStartScheduler:
 
         job_registry = {"job_a": mock_job}
 
-        with patch('scheduler.SQLAlchemyJobStore'):
-            with patch('scheduler.AsyncIOScheduler') as MockScheduler:
+        with patch("scheduler.SQLAlchemyJobStore"):
+            with patch("scheduler.AsyncIOScheduler") as MockScheduler:
                 scheduler_instance = MockScheduler.return_value
                 scheduler_instance.get_jobs.return_value = [1]
 
@@ -167,7 +167,8 @@ class TestStartScheduler:
                 # Check that CronTrigger was used
                 call_kwargs = scheduler_instance.add_job.call_args.kwargs
                 from apscheduler.triggers.cron import CronTrigger
-                assert isinstance(call_kwargs['trigger'], CronTrigger)
+
+                assert isinstance(call_kwargs["trigger"], CronTrigger)
 
 
 class TestGetDirectorySize:

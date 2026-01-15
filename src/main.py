@@ -99,7 +99,7 @@ async def main() -> int:
     setup_signal_handlers(loop, stop_event, logger)
 
     await start_scheduler(target_jobs, stop_event=stop_event)
-    
+
     return EXIT_SUCCESS_CODE
 
 

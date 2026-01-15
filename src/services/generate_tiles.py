@@ -25,6 +25,7 @@ File Overwrites:
     Existing tile directories with the same name are completely replaced.
     This ensures consistency and prevents stale tiles from accumulating.
 """
+
 import asyncio
 import logging
 import os
@@ -73,6 +74,7 @@ class GenerateTilesService:
         - Temporary directories are cleaned up on failure
         - Existing tile directories are removed before atomic rename
     """
+
     # Limit concurrent tile generation to avoid CPU/memory saturation
     MAX_CONCURRENT_TILES = 2
     # Processes per gdal2tiles job
