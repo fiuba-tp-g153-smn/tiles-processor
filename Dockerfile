@@ -48,3 +48,6 @@ ENV DATA_DIR_CONTAINER=$DATA_DIR_CONTAINER
 
 # Options: process_band_13, process_band_9 or scheduler
 CMD ["python3", "src/main.py", "process_band_13"]
+
+# Health check
+HEALTHCHECK --interval=2s --timeout=10s --retries=3 CMD python3 src/healthcheck.py

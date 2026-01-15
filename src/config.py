@@ -30,6 +30,8 @@ class Config:
         self.BAND_9_SCHEDULE_CRON: str = self._validate_cron_expression(
             settings["scheduler"]["band_9_cron"], "scheduler.band_9_cron"
         )
+        # Default heartbeat schedule: every minute
+        self.HEARTBEAT_SCHEDULE_CRON: str = "* * * * *"
 
         # Feature Toggles (from JSON)
         self.ENABLE_BAND_13: bool = settings["features"]["enable_band_13"]
@@ -103,6 +105,7 @@ class Config:
         return {
             "process_band_13": self.BAND_13_SCHEDULE_CRON,
             "process_band_9": self.BAND_9_SCHEDULE_CRON,
+            "heartbeat": self.HEARTBEAT_SCHEDULE_CRON,
         }
 
     def log_config(self) -> None:

@@ -8,12 +8,14 @@ from logging_config import setup_logging
 from jobs.process_band_13_job import ProcessBand13Job
 from jobs.process_band_9_job import ProcessBand9Job
 from scheduler import start_scheduler
+from jobs.heartbeat_job import HeartbeatJob
 
 # Centralized job registry
 # Keys match the keys used in config.py for scheduling
 AVAILABLE_JOBS = {
     "process_band_13": ProcessBand13Job,
     "process_band_9": ProcessBand9Job,
+    "heartbeat": HeartbeatJob,
 }
 
 EXIT_ERROR_CODE = 1
@@ -23,6 +25,9 @@ EXIT_SUCCESS_CODE = 0
 def get_enabled_jobs(config: Config, logger: logging.Logger) -> dict:
     """Filter available jobs based on configuration settings."""
     enabled_jobs = {}
+
+    # Heartbeat is always enabled
+    enabled_jobs["heartbeat"] = AVAILABLE_JOBS["heartbeat"]
 
     if config.ENABLE_BAND_13:
         enabled_jobs["process_band_13"] = AVAILABLE_JOBS["process_band_13"]
@@ -61,6 +66,10 @@ def get_target_jobs(
 
         logger.info(f"Starting scheduler mode for SINGLE job: {job_name}")
         target_jobs = {job_name: job_class}
+
+        # Always run heartbeat for healthchecks, even in single-job mode
+        if "heartbeat" in AVAILABLE_JOBS and job_name != "heartbeat":
+            target_jobs["heartbeat"] = AVAILABLE_JOBS["heartbeat"]
 
     return target_jobs
 

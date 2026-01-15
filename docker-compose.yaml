@@ -14,6 +14,11 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR_CONTAINER=/app/data
+    healthcheck:
+      test: ["CMD", "python3", "src/healthcheck.py"]
+      interval: 2s
+      timeout: 10s
+      retries: 3
 
 volumes:
   tiles_data:
