@@ -15,7 +15,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR_CONTAINER=/app/data
     healthcheck:
-      test: ["CMD", "python3", "src/healthcheck.py"]
+      test: ["CMD", "python3", "/app/src/healthcheck.py", "||", "exit", "1"]
       interval: 2s
       timeout: 10s
       retries: 3

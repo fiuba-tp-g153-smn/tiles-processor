@@ -50,4 +50,4 @@ ENV DATA_DIR_CONTAINER=$DATA_DIR_CONTAINER
 CMD ["python3", "src/main.py", "process_band_13"]
 
 # Health check
-HEALTHCHECK --interval=2s --timeout=10s --retries=3 CMD python3 src/healthcheck.py
+HEALTHCHECK --interval=2s --timeout=10s --retries=3 CMD python3 /app/src/healthcheck.py || exit 1
