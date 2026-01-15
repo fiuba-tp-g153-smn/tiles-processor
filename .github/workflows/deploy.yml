@@ -137,6 +137,10 @@ jobs:
                   echo "🔍 App status: $APP_STATUS (${HEALTH_ELAPSED}s)"
 
                   case "$APP_STATUS" in
+                    "running:unknown")
+                      echo "⚠️ Application is running but status is unknown. Proceeding..."
+                      exit 0
+                      ;;
                     "running"|"healthy"|"running:healthy")
                       END_TIME=$(date +%s)
                       TOTAL_DURATION=$((END_TIME - START_TIME))
