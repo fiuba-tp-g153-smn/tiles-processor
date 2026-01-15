@@ -134,8 +134,8 @@ class ProcessBand9Job:
             geotiff_output_dir,
             self._config,
             color_palette=GenerateGeoTIFFFilesService.WATER_VAPOR_PALETTE,
-            vmin=220.0,  # ~ -53°C - Adjusted range for water vapor
-            vmax=260.0,  # ~ -13°C - Concentrates real values across the palette
+            vmin=161.0,  # -112.15°C in Kelvin
+            vmax=330.0,  # 56.85°C in Kelvin
             product_name="Water_Vapor",
         ).run()
         logger.info("GeoTIFF generation completed.")
