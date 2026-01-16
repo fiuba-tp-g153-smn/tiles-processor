@@ -1,4 +1,45 @@
 services:
+  minio:
+    image: minio/minio:latest
+    container_name: tiles-processor-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"      # S3 API - accessible externally
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # Web Console - accessible externally
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tiles-network
+
+  # Creates the bucket on startup
+  minio-setup:
+    image: minio/mc:latest
+    container_name: tiles-processor-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - tiles-network
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin};
+      mc mb myminio/${MINIO_BUCKET:-tiles-data} --ignore-existing;
+      mc anonymous set download myminio/${MINIO_BUCKET:-tiles-data};
+      echo 'Bucket created and configured';
+      exit 0;
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+
   tiles-processor:
     image: tiles-processor
     container_name: tiles-processor-container
@@ -8,23 +49,33 @@ services:
       args:
         - LOG_LEVEL=${LOG_LEVEL}
         - DATA_DIR_CONTAINER=/app/data
+    depends_on:
+      minio-setup:
+        condition: service_completed_successfully
     volumes:
       - tiles_data:/app/data
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR_CONTAINER=/app/data
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
-      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
       - MINIO_BUCKET=${MINIO_BUCKET:-tiles-data}
-      - MINIO_SECURE=${MINIO_SECURE:-false}
+      - MINIO_SECURE=false
     healthcheck:
       test: ["CMD", "python3", "/app/src/healthcheck.py", "||", "exit", "1"]
       interval: 2s
       timeout: 10s
       retries: 3
+    networks:
+      - tiles-network
 
 volumes:
   tiles_data:
     external: true
+  minio_data:
+
+networks:
+  tiles-network:
+    driver: bridge

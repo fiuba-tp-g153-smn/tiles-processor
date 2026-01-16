@@ -65,9 +65,15 @@ Each job (Band 13 and Band 9) follows this processing pipeline:
    │
    ▼
 5. TILE GENERATION (GenerateTilesService)
-      - Runs gdal2tiles.py for each GeoTIFF
-      - Generates XYZ tiles (zoom 3-7, WEBP format, Leaflet-compatible)
-      Output: .tmp/band_{N}/tiles/{original_filename}_tiles/{z}/{x}/{y}.webp
+   │  - Runs gdal2tiles.py for each GeoTIFF
+   │  - Generates XYZ tiles (zoom 3-7, WEBP format, Leaflet-compatible)
+   │  Output: .tmp/band_{N}/tiles/{original_filename}_tiles/{z}/{x}/{y}.webp
+   │
+   ▼
+6. S3 UPLOAD (MinioUploadClient)
+      - Uploads generated tiles to MinIO S3 bucket
+      - Uses same directory structure as local storage
+      S3 Key: {bucket}/band_{N}/tiles/{original_filename}_tiles/{z}/{x}/{y}.webp
 ```
 
 ### Band Specifications
@@ -105,6 +111,41 @@ OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
     - Older files are automatically deleted after every run to save disk space.
     - This retention window ensures the "last 24 images" cache remains effective for subsequent runs.
 - **Intermediate Cleanup**: Raw `.nc` and intermediate `.tif` files are transient for files outside the retention window.
+- **S3 Cleanup**: When local files are cleaned up, corresponding S3 objects are also deleted to maintain consistency.
+
+## MinIO S3 Storage
+
+The tiles-processor uploads generated tiles to a MinIO S3 bucket for consumption by other services (e.g., data-service). This decouples tile generation from tile serving and enables horizontal scaling.
+
+### S3 Bucket Structure
+
+```
+tiles-data/                              # Bucket name (configurable)
+├── band_13/
+│   └── tiles/
+│       └── {tileset_id}_tiles/          # One directory per processed image
+│           └── {z}/{x}/{y}.webp         # XYZ tile structure
+└── band_9/
+    └── tiles/
+        └── {tileset_id}_tiles/
+            └── {z}/{x}/{y}.webp
+```
+
+### MinIO Service
+
+The docker-compose includes a MinIO service that:
+- Exposes S3 API on port `9000` (configurable via `MINIO_API_PORT`)
+- Exposes Web Console on port `9001` (configurable via `MINIO_CONSOLE_PORT`)
+- Automatically creates the `tiles-data` bucket on startup
+- Sets public read access on the bucket for tile serving
+
+**MinIO Console**: `http://localhost:9001` (default credentials: `minioadmin`/`minioadmin`)
+
+### Integration with data-service
+
+The data-service connects to the same MinIO instance to sync and serve tiles via REST API. When running both services:
+1. tiles-processor MinIO is exposed on ports 9000/9001
+2. data-service connects using `MINIO_ENDPOINT=<host>:9000`
 
 ## Commands
 
@@ -131,6 +172,13 @@ OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
 | `BOUNDS_MINY` | South latitude for clipping (EPSG:4326). | `-60.0` |
 | `BOUNDS_MAXX` | East longitude for clipping (EPSG:4326). | `-30.0` |
 | `BOUNDS_MAXY` | North latitude for clipping (EPSG:4326). | `-15.0` |
+| `MINIO_ENDPOINT` | MinIO S3 endpoint (host:port). | Required |
+| `MINIO_ACCESS_KEY` | MinIO access key (username). | `minioadmin` |
+| `MINIO_SECRET_KEY` | MinIO secret key (password). | `minioadmin` |
+| `MINIO_BUCKET` | S3 bucket name for tile storage. | `tiles-data` |
+| `MINIO_SECURE` | Use HTTPS for MinIO connection (`true`/`false`). | `false` |
+| `MINIO_API_PORT` | Host port for MinIO S3 API. | `9000` |
+| `MINIO_CONSOLE_PORT` | Host port for MinIO Web Console. | `9001` |
 
 ## Radar Processing
 
