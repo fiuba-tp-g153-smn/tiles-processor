@@ -10,6 +10,8 @@ Pipeline Overview:
     3. BRIGHTNESS TEMP: Converts radiance to temperature using Planck equation
     4. GEOTIFF: Creates colorized RGBA GeoTIFFs clipped to configured bounds
     5. TILES: Generates XYZ web tiles (zoom 3-7, WEBP format, Leaflet-compatible)
+    6. UPLOAD: Uploads tiles to MinIO S3 bucket
+    7. CLEANUP: Deletes all local files (storage is in S3 only)
 
 Band 9 Specifications:
     - Wavelength: 6.93 µm (Mid-Level Water Vapor)
@@ -21,26 +23,25 @@ Execution Frequency:
     GOES-19 publishes Full Disk images every 10 minutes.
     Recommended schedule: */30 * * * * (every 30 minutes)
 
-File Handling:
-    - GOES files have unique timestamps in filenames (no collisions)
-    - GeoTIFFs are atomically overwritten if same timestamp is reprocessed
-    - Tile directories are deleted and replaced on reprocessing
-    - Output: .tmp/band_9/geotiff/*.tif and .tmp/band_9/tiles/*_tiles/
+Storage Strategy:
+    - All tiles are stored in MinIO S3 bucket (no local retention)
+    - Local files are temporary and deleted after upload
+    - S3 retention: keeps newest 26 tilesets (4+ hours of data)
 
 Example GOES-19 filename:
     OR_ABI-L1b-RadF-M6C09_G19_s20250141230210_e20250141239518_c20250141239557.nc
     └── s20250141230210 = start time: 2025, day 014, 12:30:21.0 UTC
 """
 
+import logging
+import shutil
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
-from typing import List
-import logging
+from typing import Callable, List
 
 from constants import constants
 from config import Config
-from clients import s3_client
-from clients.minio_upload_client import MinioUploadClient
+from clients.s3_client import S3Client
 from services.compute_brightness_temperatures import (
     ComputeBrightnessTemperaturesService,
 )
@@ -56,24 +57,26 @@ class ProcessBand9Job:
     Scheduled job for processing GOES-19 Band 9 (Water Vapor) imagery.
 
     This job downloads the last 24 satellite images (4 hours of data at 10-minute
-    intervals), processes them through the full pipeline, and generates web map
-    tiles for visualization.
+    intervals), processes them through the full pipeline, uploads tiles to MinIO,
+    and cleans up all local files.
 
     Attributes:
-        _bucket_name: NOAA's public S3 bucket (noaa-goes19)
-        _l1b_products_path: S3 prefix for ABI Level 1b Full Disk products
-        _product_base_file_pattern: Filter pattern for Band 9 files (C09_G19)
-        _s3_client: Async S3 client with concurrency limiting
+        _noaa_s3_client: S3 client for NOAA's public bucket (unsigned access)
+        _minio_s3_client: S3 client for MinIO bucket (authenticated access)
+        _s3_prefix: S3 key prefix for this band's tiles
 
     Pipeline stages:
-        1. Download → SetupGOESGeorreferencingService (georeferencing)
-        2. → ComputeBrightnessTemperaturesService (Planck equation)
-        3. → GenerateGeoTIFFFilesService (colorized GeoTIFFs)
-        4. → GenerateTilesService (XYZ web tiles)
+        1. Download (Smart Skip) - checks S3 for existing tiles first
+        2. → SetupGOESGeorreferencingService (georeferencing)
+        3. → ComputeBrightnessTemperaturesService (Planck equation)
+        4. → GenerateGeoTIFFFilesService (colorized GeoTIFFs)
+        5. → GenerateTilesService (XYZ web tiles)
+        6. → Upload to MinIO S3
+        7. → Cleanup (delete ALL local files, S3 retention: 26 tilesets)
 
-    Output directories:
-        - GeoTIFFs: {TMP_DIR}/band_9/geotiff/
-        - Tiles: {TMP_DIR}/band_9/tiles/
+    Storage:
+        - Local: Temporary only, deleted after upload
+        - S3: band_9/tiles/{tileset_id}_tiles/{z}/{x}/{y}.webp
 
     Note on temperature range:
         Band 9 uses a narrower temperature range (220K-260K) compared to Band 13
@@ -87,61 +90,108 @@ class ProcessBand9Job:
         self._l1b_products_path = "ABI-L1b-RadF"
         self._product_base_file_pattern = "C09_G19"
         self._s3_prefix = "band_9/tiles"
-        self._s3_client = s3_client.S3Client(
-            self._bucket_name, max_concurrent_downloads=6
-        )
-        self._minio_client = MinioUploadClient(
+
+        # S3 client for NOAA public bucket (unsigned access for downloads)
+        self._noaa_s3_client = S3Client(self._bucket_name, max_concurrent_downloads=6)
+
+        # S3 client for MinIO bucket (authenticated access for uploads)
+        self._minio_s3_client = S3Client.create_with_credentials(
+            bucket_name=self._config.MINIO_BUCKET,
             endpoint=self._config.MINIO_ENDPOINT,
             access_key=self._config.MINIO_ACCESS_KEY,
             secret_key=self._config.MINIO_SECRET_KEY,
-            bucket=self._config.MINIO_BUCKET,
             secure=self._config.MINIO_SECURE,
         )
 
     async def run(self):
         """
-        Async Pipeline Execution Pattern:
-
-        This method orchestrates the full processing pipeline by awaiting each
-        async service sequentially. Each service internally parallelizes its work
-        using asyncio.Semaphore + asyncio.to_thread for CPU-bound operations.
+        Async Pipeline Execution Pattern (same as Band 13).
 
         Execution Flow:
-            1. await _download_last_hour_files() - S3 downloads (I/O-bound, concurrent)
-            2. await SetupGOESGeorreferencingService.run() - Parallel georeferencing
-            3. await ComputeBrightnessTemperaturesService.run() - Parallel temp calc
-            4. await GenerateGeoTIFFFilesService.run() - Parallel TIFF generation
-            5. await GenerateTilesService.run() - Parallel tile generation
-
-        Concurrency Model:
-            - Services are awaited sequentially (pipeline stages depend on prior output)
-            - Within each service, multiple files are processed concurrently
-            - Semaphores limit parallelism (default max_concurrency=4 per service)
-            - asyncio.to_thread offloads CPU-bound work to avoid blocking event loop
+            1. Check S3 for existing tiles, download only missing files
+            2. Georeference → Brightness Temp → GeoTIFF → Tiles
+            3. Upload tiles to MinIO
+            4. Cleanup old files (local and S3)
         """
         current_time = datetime.now(UTC)
+        dirs = self._prepare_directories()
 
-        # Download files from the last hour (6 files)
-        # S3Client uses internal Semaphore for concurrent downloads (max=6)
-        downloaded_files = await self._download_last_hour_files(current_time)
+        logger.info(
+            "Starting Band 9 job - searching for last 24 satellite images (4 hours)"
+        )
 
-        # Each service below uses asyncio.gather + Semaphore pattern:
-        # - Creates tasks for all files
-        # - Semaphore limits concurrent execution
-        # - asyncio.to_thread moves CPU work off the event loop
-        georreferenced_data = await SetupGOESGeorreferencingService(
-            downloaded_files
-        ).run()
+        files_to_process = await self._get_files_to_process(current_time, dirs)
+        if not files_to_process:
+            logger.info("No new files to process - all images already have tiles in S3")
+            await self._perform_cleanup(dirs)
+            return
+
+        logger.info(
+            f"Found {len(files_to_process)} new images to process (tiles not in S3)"
+        )
+        await self._run_processing_pipeline(files_to_process, dirs)
+        await self._perform_cleanup(dirs)
+
+    def _prepare_directories(self) -> dict[str, Path]:
+        base = Path.cwd() / self._config.TMP_DIR / "band_9"
+        dirs = {
+            "raw": base / "raw",
+            "tiles": base / "tiles",
+            "geotiff": base / "geotiff",
+        }
+        for d in dirs.values():
+            d.mkdir(parents=True, exist_ok=True)
+        return dirs
+
+    async def _get_files_to_process(
+        self, current_time: datetime, dirs: dict[str, Path]
+    ) -> dict:
+        """Download missing files and filter out those already processed (checking S3)."""
+
+        # Pre-fetch existing tilesets from S3 bucket
+        existing_s3_tilesets = await self._get_existing_s3_tilesets()
+        logger.info(f"Found {len(existing_s3_tilesets)} existing tilesets in S3")
+
+        def check_tiles_exist_in_s3(s3_key: str) -> bool:
+            stem = Path(s3_key).stem
+            tileset_name = f"{stem}_tiles"
+            return tileset_name in existing_s3_tilesets
+
+        downloaded = await self._download_last_hour_files(
+            current_time, dirs["raw"], skip_if=check_tiles_exist_in_s3
+        )
+
+        # files with None content were skipped by skip_if (tiles exist in S3)
+        return {k: v for k, v in downloaded.items() if v is not None}
+
+    async def _get_existing_s3_tilesets(self) -> set:
+        """Get set of tileset names that exist in MinIO S3 bucket."""
+        try:
+            prefixes = await self._minio_s3_client.list_prefixes(
+                f"{self._s3_prefix}/", delimiter="/"
+            )
+            tilesets = set()
+            for prefix in prefixes:
+                tileset_name = prefix.rstrip("/").split("/")[-1]
+                tilesets.add(tileset_name)
+            return tilesets
+        except Exception as e:
+            logger.warning(f"Error listing S3 tilesets: {e}")
+            return set()
+
+    async def _run_processing_pipeline(self, files: dict, dirs: dict[str, Path]):
+        """Run the processing pipeline for Band 9."""
+        georreferenced_data = await SetupGOESGeorreferencingService(files).run()
         logger.info("Georreferencing completed.")
+
         brightness_temperature_data = await ComputeBrightnessTemperaturesService(
             georreferenced_data
         ).run()
         logger.info("Brightness temperature computation completed.")
 
-        geotiff_output_dir = Path.cwd() / self._config.TMP_DIR / "band_9" / "geotiff"
         geotiff_files = await GenerateGeoTIFFFilesService(
             brightness_temperature_data,
-            geotiff_output_dir,
+            dirs["geotiff"],
             self._config,
             color_palette=GenerateGeoTIFFFilesService.WATER_VAPOR_PALETTE,
             vmin=161.0,  # -112.15°C in Kelvin
@@ -150,92 +200,146 @@ class ProcessBand9Job:
         ).run()
         logger.info("GeoTIFF generation completed.")
 
-        tiles_output_dir = Path.cwd() / self._config.TMP_DIR / "band_9" / "tiles"
-        await GenerateTilesService(geotiff_files, tiles_output_dir).run()
+        await GenerateTilesService(geotiff_files, dirs["tiles"]).run()
         logger.info("Tiles generation completed.")
 
         # Upload tiles to MinIO
         logger.info("Uploading tiles to MinIO...")
-        await self._upload_tiles_to_minio(geotiff_files, tiles_output_dir)
+        await self._upload_tiles_to_minio(geotiff_files, dirs["tiles"])
         logger.info("Tile upload completed.")
 
+    async def _perform_cleanup(self, dirs: dict[str, Path]):
+        """
+        Cleanup local and S3 storage.
+
+        Local: Delete ALL files (no local retention, S3 is the source of truth)
+        S3: Keep newest 26 tilesets (4+ hours of data)
+        """
+        logger.info("Running cleanup...")
+
+        # Delete all local files (S3 is the source of truth)
+        self._cleanup_local_directory(dirs["raw"])
+        self._cleanup_local_directory(dirs["geotiff"])
+        self._cleanup_local_directory(dirs["tiles"])
+
+        # S3 retention: keep newest 26 tilesets
+        await self._cleanup_s3_tiles(keep_count=26)
+
+    def _cleanup_local_directory(self, directory: Path):
+        """Delete all files in a directory (no local retention)."""
+        if not directory.exists():
+            return
+
+        try:
+            # Delete all contents but keep the directory
+            for item in directory.iterdir():
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
+            logger.info(f"Cleanup: cleared {directory.name}/")
+        except Exception as e:
+            logger.warning(f"Cleanup failed for {directory}: {e}")
+
+    async def _cleanup_s3_tiles(self, keep_count: int) -> None:
+        """Delete old tile directories from MinIO S3 bucket (keeps newest keep_count)."""
+        try:
+            prefixes = await self._minio_s3_client.list_prefixes(
+                f"{self._s3_prefix}/", delimiter="/"
+            )
+
+            if len(prefixes) <= keep_count:
+                logger.info(
+                    f"S3 cleanup: {len(prefixes)} tilesets in S3, keeping all (threshold: {keep_count})"
+                )
+                return
+
+            sorted_prefixes = sorted(prefixes)
+            prefixes_to_delete = sorted_prefixes[:-keep_count]
+            logger.info(
+                f"S3 cleanup: deleting {len(prefixes_to_delete)} old tilesets from S3"
+            )
+
+            for prefix in prefixes_to_delete:
+                tileset_name = prefix.rstrip("/").split("/")[-1]
+                s3_prefix = f"{self._s3_prefix}/{tileset_name}"
+                try:
+                    await self._minio_s3_client.delete_prefix(s3_prefix)
+                    logger.info(f"S3 cleanup: deleted {s3_prefix}")
+                except Exception as e:
+                    logger.warning(f"S3 cleanup failed for {s3_prefix}: {e}")
+        except Exception as e:
+            logger.error(f"S3 cleanup failed: {e}")
+
     async def _download_last_hour_files(
-        self, current_time: datetime
+        self,
+        current_time: datetime,
+        local_cache_dir: Path,
+        skip_if: Callable[[str], bool] = None,
     ) -> dict[str, bytes]:
         """
-        Download the last 24 images (4 hours of data, 1 image every 10 minutes).
-        Example for 13:23 UTC:
-          - Folder 13h: 10, 00
-          - Folder 12h: 50, 40, 30, 20, 10, 00
-          - Folder 11h: 50, 40, 30, 20, 10, 00
-          - Folder 10h: 50, 40, 30, 20, 10, 00
-          - Folder 9h: 50, 40, 30, 20
+        Async Download with Concurrency-Limited S3 Client.
+
+        This method coordinates multiple async S3 downloads across hourly buckets.
+        The S3Client internally limits concurrent downloads (max_concurrent_downloads=6)
+        using asyncio.Semaphore to prevent overwhelming the network or S3 rate limits.
+
+        Pattern:
+            - Sequential iteration over hours (current → past)
+            - Each hour's download is an async operation with internal parallelism
+            - skip_if callback enables smart caching (skip already-processed files)
         """
-        TARGET_FILES = 24
+        target_files = 24
         all_files = {}
         hours_back = 0
 
-        while len(all_files) < TARGET_FILES:
-            # Calculate the hour to search
+        while len(all_files) < target_files and hours_back <= 5:
+            # Determine how many files we still need
+            needed = target_files - len(all_files)
             search_time = current_time - timedelta(hours=hours_back)
-            search_path = self._build_directory_path(search_time)
 
-            files_still_needed = TARGET_FILES - len(all_files)
-
-            if hours_back == 0:
-                # Current hour: download all available
-                logger.info(
-                    f"Downloading from current hour: {search_path} (time: {search_time.isoformat()})"
-                )
-                hour_files = await self._s3_client.download_folder(
-                    search_path,
-                    file_pattern=self._product_base_file_pattern,
-                )
-            else:
-                # Previous hours: filter by minutes if necessary
-                logger.info(
-                    f"Downloading from hour -{hours_back}: {search_path} (time: {search_time.isoformat()})"
-                )
-
-                # If we need less than 6 files from this hour, filter by minute
-                if files_still_needed < 6:
-                    min_minute = 60 - (files_still_needed * 10)
-                    logger.info(
-                        f"Need {files_still_needed} files, filtering minutes >= {min_minute}"
-                    )
-
-                    def minute_filter(file_path: str) -> bool:
-                        minute = self._extract_minute_from_filename(file_path)
-                        return minute is not None and minute >= min_minute
-
-                    hour_files = await self._s3_client.download_folder(
-                        search_path,
-                        file_pattern=self._product_base_file_pattern,
-                        file_filter=minute_filter,
-                    )
-                else:
-                    # We need all files from this hour
-                    hour_files = await self._s3_client.download_folder(
-                        search_path,
-                        file_pattern=self._product_base_file_pattern,
-                    )
-
-            all_files.update(hour_files)
-            logger.info(
-                f"Downloaded {len(hour_files)} files from hour -{hours_back}. Total so far: {len(all_files)}"
+            # Helper to download one hour batch
+            batch = await self._download_hour_batch(
+                search_time, needed, local_cache_dir, skip_if
             )
 
+            all_files.update(batch)
             hours_back += 1
 
-            # Safety limit to avoid infinite loops (maximum 5 hours back)
-            if hours_back > 5:
-                logger.warning(
-                    f"Reached maximum hours back limit. Downloaded {len(all_files)}/{TARGET_FILES} files."
-                )
-                break
-
-        logger.info(f"Total files downloaded: {len(all_files)}")
+        logger.info(
+            f"Download complete: collected {len(all_files)}/{target_files} images"
+        )
         return all_files
+
+    async def _download_hour_batch(
+        self, time: datetime, needed: int, cache_dir: Path, skip_if: Callable
+    ) -> dict:
+        path = self._build_directory_path(time)
+        hour_str = time.strftime("%Y-%m-%d %H:00 UTC")
+        logger.info(
+            f"Searching S3 for images from {hour_str} (need {needed} more to reach 24)"
+        )
+
+        # For previous hours (needed < 6), only get the newest files (minutes 50,40,30...)
+        # Logic: 1 file every 10 mins = 6 files/hour.
+        # If we need N files, we look for minutes >= 60 - (N * 10).
+        file_filter = None
+        if needed < 6:
+            min_minute = 60 - (needed * 10)
+            file_filter = lambda f: self._is_minute_ge(f, min_minute)
+
+        return await self._noaa_s3_client.download_folder(
+            path,
+            file_pattern=self._product_base_file_pattern,
+            file_filter=file_filter,
+            local_cache_dir=cache_dir,
+            skip_if=skip_if,
+        )
+
+    def _is_minute_ge(self, file_path: str, min_minute: int) -> bool:
+        """Filter helper: returns True if file minute >= min_minute."""
+        m = self._extract_minute_from_filename(file_path)
+        return m is not None and m >= min_minute
 
     def _build_directory_path(self, time: datetime) -> str:
         """Build the directory path for a specific hour."""
@@ -266,8 +370,8 @@ class ProcessBand9Job:
     async def _upload_tiles_to_minio(
         self, geotiff_files: List[Path], tiles_dir: Path
     ) -> None:
-        """Upload generated tile directories to MinIO."""
-        await self._minio_client.ensure_bucket_exists()
+        """Upload generated tile directories to MinIO S3 bucket."""
+        await self._minio_s3_client.ensure_bucket_exists()
 
         for geotiff_path in geotiff_files:
             tileset_name = f"{geotiff_path.stem}_tiles"
@@ -275,6 +379,6 @@ class ProcessBand9Job:
             s3_key_prefix = f"{self._s3_prefix}/{tileset_name}"
 
             if local_tileset_dir.exists():
-                await self._minio_client.upload_directory(
+                await self._minio_s3_client.upload_directory(
                     local_tileset_dir, s3_key_prefix
                 )

@@ -10,6 +10,8 @@ Pipeline Overview:
     3. BRIGHTNESS TEMP: Converts radiance to temperature using Planck equation
     4. GEOTIFF: Creates colorized RGBA GeoTIFFs clipped to configured bounds
     5. TILES: Generates XYZ web tiles (zoom 3-7, WEBP format, Leaflet-compatible)
+    6. UPLOAD: Uploads tiles to MinIO S3 bucket
+    7. CLEANUP: Deletes all local files (storage is in S3 only)
 
 Band 13 Specifications:
     - Wavelength: 10.33 µm (Clean Infrared Window)
@@ -21,11 +23,10 @@ Execution Frequency:
     GOES-19 publishes Full Disk images every 10 minutes.
     Recommended schedule: */30 * * * * (every 30 minutes)
 
-File Handling:
-    - GOES files have unique timestamps in filenames (no collisions)
-    - GeoTIFFs are atomically overwritten if same timestamp is reprocessed
-    - Tile directories are deleted and replaced on reprocessing
-    - Output: .tmp/band_13/geotiff/*.tif and .tmp/band_13/tiles/*_tiles/
+Storage Strategy:
+    - All tiles are stored in MinIO S3 bucket (no local retention)
+    - Local files are temporary and deleted after upload
+    - S3 retention: keeps newest 26 tilesets (4+ hours of data)
 
 Example GOES-19 filename:
     OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
@@ -33,14 +34,14 @@ Example GOES-19 filename:
 """
 
 import logging
-from typing import Callable, List, Optional
+import shutil
+from typing import Callable, List
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 
 from constants import constants
 from config import Config
-from clients import s3_client
-from clients.minio_upload_client import MinioUploadClient
+from clients.s3_client import S3Client
 from services.compute_brightness_temperatures import (
     ComputeBrightnessTemperaturesService,
 )
@@ -56,30 +57,26 @@ class ProcessBand13Job:
     Scheduled job for processing GOES-19 Band 13 (Cloud Tops) imagery.
 
     This job downloads the last 24 satellite images (4 hours of data at 10-minute
-    intervals), processes them through the full pipeline, and generates web map
-    tiles for visualization.
+    intervals), processes them through the full pipeline, uploads tiles to MinIO,
+    and cleans up all local files.
 
     Attributes:
-        _bucket_name: NOAA's public S3 bucket (noaa-goes19)
-        _l1b_products_path: S3 prefix for ABI Level 1b Full Disk products
-        _product_base_file_pattern: Filter pattern for Band 13 files (C13_G19)
-        _s3_client: Async S3 client with concurrency limiting
+        _noaa_s3_client: S3 client for NOAA's public bucket (unsigned access)
+        _minio_s3_client: S3 client for MinIO bucket (authenticated access)
+        _s3_prefix: S3 key prefix for this band's tiles
 
     Pipeline stages:
-        1. Download (Smart Skip + Caching)
-           - Checks if tiles already exist (skips processing if true)
-           - Checks local 'raw' directory (skips download if present)
-           - Downloads from S3 if needed
+        1. Download (Smart Skip) - checks S3 for existing tiles first
         2. → SetupGOESGeorreferencingService (georeferencing)
         3. → ComputeBrightnessTemperaturesService (Planck equation)
         4. → GenerateGeoTIFFFilesService (colorized GeoTIFFs)
         5. → GenerateTilesService (XYZ web tiles)
-        6. → Cleanup (Retention Policy: keeps last 26 files)
+        6. → Upload to MinIO S3
+        7. → Cleanup (delete ALL local files, S3 retention: 26 tilesets)
 
-    Output directories:
-        - Raw: {TMP_DIR}/band_13/raw/ (Cached input)
-        - GeoTIFFs: {TMP_DIR}/band_13/geotiff/ (Intermediate)
-        - Tiles: {TMP_DIR}/band_13/tiles/ (Final Output)
+    Storage:
+        - Local: Temporary only, deleted after upload
+        - S3: band_13/tiles/{tileset_id}_tiles/{z}/{x}/{y}.webp
     """
 
     def __init__(self):
@@ -88,14 +85,16 @@ class ProcessBand13Job:
         self._l1b_products_path = "ABI-L1b-RadF"
         self._product_base_file_pattern = "C13_G19"
         self._s3_prefix = "band_13/tiles"
-        self._s3_client = s3_client.S3Client(
-            self._bucket_name, max_concurrent_downloads=6
-        )
-        self._minio_client = MinioUploadClient(
+
+        # S3 client for NOAA public bucket (unsigned access for downloads)
+        self._noaa_s3_client = S3Client(self._bucket_name, max_concurrent_downloads=6)
+
+        # S3 client for MinIO bucket (authenticated access for uploads)
+        self._minio_s3_client = S3Client.create_with_credentials(
+            bucket_name=self._config.MINIO_BUCKET,
             endpoint=self._config.MINIO_ENDPOINT,
             access_key=self._config.MINIO_ACCESS_KEY,
             secret_key=self._config.MINIO_SECRET_KEY,
-            bucket=self._config.MINIO_BUCKET,
             secure=self._config.MINIO_SECURE,
         )
 
@@ -133,19 +132,38 @@ class ProcessBand13Job:
     async def _get_files_to_process(
         self, current_time: datetime, dirs: dict[str, Path]
     ) -> dict:
-        """Download missing files and filter out those already processed."""
+        """Download missing files and filter out those already processed (checking S3)."""
 
-        def check_tiles_exist(s3_key: str) -> bool:
+        # Pre-fetch existing tilesets from S3 bucket
+        existing_s3_tilesets = await self._get_existing_s3_tilesets()
+        logger.info(f"Found {len(existing_s3_tilesets)} existing tilesets in S3")
+
+        def check_tiles_exist_in_s3(s3_key: str) -> bool:
             stem = Path(s3_key).stem
-            # Check if tile directory exists and is valid
-            return (dirs["tiles"] / f"{stem}_tiles").exists()
+            tileset_name = f"{stem}_tiles"
+            return tileset_name in existing_s3_tilesets
 
         downloaded = await self._download_last_hour_files(
-            current_time, dirs["raw"], skip_if=check_tiles_exist
+            current_time, dirs["raw"], skip_if=check_tiles_exist_in_s3
         )
 
-        # files with None content were skipped by skip_if (tiles exist)
+        # files with None content were skipped by skip_if (tiles exist in S3)
         return {k: v for k, v in downloaded.items() if v is not None}
+
+    async def _get_existing_s3_tilesets(self) -> set:
+        """Get set of tileset names that exist in MinIO S3 bucket."""
+        try:
+            prefixes = await self._minio_s3_client.list_prefixes(
+                f"{self._s3_prefix}/", delimiter="/"
+            )
+            tilesets = set()
+            for prefix in prefixes:
+                tileset_name = prefix.rstrip("/").split("/")[-1]
+                tilesets.add(tileset_name)
+            return tilesets
+        except Exception as e:
+            logger.warning(f"Error listing S3 tilesets: {e}")
+            return set()
 
     async def _run_processing_pipeline(self, files: dict, dirs: dict[str, Path]):
         """
@@ -238,31 +256,43 @@ class ProcessBand13Job:
             logger.info(f"[5/5] Tile upload complete")
 
     async def _perform_cleanup(self, dirs: dict[str, Path]):
-        retention = 26
-        logger.info(f"Running cleanup (keeping newest {retention} files)...")
-        self._cleanup_directory(dirs["raw"], "*.nc", retention)
-        self._cleanup_directory(dirs["geotiff"], "*.tif", retention)
-        await self._cleanup_s3_tiles(dirs, retention)
+        """
+        Cleanup local and S3 storage.
 
-    def _cleanup_directory(self, directory: Path, pattern: str, keep_count: int):
+        Local: Delete ALL files (no local retention, S3 is the source of truth)
+        S3: Keep newest 26 tilesets (4+ hours of data)
+        """
+        logger.info("Running cleanup...")
+
+        # Delete all local files (S3 is the source of truth)
+        self._cleanup_local_directory(dirs["raw"])
+        self._cleanup_local_directory(dirs["geotiff"])
+        self._cleanup_local_directory(dirs["tiles"])
+
+        # S3 retention: keep newest 26 tilesets
+        await self._cleanup_s3_tiles(keep_count=26)
+
+    def _cleanup_local_directory(self, directory: Path):
+        """Delete all files in a directory (no local retention)."""
         if not directory.exists():
             return
-        files = sorted(directory.glob(pattern))
-        if len(files) <= keep_count:
-            return
 
-        for p in files[:-keep_count]:
-            try:
-                p.unlink()
-                logger.info(f"Cleanup: deleted {p.name}")
-            except Exception as e:
-                logger.warning(f"Cleanup failed for {p}: {e}")
+        try:
+            # Delete all contents but keep the directory
+            for item in directory.iterdir():
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
+            logger.info(f"Cleanup: cleared {directory.name}/")
+        except Exception as e:
+            logger.warning(f"Cleanup failed for {directory}: {e}")
 
     async def _upload_tiles_to_minio(
         self, geotiff_files: List[Path], tiles_dir: Path
     ) -> None:
-        """Upload generated tile directories to MinIO."""
-        await self._minio_client.ensure_bucket_exists()
+        """Upload generated tile directories to MinIO S3 bucket."""
+        await self._minio_s3_client.ensure_bucket_exists()
 
         for geotiff_path in geotiff_files:
             tileset_name = f"{geotiff_path.stem}_tiles"
@@ -270,33 +300,39 @@ class ProcessBand13Job:
             s3_key_prefix = f"{self._s3_prefix}/{tileset_name}"
 
             if local_tileset_dir.exists():
-                await self._minio_client.upload_directory(
+                await self._minio_s3_client.upload_directory(
                     local_tileset_dir, s3_key_prefix
                 )
 
-    async def _cleanup_s3_tiles(self, dirs: dict[str, Path], keep_count: int) -> None:
-        """Delete old tile directories from MinIO S3."""
-        tiles_dir = dirs["tiles"]
-        if not tiles_dir.exists():
-            return
+    async def _cleanup_s3_tiles(self, keep_count: int) -> None:
+        """Delete old tile directories from MinIO S3 bucket (keeps newest keep_count)."""
+        try:
+            prefixes = await self._minio_s3_client.list_prefixes(
+                f"{self._s3_prefix}/", delimiter="/"
+            )
 
-        # Get local tile directories sorted by name (oldest first)
-        local_tilesets = sorted(
-            [d for d in tiles_dir.iterdir() if d.is_dir() and d.name.endswith("_tiles")]
-        )
+            if len(prefixes) <= keep_count:
+                logger.info(
+                    f"S3 cleanup: {len(prefixes)} tilesets in S3, keeping all (threshold: {keep_count})"
+                )
+                return
 
-        if len(local_tilesets) <= keep_count:
-            return
+            sorted_prefixes = sorted(prefixes)
+            prefixes_to_delete = sorted_prefixes[:-keep_count]
+            logger.info(
+                f"S3 cleanup: deleting {len(prefixes_to_delete)} old tilesets from S3"
+            )
 
-        # Delete the oldest tilesets from S3
-        tilesets_to_delete = local_tilesets[:-keep_count]
-        for tileset_dir in tilesets_to_delete:
-            s3_prefix = f"{self._s3_prefix}/{tileset_dir.name}"
-            try:
-                await self._minio_client.delete_prefix(s3_prefix)
-                logger.info(f"S3 cleanup: deleted {s3_prefix}")
-            except Exception as e:
-                logger.warning(f"S3 cleanup failed for {s3_prefix}: {e}")
+            for prefix in prefixes_to_delete:
+                tileset_name = prefix.rstrip("/").split("/")[-1]
+                s3_prefix = f"{self._s3_prefix}/{tileset_name}"
+                try:
+                    await self._minio_s3_client.delete_prefix(s3_prefix)
+                    logger.info(f"S3 cleanup: deleted {s3_prefix}")
+                except Exception as e:
+                    logger.warning(f"S3 cleanup failed for {s3_prefix}: {e}")
+        except Exception as e:
+            logger.error(f"S3 cleanup failed: {e}")
 
     async def _download_last_hour_files(
         self,
@@ -355,7 +391,7 @@ class ProcessBand13Job:
             min_minute = 60 - (needed * 10)
             file_filter = lambda f: self._is_minute_ge(f, min_minute)
 
-        return await self._s3_client.download_folder(
+        return await self._noaa_s3_client.download_folder(
             path,
             file_pattern=self._product_base_file_pattern,
             file_filter=file_filter,
