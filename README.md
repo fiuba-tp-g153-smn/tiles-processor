@@ -134,10 +134,18 @@ tiles-data/                              # Bucket name (configurable)
 ### MinIO Service
 
 The docker-compose includes a MinIO service that:
-- Exposes S3 API on port `9000` (configurable via `MINIO_API_PORT`)
+- Exposes S3 API on port `9000` (configurable via `S3_TILES_DATA_PORT`)
 - Exposes Web Console on port `9001` (configurable via `MINIO_CONSOLE_PORT`)
-- Automatically creates the `tiles-data` bucket on startup
-- Sets public read access on the bucket for tile serving
+
+To configure the bucket, run the setup script after starting the services:
+
+```bash
+./scripts/setup_minio.sh
+```
+
+This script will:
+- Create the `tiles-data` bucket
+- Set public read access on the bucket for tile serving
 
 **MinIO Console**: `http://localhost:9001` (default credentials: `minioadmin`/`minioadmin`)
 

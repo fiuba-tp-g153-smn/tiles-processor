@@ -19,34 +19,13 @@ services:
     networks:
       - tiles-dev-network
 
-  minio-setup:
-    image: minio/mc:latest
-    container_name: tiles-processor-dev-minio-setup
-    depends_on:
-      minio:
-        condition: service_healthy
-    networks:
-      - tiles-dev-network
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set myminio http://minio:9000 $} $${MINIO_ROOT_PASSWORD};
-      mc mb myminio/${S3_TILES_DATA_BUCKET_NAME} --ignore-existing;
-      mc anonymous set download myminio/${S3_TILES_DATA_BUCKET_NAME};
-      echo 'Bucket created and configured';
-      exit 0;
-      "
-    environment:
-      MINIO_ROOT_USER: ${S3_TILES_DATA_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${S3_TILES_DATA_SECRET_KEY}
 
   tiles-processor:
     container_name: tiles-processor-dev-container
     build:
       context: .
       dockerfile: Dockerfile
-    depends_on:
-      minio-setup:
-        condition: service_completed_successfully
+
     volumes:
       - ${DATA_DIR_HOST}:${DATA_DIR_CONTAINER}
       - ./settings.json:/app/settings.json:ro
