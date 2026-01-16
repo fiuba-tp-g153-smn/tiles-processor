@@ -16,9 +16,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - tiles-network
-
 
   tiles-processor:
     image: tiles-processor
@@ -28,14 +25,12 @@ services:
       dockerfile: Dockerfile
       args:
         - LOG_LEVEL=${LOG_LEVEL}
-        - DATA_DIR_CONTAINER=/app/data
-
     volumes:
-      - tiles_data:/app/data
+      - tiles_data:${DATA_DIR}
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
-      - DATA_DIR_CONTAINER=/app/data
+      - DATA_DIR=${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=minio:9000
       - S3_TILES_DATA_ACCESS_KEY=${S3_TILES_DATA_ACCESS_KEY}
       - S3_TILES_DATA_SECRET_KEY=${S3_TILES_DATA_SECRET_KEY}
@@ -46,13 +41,7 @@ services:
       interval: 2s
       timeout: 10s
       retries: 3
-    networks:
-      - tiles-network
 
 volumes:
   tiles_data:
   minio_data:
-
-networks:
-  tiles-network:
-    driver: bridge

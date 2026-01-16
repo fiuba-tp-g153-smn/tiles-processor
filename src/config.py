@@ -16,7 +16,7 @@ class Config:
 
         # Environment variables
         self.LOG_LEVEL: str = self._get_required_env("LOG_LEVEL").upper()
-        data_dir = Path(self._get_required_env("DATA_DIR_CONTAINER"))
+        data_dir = Path(self._get_required_env("DATA_DIR"))
         self.TMP_DIR: str = str(data_dir / "tmp")
         self.SCHEDULER_DB_PATH: str = str(data_dir / "scheduler" / "jobs.db")
 

@@ -4,7 +4,7 @@ import pytest
 # Set default environment variables for tests
 # These are set before any other imports to ensure config.py picks them up
 os.environ.setdefault("LOG_LEVEL", "INFO")
-os.environ.setdefault("DATA_DIR_CONTAINER", "/app/data")
+os.environ.setdefault("DATA_DIR", "/app/data")
 
 
 @pytest.fixture(autouse=True)
