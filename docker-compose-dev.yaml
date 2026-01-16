@@ -10,3 +10,8 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR_CONTAINER=${DATA_DIR_CONTAINER}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-minio:9000}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=${MINIO_BUCKET:-tiles-data}
+      - MINIO_SECURE=${MINIO_SECURE:-false}

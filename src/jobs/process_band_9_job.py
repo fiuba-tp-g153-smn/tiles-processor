@@ -34,11 +34,13 @@ Example GOES-19 filename:
 
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
+from typing import List
 import logging
 
 from constants import constants
 from config import Config
 from clients import s3_client
+from clients.minio_upload_client import MinioUploadClient
 from services.compute_brightness_temperatures import (
     ComputeBrightnessTemperaturesService,
 )
@@ -84,8 +86,16 @@ class ProcessBand9Job:
         self._bucket_name = constants.GOES19_BUCKET_NAME
         self._l1b_products_path = "ABI-L1b-RadF"
         self._product_base_file_pattern = "C09_G19"
+        self._s3_prefix = "band_9/tiles"
         self._s3_client = s3_client.S3Client(
             self._bucket_name, max_concurrent_downloads=6
+        )
+        self._minio_client = MinioUploadClient(
+            endpoint=self._config.MINIO_ENDPOINT,
+            access_key=self._config.MINIO_ACCESS_KEY,
+            secret_key=self._config.MINIO_SECRET_KEY,
+            bucket=self._config.MINIO_BUCKET,
+            secure=self._config.MINIO_SECURE,
         )
 
     async def run(self):
@@ -143,6 +153,11 @@ class ProcessBand9Job:
         tiles_output_dir = Path.cwd() / self._config.TMP_DIR / "band_9" / "tiles"
         await GenerateTilesService(geotiff_files, tiles_output_dir).run()
         logger.info("Tiles generation completed.")
+
+        # Upload tiles to MinIO
+        logger.info("Uploading tiles to MinIO...")
+        await self._upload_tiles_to_minio(geotiff_files, tiles_output_dir)
+        logger.info("Tile upload completed.")
 
     async def _download_last_hour_files(
         self, current_time: datetime
@@ -247,3 +262,19 @@ class ProcessBand9Job:
         except (ValueError, IndexError):
             logger.warning(f"Could not extract minute from filename: {file_path}")
             return None
+
+    async def _upload_tiles_to_minio(
+        self, geotiff_files: List[Path], tiles_dir: Path
+    ) -> None:
+        """Upload generated tile directories to MinIO."""
+        await self._minio_client.ensure_bucket_exists()
+
+        for geotiff_path in geotiff_files:
+            tileset_name = f"{geotiff_path.stem}_tiles"
+            local_tileset_dir = tiles_dir / tileset_name
+            s3_key_prefix = f"{self._s3_prefix}/{tileset_name}"
+
+            if local_tileset_dir.exists():
+                await self._minio_client.upload_directory(
+                    local_tileset_dir, s3_key_prefix
+                )

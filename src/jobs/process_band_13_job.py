@@ -33,13 +33,14 @@ Example GOES-19 filename:
 """
 
 import logging
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 
 from constants import constants
 from config import Config
 from clients import s3_client
+from clients.minio_upload_client import MinioUploadClient
 from services.compute_brightness_temperatures import (
     ComputeBrightnessTemperaturesService,
 )
@@ -86,8 +87,16 @@ class ProcessBand13Job:
         self._bucket_name = constants.GOES19_BUCKET_NAME
         self._l1b_products_path = "ABI-L1b-RadF"
         self._product_base_file_pattern = "C13_G19"
+        self._s3_prefix = "band_13/tiles"
         self._s3_client = s3_client.S3Client(
             self._bucket_name, max_concurrent_downloads=6
+        )
+        self._minio_client = MinioUploadClient(
+            endpoint=self._config.MINIO_ENDPOINT,
+            access_key=self._config.MINIO_ACCESS_KEY,
+            secret_key=self._config.MINIO_SECRET_KEY,
+            bucket=self._config.MINIO_BUCKET,
+            secure=self._config.MINIO_SECURE,
         )
 
     async def run(self):
@@ -101,14 +110,14 @@ class ProcessBand13Job:
         files_to_process = await self._get_files_to_process(current_time, dirs)
         if not files_to_process:
             logger.info("No new files to process - all images already have tiles")
-            self._perform_cleanup(dirs)
+            await self._perform_cleanup(dirs)
             return
 
         logger.info(
             f"Found {len(files_to_process)} new images to process (tiles not yet generated)"
         )
         await self._run_processing_pipeline(files_to_process, dirs)
-        self._perform_cleanup(dirs)
+        await self._perform_cleanup(dirs)
 
     def _prepare_directories(self) -> dict[str, Path]:
         base = Path.cwd() / self._config.TMP_DIR / "band_13"
@@ -218,16 +227,22 @@ class ProcessBand13Job:
         # 4. Tiles (Process all tiles at once as it iterates files from disk)
         if all_geotiff_files:
             logger.info(
-                f"[4/4] Generating web tiles for {len(all_geotiff_files)} GeoTIFFs..."
+                f"[4/5] Generating web tiles for {len(all_geotiff_files)} GeoTIFFs..."
             )
             await GenerateTilesService(all_geotiff_files, dirs["tiles"]).run()
-            logger.info(f"[4/4] Tile generation complete")
+            logger.info(f"[4/5] Tile generation complete")
 
-    def _perform_cleanup(self, dirs: dict[str, Path]):
+            # 5. Upload tiles to MinIO
+            logger.info(f"[5/5] Uploading tiles to MinIO...")
+            await self._upload_tiles_to_minio(all_geotiff_files, dirs["tiles"])
+            logger.info(f"[5/5] Tile upload complete")
+
+    async def _perform_cleanup(self, dirs: dict[str, Path]):
         retention = 26
         logger.info(f"Running cleanup (keeping newest {retention} files)...")
         self._cleanup_directory(dirs["raw"], "*.nc", retention)
         self._cleanup_directory(dirs["geotiff"], "*.tif", retention)
+        await self._cleanup_s3_tiles(dirs, retention)
 
     def _cleanup_directory(self, directory: Path, pattern: str, keep_count: int):
         if not directory.exists():
@@ -242,6 +257,46 @@ class ProcessBand13Job:
                 logger.info(f"Cleanup: deleted {p.name}")
             except Exception as e:
                 logger.warning(f"Cleanup failed for {p}: {e}")
+
+    async def _upload_tiles_to_minio(
+        self, geotiff_files: List[Path], tiles_dir: Path
+    ) -> None:
+        """Upload generated tile directories to MinIO."""
+        await self._minio_client.ensure_bucket_exists()
+
+        for geotiff_path in geotiff_files:
+            tileset_name = f"{geotiff_path.stem}_tiles"
+            local_tileset_dir = tiles_dir / tileset_name
+            s3_key_prefix = f"{self._s3_prefix}/{tileset_name}"
+
+            if local_tileset_dir.exists():
+                await self._minio_client.upload_directory(
+                    local_tileset_dir, s3_key_prefix
+                )
+
+    async def _cleanup_s3_tiles(self, dirs: dict[str, Path], keep_count: int) -> None:
+        """Delete old tile directories from MinIO S3."""
+        tiles_dir = dirs["tiles"]
+        if not tiles_dir.exists():
+            return
+
+        # Get local tile directories sorted by name (oldest first)
+        local_tilesets = sorted(
+            [d for d in tiles_dir.iterdir() if d.is_dir() and d.name.endswith("_tiles")]
+        )
+
+        if len(local_tilesets) <= keep_count:
+            return
+
+        # Delete the oldest tilesets from S3
+        tilesets_to_delete = local_tilesets[:-keep_count]
+        for tileset_dir in tilesets_to_delete:
+            s3_prefix = f"{self._s3_prefix}/{tileset_dir.name}"
+            try:
+                await self._minio_client.delete_prefix(s3_prefix)
+                logger.info(f"S3 cleanup: deleted {s3_prefix}")
+            except Exception as e:
+                logger.warning(f"S3 cleanup failed for {s3_prefix}: {e}")
 
     async def _download_last_hour_files(
         self,

@@ -14,6 +14,11 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR_CONTAINER=/app/data
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_BUCKET=${MINIO_BUCKET:-tiles-data}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
     healthcheck:
       test: ["CMD", "python3", "/app/src/healthcheck.py", "||", "exit", "1"]
       interval: 2s

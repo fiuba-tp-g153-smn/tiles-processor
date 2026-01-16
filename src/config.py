@@ -20,6 +20,13 @@ class Config:
         self.TMP_DIR: str = str(data_dir / "tmp")
         self.SCHEDULER_DB_PATH: str = str(data_dir / "scheduler" / "jobs.db")
 
+        # MinIO Configuration
+        self.MINIO_ENDPOINT: str = self._get_required_env("MINIO_ENDPOINT")
+        self.MINIO_ACCESS_KEY: str = self._get_required_env("MINIO_ACCESS_KEY")
+        self.MINIO_SECRET_KEY: str = self._get_required_env("MINIO_SECRET_KEY")
+        self.MINIO_BUCKET: str = os.getenv("MINIO_BUCKET", "tiles-data")
+        self.MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
+
         # Settings from JSON
         self.TIMEZONE: str = settings["timezone"]
 
@@ -124,4 +131,7 @@ class Config:
         logger.info(f"BOUNDS_MINY: {self.BOUNDS_MINY}")
         logger.info(f"BOUNDS_MAXX: {self.BOUNDS_MAXX}")
         logger.info(f"BOUNDS_MAXY: {self.BOUNDS_MAXY}")
+        logger.info(f"MINIO_ENDPOINT: {self.MINIO_ENDPOINT}")
+        logger.info(f"MINIO_BUCKET: {self.MINIO_BUCKET}")
+        logger.info(f"MINIO_SECURE: {self.MINIO_SECURE}")
         logger.info("=====================")
