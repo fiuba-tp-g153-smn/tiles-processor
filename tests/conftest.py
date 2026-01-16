@@ -5,6 +5,11 @@ import pytest
 # These are set before any other imports to ensure config.py picks them up
 os.environ.setdefault("LOG_LEVEL", "INFO")
 os.environ.setdefault("DATA_DIR", "/app/data")
+os.environ.setdefault("S3_TILES_DATA_ENDPOINT", "minio:9000")
+os.environ.setdefault("S3_TILES_DATA_ACCESS_KEY", "minioadmin")
+os.environ.setdefault("S3_TILES_DATA_SECRET_KEY", "minioadmin")
+os.environ.setdefault("BAND_13_SCHEDULE_CRON", "*/30 * * * *")
+os.environ.setdefault("BAND_9_SCHEDULE_CRON", "*/30 * * * *")
 
 
 @pytest.fixture(autouse=True)

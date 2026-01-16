@@ -43,7 +43,10 @@ class TestConfig:
         """Required environment variables for Config."""
         return {
             "LOG_LEVEL": "DEBUG",
-            "DATA_DIR_CONTAINER": "/tmp/test",
+            "DATA_DIR": "/tmp/test",
+            "S3_TILES_DATA_ENDPOINT": "minio:9000",
+            "S3_TILES_DATA_ACCESS_KEY": "minioadmin",
+            "S3_TILES_DATA_SECRET_KEY": "minioadmin",
         }
 
     def test_config_loads_from_settings_file(self, temp_settings_file, env_vars):
@@ -80,7 +83,7 @@ class TestConfig:
         """Test that Config raises ValueError when env var is empty."""
         env_vars = {
             "LOG_LEVEL": "",
-            "DATA_DIR_CONTAINER": "/tmp/test",
+            "DATA_DIR": "/tmp/test",
         }
         with mock.patch.dict(os.environ, env_vars, clear=True):
             with pytest.raises(ValueError, match="LOG_LEVEL.*is required"):
@@ -139,7 +142,10 @@ class TestValidateCronExpression:
     def env_vars(self):
         return {
             "LOG_LEVEL": "INFO",
-            "DATA_DIR_CONTAINER": "/tmp/test",
+            "DATA_DIR": "/tmp/test",
+            "S3_TILES_DATA_ENDPOINT": "minio:9000",
+            "S3_TILES_DATA_ACCESS_KEY": "minioadmin",
+            "S3_TILES_DATA_SECRET_KEY": "minioadmin",
         }
 
     def test_valid_every_10_minutes(self, temp_settings_file, env_vars):

@@ -38,7 +38,10 @@ def env_vars(tmp_path):
     """Required environment variables for Config."""
     return {
         "LOG_LEVEL": "DEBUG",
-        "DATA_DIR_CONTAINER": str(tmp_path / "data"),
+        "DATA_DIR": str(tmp_path / "data"),
+        "S3_TILES_DATA_ENDPOINT": "minio:9000",
+        "S3_TILES_DATA_ACCESS_KEY": "minioadmin",
+        "S3_TILES_DATA_SECRET_KEY": "minioadmin",
     }
 
 
@@ -125,7 +128,10 @@ class TestStartScheduler:
 
         env_vars = {
             "LOG_LEVEL": "DEBUG",
-            "DATA_DIR_CONTAINER": str(tmp_path / "data"),
+            "DATA_DIR": str(tmp_path / "data"),
+            "S3_TILES_DATA_ENDPOINT": "minio:9000",
+            "S3_TILES_DATA_ACCESS_KEY": "minioadmin",
+            "S3_TILES_DATA_SECRET_KEY": "minioadmin",
         }
 
         with mock.patch.dict(os.environ, env_vars, clear=True):
