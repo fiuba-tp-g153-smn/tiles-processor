@@ -128,5 +128,7 @@ if __name__ == "__main__":
     try:
         exit_code = asyncio.run(main())
         sys.exit(exit_code)
-    except (KeyboardInterrupt, SystemExit):
-        sys.exit(EXIT_ERROR_CODE)
+    except KeyboardInterrupt:
+        logger = logging.getLogger(__name__)
+        logger.info("Application stopped by user (KeyboardInterrupt).")
+        sys.exit(EXIT_SUCCESS_CODE)
