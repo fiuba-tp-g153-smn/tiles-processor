@@ -105,13 +105,12 @@ OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
 ```
 
 **Optimization Strategy**:
-- **Smart Skip**: If tiles exist in `.tmp/band_{N}/tiles/{filename}_tiles`, the system **skips** downloading and processing that file entirely.
+- **Smart Skip**: If tiles exist in S3 (checked via `exists_in_s3`), the system **skips** downloading and processing that file entirely.
 - **Retention Policy**:
-    - The system keeps the **newest 26 files** (approx 4.3 hours) in `raw/` and `geotiff/`.
-    - Older files are automatically deleted after every run to save disk space.
-    - This retention window ensures the "last 24 images" cache remains effective for subsequent runs.
-- **Intermediate Cleanup**: Raw `.nc` and intermediate `.tif` files are transient for files outside the retention window.
-- **S3 Cleanup**: When local files are cleaned up, corresponding S3 objects are also deleted to maintain consistency.
+    - **Local**: No local retention. All temporary files (raw NetCDF, GeoTIFFs, and tiles) are deleted after successful upload to S3 to minimize ephemeral storage usage.
+    - **S3 (Source of Truth)**: The S3 bucket retains the **newest 26 tilesets** (approx 4.3 hours) per band.
+    - **S3 Cleanup**: A rolling window cleanup is triggered at the end of every job to delete S3 prefixes older than the newest 26.
+- **Cleanup**: executed via `_perform_cleanup` which clears local directories and prunes S3.
 
 ## MinIO S3 Storage
 
@@ -174,8 +173,8 @@ The data-service connects to the same MinIO instance to sync and serve tiles via
 | `BAND_9_SCHEDULE_CRON` | Cron expression for Band 9 job (validated at startup). | Required |
 | `ENABLE_BAND_13` | Enable/Disable Band 13 processing (`true`/`false`). | `true` |
 | `ENABLE_BAND_9` | Enable/Disable Band 9 processing (`true`/`false`). | `true` |
-| `TMP_DIR_HOST` | Local path for temporary files (host). | `./.tmp` |
-| `TMP_DIR_CONTAINER` | Container path for temporary files. | `/app/.tmp` |
+| `DATA_DIR_HOST` | Local path for data files (host). | `./data` |
+| `DATA_DIR` | Container path for data files. | `/app/data` |
 | `BOUNDS_MINX` | West longitude for clipping (EPSG:4326). | `-90.0` |
 | `BOUNDS_MINY` | South latitude for clipping (EPSG:4326). | `-60.0` |
 | `BOUNDS_MAXX` | East longitude for clipping (EPSG:4326). | `-30.0` |
