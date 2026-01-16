@@ -20,12 +20,22 @@ class Config:
         self.TMP_DIR: str = str(data_dir / "tmp")
         self.SCHEDULER_DB_PATH: str = str(data_dir / "scheduler" / "jobs.db")
 
-        # MinIO Configuration
-        self.MINIO_ENDPOINT: str = self._get_required_env("MINIO_ENDPOINT")
-        self.MINIO_ACCESS_KEY: str = self._get_required_env("MINIO_ACCESS_KEY")
-        self.MINIO_SECRET_KEY: str = self._get_required_env("MINIO_SECRET_KEY")
-        self.MINIO_BUCKET: str = os.getenv("MINIO_BUCKET", "tiles-data")
-        self.MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
+        # S3 Configuration
+        self.S3_TILES_DATA_ENDPOINT: str = self._get_required_env(
+            "S3_TILES_DATA_ENDPOINT"
+        )
+        self.S3_TILES_DATA_ACCESS_KEY: str = self._get_required_env(
+            "S3_TILES_DATA_ACCESS_KEY"
+        )
+        self.S3_TILES_DATA_SECRET_KEY: str = self._get_required_env(
+            "S3_TILES_DATA_SECRET_KEY"
+        )
+        self.S3_TILES_DATA_BUCKET_NAME: str = os.getenv(
+            "S3_TILES_DATA_BUCKET_NAME", "tiles-data"
+        )
+        self.S3_TILES_DATA_SECURE: bool = (
+            os.getenv("S3_TILES_DATA_SECURE", "false").lower() == "true"
+        )
 
         # Settings from JSON
         self.TIMEZONE: str = settings["timezone"]
@@ -131,7 +141,7 @@ class Config:
         logger.info(f"BOUNDS_MINY: {self.BOUNDS_MINY}")
         logger.info(f"BOUNDS_MAXX: {self.BOUNDS_MAXX}")
         logger.info(f"BOUNDS_MAXY: {self.BOUNDS_MAXY}")
-        logger.info(f"MINIO_ENDPOINT: {self.MINIO_ENDPOINT}")
-        logger.info(f"MINIO_BUCKET: {self.MINIO_BUCKET}")
-        logger.info(f"MINIO_SECURE: {self.MINIO_SECURE}")
+        logger.info(f"S3_TILES_DATA_ENDPOINT: {self.S3_TILES_DATA_ENDPOINT}")
+        logger.info(f"S3_TILES_DATA_BUCKET_NAME: {self.S3_TILES_DATA_BUCKET_NAME}")
+        logger.info(f"S3_TILES_DATA_SECURE: {self.S3_TILES_DATA_SECURE}")
         logger.info("=====================")

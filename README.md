@@ -172,13 +172,13 @@ The data-service connects to the same MinIO instance to sync and serve tiles via
 | `BOUNDS_MINY` | South latitude for clipping (EPSG:4326). | `-60.0` |
 | `BOUNDS_MAXX` | East longitude for clipping (EPSG:4326). | `-30.0` |
 | `BOUNDS_MAXY` | North latitude for clipping (EPSG:4326). | `-15.0` |
-| `MINIO_ENDPOINT` | MinIO S3 endpoint (host:port). | Required |
-| `MINIO_ACCESS_KEY` | MinIO access key (username). | `minioadmin` |
-| `MINIO_SECRET_KEY` | MinIO secret key (password). | `minioadmin` |
-| `MINIO_BUCKET` | S3 bucket name for tile storage. | `tiles-data` |
-| `MINIO_SECURE` | Use HTTPS for MinIO connection (`true`/`false`). | `false` |
-| `MINIO_API_PORT` | Host port for MinIO S3 API. | `9000` |
-| `MINIO_CONSOLE_PORT` | Host port for MinIO Web Console. | `9001` |
+| `S3_TILES_DATA_ENDPOINT` | MinIO/S3 endpoint (host:port). | Required |
+| `S3_TILES_DATA_ACCESS_KEY` | S3 access key (username). | `minioadmin` |
+| `S3_TILES_DATA_SECRET_KEY` | S3 secret key (password). | `minioadmin` |
+| `S3_TILES_DATA_BUCKET_NAME` | S3 bucket name for tile storage. | `tiles-data` |
+| `S3_TILES_DATA_SECURE` | Use HTTPS for S3 connection (`true`/`false`). | `false` |
+| `S3_TILES_DATA_PORT` | Host port for MinIO S3 API (if using Docker). | `9000` |
+| `MINIO_CONSOLE_PORT` | Host port for MinIO Web Console (if using Docker). | `9001` |
 
 ## Radar Processing
 

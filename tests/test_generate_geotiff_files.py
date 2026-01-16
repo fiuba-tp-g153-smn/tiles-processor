@@ -45,6 +45,7 @@ def config_fixture(temp_settings_file, env_vars):
     with mock.patch.dict(os.environ, env_vars, clear=True):
         return Config(settings_path=temp_settings_file)
 
+
 class TestNormalizeWithCustomPalette:
     """Tests for the normalization and palette application."""
 

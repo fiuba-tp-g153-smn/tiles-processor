@@ -91,11 +91,11 @@ class ProcessBand13Job:
 
         # S3 client for MinIO bucket (authenticated access for uploads)
         self._minio_s3_client = S3Client.create_with_credentials(
-            bucket_name=self._config.MINIO_BUCKET,
-            endpoint=self._config.MINIO_ENDPOINT,
-            access_key=self._config.MINIO_ACCESS_KEY,
-            secret_key=self._config.MINIO_SECRET_KEY,
-            secure=self._config.MINIO_SECURE,
+            bucket_name=self._config.S3_TILES_DATA_BUCKET_NAME,
+            endpoint=self._config.S3_TILES_DATA_ENDPOINT,
+            access_key=self._config.S3_TILES_DATA_ACCESS_KEY,
+            secret_key=self._config.S3_TILES_DATA_SECRET_KEY,
+            secure=self._config.S3_TILES_DATA_SECURE,
         )
 
     async def run(self):
