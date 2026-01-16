@@ -26,7 +26,7 @@ services:
       args:
         - LOG_LEVEL=${LOG_LEVEL}
     volumes:
-      - tiles_data:${DATA_DIR}
+      - tiles_data:/app/data
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
