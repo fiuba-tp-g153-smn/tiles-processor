@@ -13,9 +13,9 @@ services:
       - minio_data:/data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
+      interval: 1s
       timeout: 5s
-      retries: 5
+      retries: 6
 
   minio-setup:
     image: minio/mc:latest
@@ -41,7 +41,7 @@ services:
     image: tiles-processor
     container_name: tiles-processor-container
     depends_on:
-      minio:
+      minio-setup:
         condition: service_completed_successfully
     build:
       context: .
