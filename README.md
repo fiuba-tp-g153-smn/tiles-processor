@@ -163,6 +163,14 @@ The data-service connects to the same MinIO instance to sync and serve tiles via
 | `make prod` | Build and start the application in production mode. |
 | `make test` | Run unit tests. |
 
+## Generating Secure Credentials
+
+To generate secure passwords or access keys for your `.env` file, you can run the following command (requires Docker):
+
+```bash
+docker run --rm -it python:3-alpine sh -c "python -c 'import secrets; print(\"Generated Credential:\", secrets.token_urlsafe(32))'"
+```
+
 ## Environment Variables
 
 | Variable | Description | Default |
