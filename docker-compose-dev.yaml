@@ -27,6 +27,7 @@ services:
       - ./scripts/init_minio.sh:/setup.sh
     entrypoint: /bin/sh
     command: -c "/setup.sh"
+    restart: on-failure
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
