@@ -6,8 +6,8 @@ import pytest
 os.environ.setdefault("LOG_LEVEL", "INFO")
 os.environ.setdefault("DATA_DIR", "/app/data")
 os.environ.setdefault("S3_TILES_DATA_ENDPOINT", "minio:9000")
-os.environ.setdefault("S3_TILES_DATA_RW_ACCESS_KEY", "minioadmin")
-os.environ.setdefault("S3_TILES_DATA_RW_SECRET_KEY", "minioadmin")
+os.environ.setdefault("S3_TILES_DATA_TILES_PROCESSOR_USER", "minioadmin")
+os.environ.setdefault("S3_TILES_DATA_TILES_PROCESSOR_PASSWORD", "minioadmin")
 os.environ.setdefault("BAND_13_SCHEDULE_CRON", "*/30 * * * *")
 os.environ.setdefault("BAND_9_SCHEDULE_CRON", "*/30 * * * *")
 

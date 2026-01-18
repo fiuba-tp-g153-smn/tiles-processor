@@ -45,8 +45,8 @@ class TestConfig:
             "LOG_LEVEL": "DEBUG",
             "DATA_DIR": "/tmp/test",
             "S3_TILES_DATA_ENDPOINT": "minio:9000",
-            "S3_TILES_DATA_RW_ACCESS_KEY": "minioadmin",
-            "S3_TILES_DATA_RW_SECRET_KEY": "minioadmin",
+            "S3_TILES_DATA_TILES_PROCESSOR_USER": "minioadmin",
+            "S3_TILES_DATA_TILES_PROCESSOR_PASSWORD": "minioadmin",
         }
 
     def test_config_loads_from_settings_file(self, temp_settings_file, env_vars):
@@ -144,8 +144,8 @@ class TestValidateCronExpression:
             "LOG_LEVEL": "INFO",
             "DATA_DIR": "/tmp/test",
             "S3_TILES_DATA_ENDPOINT": "minio:9000",
-            "S3_TILES_DATA_RW_ACCESS_KEY": "minioadmin",
-            "S3_TILES_DATA_RW_SECRET_KEY": "minioadmin",
+            "S3_TILES_DATA_TILES_PROCESSOR_USER": "minioadmin",
+            "S3_TILES_DATA_TILES_PROCESSOR_PASSWORD": "minioadmin",
         }
 
     def test_valid_every_10_minutes(self, temp_settings_file, env_vars):

@@ -37,8 +37,8 @@ def env_vars(tmp_path):
         "LOG_LEVEL": "DEBUG",
         "DATA_DIR": str(tmp_path / "data"),
         "S3_TILES_DATA_ENDPOINT": "minio:9000",
-        "S3_TILES_DATA_RW_ACCESS_KEY": "minioadmin",
-        "S3_TILES_DATA_RW_SECRET_KEY": "minioadmin",
+        "S3_TILES_DATA_TILES_PROCESSOR_USER": "minioadmin",
+        "S3_TILES_DATA_TILES_PROCESSOR_PASSWORD": "minioadmin",
     }
 
 
