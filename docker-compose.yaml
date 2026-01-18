@@ -25,8 +25,9 @@ services:
         condition: service_healthy
     volumes:
       - ./scripts/init_minio.sh:/setup.sh
+      - ./scripts/keepalive.sh:/keepalive.sh
     entrypoint: /bin/sh
-    command: -c "/setup.sh"
+    command: -c "chmod +x /keepalive.sh && /keepalive.sh /setup.sh"
     restart: on-failure
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -37,13 +38,18 @@ services:
       S3_TILES_DATA_TILES_PROCESSOR_PASSWORD: ${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
       S3_TILES_DATA_DATA_SERVICE_USER: ${S3_TILES_DATA_DATA_SERVICE_USER}
       S3_TILES_DATA_DATA_SERVICE_PASSWORD: ${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/setup_done"]
+      interval: 1s
+      timeout: 1s
+      retries: 15
 
   tiles-processor:
     image: tiles-processor
     container_name: tiles-processor-container
     depends_on:
       minio-setup:
-        condition: service_completed_successfully
+        condition: service_healthy
     build:
       context: .
       dockerfile: Dockerfile
