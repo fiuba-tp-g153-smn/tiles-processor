@@ -98,8 +98,8 @@ class ProcessBand9Job:
         self._minio_s3_client = S3Client.create_with_credentials(
             bucket_name=self._config.S3_TILES_DATA_BUCKET_NAME,
             endpoint=self._config.S3_TILES_DATA_ENDPOINT,
-            access_key=self._config.S3_TILES_DATA_ACCESS_KEY,
-            secret_key=self._config.S3_TILES_DATA_SECRET_KEY,
+            access_key=self._config.S3_TILES_DATA_RW_ACCESS_KEY,
+            secret_key=self._config.S3_TILES_DATA_RW_SECRET_KEY,
             secure=self._config.S3_TILES_DATA_SECURE,
         )
 

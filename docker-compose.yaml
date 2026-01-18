@@ -7,8 +7,8 @@ services:
       - "${S3_TILES_DATA_PORT}:9000"      # S3 API - accessible externally
       - "${MINIO_CONSOLE_PORT}:9001"  # Web Console - accessible externally
     environment:
-      MINIO_ROOT_USER: ${S3_TILES_DATA_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${S3_TILES_DATA_SECRET_KEY}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - minio_data:/data
     healthcheck:
@@ -17,9 +17,32 @@ services:
       timeout: 5s
       retries: 5
 
+  minio-setup:
+    image: minio/mc:latest
+    container_name: tiles-processor-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./scripts/init_minio.sh:/setup.sh
+    entrypoint: /bin/sh
+    command: -c "/setup.sh"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ENDPOINT: http://minio:${S3_TILES_DATA_PORT}
+      BUCKET_NAME: ${S3_TILES_DATA_BUCKET_NAME}
+      S3_TILES_DATA_TILES_PROCESSOR_USER: ${S3_TILES_DATA_TILES_PROCESSOR_USER}
+      S3_TILES_DATA_TILES_PROCESSOR_PASSWORD: ${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
+      S3_TILES_DATA_DATA_SERVICE_USER: ${S3_TILES_DATA_DATA_SERVICE_USER}
+      S3_TILES_DATA_DATA_SERVICE_PASSWORD: ${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
+
   tiles-processor:
     image: tiles-processor
     container_name: tiles-processor-container
+    depends_on:
+      minio:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -32,10 +55,10 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=minio:9000
-      - S3_TILES_DATA_ACCESS_KEY=${S3_TILES_DATA_ACCESS_KEY}
-      - S3_TILES_DATA_SECRET_KEY=${S3_TILES_DATA_SECRET_KEY}
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
+      - S3_TILES_DATA_TILES_PROCESSOR_USER=${S3_TILES_DATA_TILES_PROCESSOR_USER}
+      - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
     healthcheck:
       test: ["CMD", "python3", "/app/src/healthcheck.py", "||", "exit", "1"]
       interval: 2s

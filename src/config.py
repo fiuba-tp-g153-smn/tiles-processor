@@ -24,11 +24,11 @@ class Config:
         self.S3_TILES_DATA_ENDPOINT: str = self._get_required_env(
             "S3_TILES_DATA_ENDPOINT"
         )
-        self.S3_TILES_DATA_ACCESS_KEY: str = self._get_required_env(
-            "S3_TILES_DATA_ACCESS_KEY"
+        self.S3_TILES_DATA_RW_ACCESS_KEY: str = self._get_required_env(
+            "S3_TILES_DATA_TILES_PROCESSOR_USER"
         )
-        self.S3_TILES_DATA_SECRET_KEY: str = self._get_required_env(
-            "S3_TILES_DATA_SECRET_KEY"
+        self.S3_TILES_DATA_RW_SECRET_KEY: str = self._get_required_env(
+            "S3_TILES_DATA_TILES_PROCESSOR_PASSWORD"
         )
         self.S3_TILES_DATA_BUCKET_NAME: str = os.getenv(
             "S3_TILES_DATA_BUCKET_NAME", "tiles-data"
