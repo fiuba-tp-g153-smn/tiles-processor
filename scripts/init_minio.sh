@@ -48,6 +48,7 @@ mc mb myminio/"$BUCKET_NAME" --ignore-existing || true
 
 # Set the bucket policy to 'download' (public read-only) for anonymous users.
 # This might be overlapping with our explicit RO user, but ensures public access if desired.
+# It is commented to keep bucket private
 # mc anonymous set download myminio/"$BUCKET_NAME"
 
 # -------------------------------------------------------------------------------------------------

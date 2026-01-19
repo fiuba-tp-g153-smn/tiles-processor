@@ -11,3 +11,4 @@ __pycache__/
 .coverage
 reports/
 .claude
+benchmark_results/

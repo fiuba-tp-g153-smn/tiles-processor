@@ -205,8 +205,9 @@ class S3Client:
         if not files_to_download:
             return files
 
+        # Use authenticated=True so it uses credentials if available, otherwise falls back to UNSIGNED
         async with self._session.client(
-            "s3", **self._get_client_kwargs(authenticated=False)
+            "s3", **self._get_client_kwargs(authenticated=True)
         ) as s3_client:
             tasks = [
                 self.download_file(s3_client, fp, local_cache_dir=local_cache_dir)
@@ -228,8 +229,9 @@ class S3Client:
     ) -> List[str]:
         file_paths = []
         try:
+            # Use authenticated=True so it uses credentials if available
             async with self._session.client(
-                "s3", **self._get_client_kwargs(authenticated=False)
+                "s3", **self._get_client_kwargs(authenticated=True)
             ) as s3_client:
                 logger.debug(
                     f"Listing objects in bucket '{self._bucket_name}' with prefix '{folder_path}'"

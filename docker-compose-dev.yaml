@@ -9,8 +9,18 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Cache Configuration
+      MINIO_CACHE_DRIVES: "/cache"
+      MINIO_CACHE_ENABLE: "true"
+      CACHE_DISK: "10000"  # in MB
+      MINIO_CACHE_QUOTA: "70"
+      MINIO_CACHE_AFTER: "0"
+      MINIO_CACHE_WATERMARK_LOW: "80"
+      MINIO_CACHE_WATERMARK_HIGH: "95"
+      MINIO_CACHE_EXPIRY: "1"
     volumes:
       - minio_dev_data:/data
+      - minio_dev_cache:/cache
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 1s
@@ -66,3 +76,4 @@ services:
 
 volumes:
   minio_dev_data:
+  minio_dev_cache:
