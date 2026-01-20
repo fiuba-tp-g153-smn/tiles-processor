@@ -1,0 +1,43 @@
+# Dockerfile for radar_to_tiles.py script
+# Generates XYZ tiles from radar H5 files using WEBP format
+
+FROM ghcr.io/osgeo/gdal:ubuntu-small-latest-amd64
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update and install python pip
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Remove the EXTERNALLY-MANAGED marker to allow pip to install system-wide
+RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED
+
+# Install Python dependencies for radar processing
+# - arm_pyart: radar data reading (SINARAME H5 format)
+# - rasterio: GeoTIFF writing
+# - matplotlib: colormap generation
+# Note: GDAL in base image is compiled with NumPy 1.x, so we must pin numpy<2
+RUN pip3 install --no-cache-dir \
+    "numpy<2" \
+    arm_pyart \
+    rasterio \
+    matplotlib
+
+# Set work directory
+WORKDIR /app
+
+# Copy the radar processing script
+COPY scripts/radar_to_tiles.py ./
+
+# Create output directory (will be mounted as volume)
+RUN mkdir -p /app/output_radar
+
+# Set environment variables
+ENV OUTPUT_DIR=/app/output_radar
+# Disable Python output buffering for real-time logs
+ENV PYTHONUNBUFFERED=1
+
+# Run the script
+CMD ["python3", "radar_to_tiles.py"]

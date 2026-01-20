@@ -240,13 +240,13 @@ def process_radar_file(filepath: str, output_dir: Path, sweeps: list = [0, 1, 2]
         elev = elevations[sweep]
         print(f"\n  --- Elevación {sweep}: {elev:.1f}° ---")
 
-        base_name = f"{radar_id}_{variable}_{timestamp}_elev{sweep}"
-        sweep_dir = output_dir / variable / base_name
+        # Estructura: output_radar/{radar_id}/{variable}/{timestamp}_elev{sweep}/
+        sweep_dir = output_dir / radar_id / variable / f"{timestamp}_elev{sweep}"
         sweep_dir.mkdir(parents=True, exist_ok=True)
 
         grid = radar_to_grid(radar, sweep=sweep, resolution=GRID_RESOLUTION)
 
-        geotiff_path = sweep_dir / f"{base_name}.tif"
+        geotiff_path = sweep_dir / f"{radar_id}_{variable}_{timestamp}_elev{sweep}.tif"
         grid_to_rgba_geotiff(grid, geotiff_path, field_name, variable)
 
         tiles_path = sweep_dir / "tiles"
@@ -258,12 +258,39 @@ def process_radar_file(filepath: str, output_dir: Path, sweeps: list = [0, 1, 2]
 def process_all_radar_files(
     pattern: str = "RMA*.H5", output_dir: Path = OUTPUT_DIR, max_workers: int = None
 ):
-    """Procesa todos los archivos H5 que coincidan con el patrón en paralelo."""
-    files = sorted(glob.glob(pattern))
-    print(f"Encontrados {len(files)} archivos: {files}")
+    """Procesa todos los archivos H5 que coincidan con el patrón en paralelo.
+    
+    Filtra archivos según el volumen:
+    - VRAD: solo volumen 02 (_02_VRAD_)
+    - Otras variables (DBZH, ZDR, RHOHV, KDP): solo volumen 01 (_01_)
+    """
+    all_files = sorted(glob.glob(pattern))
+    print(f"Archivos encontrados: {len(all_files)}")
+    
+    # Filtrar archivos según el volumen y variable
+    files = []
+    for filepath in all_files:
+        filename = Path(filepath).stem
+        parts = filename.split("_")
+        
+        if len(parts) >= 4:
+            volume = parts[1]  # 0315
+            subvolume = parts[2]  # 01 o 02
+            variable = parts[3]  # DBZH, ZDR, RHOHV, KDP, VRAD
+            
+            if variable == "VRAD" and subvolume == "02":
+                files.append(filepath)
+                print(f"  ✓ {filename} (VRAD del volumen 02)")
+            elif variable != "VRAD" and subvolume == "01":
+                files.append(filepath)
+                print(f"  ✓ {filename} ({variable} del volumen 01)")
+            else:
+                print(f"  ✗ {filename} (ignorado: {variable} en volumen {subvolume})")
+    
+    print(f"\nArchivos seleccionados para procesar: {len(files)}\n")
 
     if max_workers is None:
-        max_workers = max(1, multiprocessing.cpu_count() - 1)
+        max_workers = max(2, multiprocessing.cpu_count() // 2)
 
     print(f"Procesando con {max_workers} archivos en paralelo\n")
 
@@ -287,5 +314,8 @@ def process_all_radar_files(
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Procesar todos los archivos H5 en el directorio
-    process_all_radar_files()
+    import os
+    data_dir = "/data" if os.path.exists("/data") else "."
+    pattern = f"{data_dir}/RMA*.H5"
+    
+    process_all_radar_files(pattern=pattern)

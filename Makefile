@@ -1,7 +1,7 @@
 # Makefile for managing the Data Service application
 
 # Declare phony targets to avoid conflicts with files of the same name
-.PHONY: up down test clean prod
+.PHONY: up down test clean prod radar-build radar-run
 
 up:
 	docker compose -f docker-compose-dev.yaml up --build
@@ -20,3 +20,13 @@ clean:
 	docker volume rm tiles-processor_minio_data || true
 	docker volume rm tiles-processor_minio_dev_data || true
 	docker volume rm tiles-processor_tiles_data || true
+
+radar-build:
+	docker build -f Dockerfile.script -t radar-tiles-processor .
+
+radar-run:
+	mkdir -p output_radar
+	docker run --rm \
+		-v $(PWD):/data:ro \
+		-v $(PWD)/output_radar:/app/output_radar \
+		radar-tiles-processor
