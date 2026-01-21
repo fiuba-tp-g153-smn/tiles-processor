@@ -11,10 +11,10 @@ from clients.s3_client import S3Client
 
 
 class TestS3ClientDownloadFile:
-    """Tests for S3Client.download_file method."""
+    """Tests for S3Client.download_single_file method."""
 
     @pytest.mark.asyncio
-    async def test_download_file_success(self):
+    async def test_download_single_file_success(self):
         """Test successful file download on first attempt."""
         client = S3Client(bucket_name="test-bucket")
         mock_s3_client = AsyncMock()
@@ -29,16 +29,22 @@ class TestS3ClientDownloadFile:
 
         mock_s3_client.get_object = AsyncMock(return_value={"Body": mock_body})
 
-        result = await client.download_file(mock_s3_client, "path/to/file.nc")
+        # Mock the session.client context manager
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_s3_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
 
-        assert result[0] == "path/to/file.nc"
-        assert result[1] == b"file content"
+        with patch.object(client, "_session") as mock_session:
+            mock_session.client.return_value = mock_ctx
+            result = await client.download_single_file("path/to/file.nc")
+
+        assert result == b"file content"
         mock_s3_client.get_object.assert_called_once_with(
             Bucket="test-bucket", Key="path/to/file.nc"
         )
 
     @pytest.mark.asyncio
-    async def test_download_file_retry_then_success(self):
+    async def test_download_single_file_retry_then_success(self):
         """Test retry logic: fail twice, succeed on third attempt."""
         client = S3Client(bucket_name="test-bucket")
         mock_s3_client = AsyncMock()
@@ -59,15 +65,21 @@ class TestS3ClientDownloadFile:
             ]
         )
 
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await client.download_file(mock_s3_client, "file.nc", retries=3)
+        # Mock the session.client context manager
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_s3_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
 
-        assert result[0] == "file.nc"
-        assert result[1] == b"success content"
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with patch.object(client, "_session") as mock_session:
+                mock_session.client.return_value = mock_ctx
+                result = await client.download_single_file("file.nc", retries=3)
+
+        assert result == b"success content"
         assert mock_s3_client.get_object.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_download_file_exhausts_retries(self):
+    async def test_download_single_file_exhausts_retries(self):
         """Test that exhausting all retries returns None for content."""
         client = S3Client(bucket_name="test-bucket")
         mock_s3_client = AsyncMock()
@@ -77,15 +89,21 @@ class TestS3ClientDownloadFile:
             side_effect=Exception("Persistent failure")
         )
 
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await client.download_file(mock_s3_client, "file.nc", retries=3)
+        # Mock the session.client context manager
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_s3_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
 
-        assert result[0] == "file.nc"
-        assert result[1] is None
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with patch.object(client, "_session") as mock_session:
+                mock_session.client.return_value = mock_ctx
+                result = await client.download_single_file("file.nc", retries=3)
+
+        assert result is None
         assert mock_s3_client.get_object.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_download_file_respects_semaphore(self):
+    async def test_download_single_file_respects_semaphore(self):
         """Test that semaphore limits concurrent downloads."""
         client = S3Client(bucket_name="test-bucket", max_concurrent_downloads=2)
         mock_s3_client = AsyncMock()
@@ -112,9 +130,16 @@ class TestS3ClientDownloadFile:
 
         mock_s3_client.get_object = mock_get_object
 
-        # Launch 5 concurrent downloads
-        tasks = [client.download_file(mock_s3_client, f"file{i}.nc") for i in range(5)]
-        await asyncio.gather(*tasks)
+        # Mock the session.client context manager
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_s3_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(client, "_session") as mock_session:
+            mock_session.client.return_value = mock_ctx
+            # Launch 5 concurrent downloads
+            tasks = [client.download_single_file(f"file{i}.nc") for i in range(5)]
+            await asyncio.gather(*tasks)
 
         assert max_concurrent <= 2
 

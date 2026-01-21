@@ -2,7 +2,7 @@
 Integration tests for the tiles-processor pipeline.
 
 These tests verify the full processing pipeline with mocked external dependencies
-(S3, subprocess for gdal2tiles) to ensure components work together correctly.
+(RabbitMQ, S3, subprocess for gdal2tiles) to ensure components work together correctly.
 """
 
 import asyncio
@@ -18,9 +18,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 import pytest
 import numpy as np
-from scheduler import _get_directory_size
 from config import Config
 import logging
+from worker.worker import Worker
+from models.work_unit import WorkUnit, WorkUnitPaths, Stage
+from models.band_config import BandConfig
 
 logger = logging.getLogger(__name__)
 
@@ -62,100 +64,134 @@ def env_vars(tmp_path):
     }
 
 
-async def run_job_async(config: Config, job_cls, job_name):
-    """Async helper to mimic scheduler.run_job for tests."""
-    tmp_path = Path(config.TMP_DIR)
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    current_size = _get_directory_size(tmp_path)
+class TestWorkerIntegration:
+    """Integration tests for the Worker-based processing system."""
 
-    if current_size > config.MAX_TMP_DIR_SIZE_BYTES:
-        logger.error(
-            "Job %s skipped: temp directory size exceeds limit",
-            job_name,
-        )
-        return
+    @pytest.fixture
+    def mock_rabbitmq(self):
+        return MagicMock()
 
-    try:
-        job = job_cls()
-        await job.run()
-    except Exception:
-        logger.exception("Job %s failed", job_name)
+    @pytest.fixture
+    def mock_tracker(self):
+        return MagicMock()
 
-
-class TestSchedulerIntegration:
-    """Integration tests for the APScheduler-based job system."""
-
-    @pytest.mark.asyncio
-    async def test_job_runner_executes_job(self, temp_settings_file, env_vars):
-        """Test that job runner properly instantiates and executes a job."""
-
-        processed_jobs = []
-
-        # Create a mock job class
-        class MockJob:
-            async def run(self):
-                processed_jobs.append("MockJob executed")
-
-        MockJob.__name__ = "MockJob"
-
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            config = Config(settings_path=temp_settings_file)
-
-            # Execute the runner
-            await run_job_async(config, MockJob, "mock_job")
-
-        # Verify job was processed
-        assert len(processed_jobs) == 1
-        assert processed_jobs[0] == "MockJob executed"
-
-    @pytest.mark.asyncio
-    async def test_job_runner_prevents_execution_when_disk_full(
-        self, temp_settings_file, env_vars
+    def test_worker_processes_message_successfully(
+        self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
     ):
-        """Test that job runner skips execution when disk limit exceeded."""
-
-        execution_log = []
-
-        class MockJob:
-            async def run(self):
-                execution_log.append("should_not_run")
-
-        MockJob.__name__ = "MockJob"
+        """Test that worker processes a work unit and publishes the next stage."""
 
         with mock.patch.dict(os.environ, env_vars, clear=True):
             config = Config(settings_path=temp_settings_file)
-            # Override max size to be very small
-            config.MAX_TMP_DIR_SIZE_BYTES = 1000
 
-            # Simulate disk full by creating a file larger than the limit
-            tmp_dir = Path(config.TMP_DIR)
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            (tmp_dir / "large_file.bin").write_bytes(b"x" * 2000)
+            worker = Worker(config, mock_rabbitmq, mock_tracker)
 
-            await run_job_async(config, MockJob, "mock_job")
+            # Create a mock handler for the DOWNLOAD stage
+            mock_handler = AsyncMock()
 
-        # Job should not have run
-        assert execution_log == []
+            # Setup the handler to return a modified work unit (as if download finished)
+            async def mock_handle(work_unit):
+                work_unit.paths.downloaded_file = "/tmp/downloaded.nc"
+                return work_unit
 
-    @pytest.mark.asyncio
-    async def test_job_runner_handles_failure_gracefully(
-        self, temp_settings_file, env_vars
+            mock_handler.handle.side_effect = mock_handle
+
+            # Initialize loop for the worker manually since we are not calling start()
+            worker._loop = asyncio.new_event_loop()
+
+            # Inject the mock handler
+            worker._handlers[Stage.DOWNLOAD] = mock_handler
+
+            # Create a test work unit
+            work_unit = WorkUnit.create_download_work_unit(
+                source_s3_uri="s3://bucket/test_image.nc",
+                band_id="band_13",
+                bounds=config.get_bounds(),
+            )
+
+            # Process the message
+            result = worker._process_message(work_unit, mock_rabbitmq, 1)
+
+            # Verify acknowledgemenet
+            assert result is True
+
+            # Verify handler was called
+            mock_handler.handle.assert_called_once()
+
+            # Verify next stage was published (DOWNLOAD -> PROCESS)
+            assert mock_rabbitmq.publish.call_count == 1
+            published_unit = mock_rabbitmq.publish.call_args[0][0]
+            assert published_unit.stage == Stage.PROCESS
+            assert published_unit.paths.downloaded_file == "/tmp/downloaded.nc"
+
+    def test_worker_handles_failure_and_retries(
+        self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
     ):
-        """Test that a failing job doesn't crash the runner."""
-
-        class FailingJob:
-            async def run(self):
-                raise Exception("Intentional failure")
-
-        FailingJob.__name__ = "FailingJob"
+        """Test that worker retries on failure."""
 
         with mock.patch.dict(os.environ, env_vars, clear=True):
             config = Config(settings_path=temp_settings_file)
+            worker = Worker(config, mock_rabbitmq, mock_tracker)
 
-            # Should not raise, just log the error
-            await run_job_async(
-                config, FailingJob, "failing_job"
-            )  # Should complete without raising
+            # Mock handler to raise exception
+            mock_handler = AsyncMock()
+            mock_handler.handle.side_effect = Exception("Download failed")
+            worker._handlers[Stage.DOWNLOAD] = mock_handler
+
+            # Initialize loop
+            worker._loop = asyncio.new_event_loop()
+
+            # Create work unit
+            work_unit = WorkUnit.create_download_work_unit(
+                source_s3_uri="s3://bucket/test_image.nc",
+                band_id="band_13",
+                bounds=config.get_bounds(),
+            )
+
+            # Process
+            result = worker._process_message(work_unit, mock_rabbitmq, 1)
+
+            # Should still acknowledge (to remove original message)
+            assert result is True
+
+            # Should publish retry
+            assert mock_rabbitmq.publish.call_count == 1
+            retry_unit = mock_rabbitmq.publish.call_args[0][0]
+            assert retry_unit.retry_count == 1
+
+    def test_worker_sends_to_dlq_after_max_retries(
+        self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
+    ):
+        """Test that worker sends to DLQ after max retries."""
+
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            worker = Worker(config, mock_rabbitmq, mock_tracker)
+
+            # Mock handler to raise exception
+            mock_handler = AsyncMock()
+            mock_handler.handle.side_effect = Exception("Persistent failure")
+            worker._handlers[Stage.DOWNLOAD] = mock_handler
+
+            # Initialize loop
+            worker._loop = asyncio.new_event_loop()
+
+            # Create work unit with max retries reached
+            work_unit = WorkUnit.create_download_work_unit(
+                source_s3_uri="s3://bucket/test_image.nc",
+                band_id="band_13",
+                bounds=config.get_bounds(),
+            )
+            work_unit.retry_count = 3
+            work_unit.max_retries = 3
+
+            # Process
+            result = worker._process_message(work_unit, mock_rabbitmq, 1)
+
+            # Should not publish retry
+            mock_rabbitmq.publish.assert_not_called()
+
+            # Should send to DLQ
+            mock_rabbitmq.publish_to_dlq.assert_called_once()
 
 
 class TestPipelineIntegration:
@@ -288,62 +324,6 @@ class TestPipelineIntegration:
             assert content == mock_netcdf_content
 
 
-class TestEndToEndMocked:
-    """End-to-end tests with fully mocked external dependencies."""
-
-    @pytest.mark.asyncio
-    async def test_full_job_execution_mocked(
-        self, tmp_path, temp_settings_file, env_vars
-    ):
-        """Test complete job execution with all external deps mocked."""
-
-        # Track what gets called
-        execution_log = []
-
-        class MockProcessJob:
-            async def run(self):
-                execution_log.append("job_started")
-                # Simulate some async work
-                await asyncio.sleep(0.01)
-                execution_log.append("job_completed")
-
-        MockProcessJob.__name__ = "MockProcessJob"
-
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            config = Config(settings_path=temp_settings_file)
-            await run_job_async(config, MockProcessJob, "mock_process")
-
-        assert execution_log == ["job_started", "job_completed"]
-
-    @pytest.mark.asyncio
-    async def test_job_cancelled_when_tmp_dir_full(
-        self, tmp_path, temp_settings_file, env_vars
-    ):
-        """Test that jobs are skipped when tmp directory exceeds limit."""
-
-        execution_log = []
-
-        class MockProcessJob:
-            async def run(self):
-                execution_log.append("should_not_run")
-
-        MockProcessJob.__name__ = "MockProcessJob"
-
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            config = Config(settings_path=temp_settings_file)
-            config.MAX_TMP_DIR_SIZE_BYTES = 1000
-
-            # Create a file larger than the limit
-            tmp_dir = Path(config.TMP_DIR)
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            (tmp_dir / "large_file.bin").write_bytes(b"x" * 2000)
-
-            await run_job_async(config, MockProcessJob, "mock_process")
-
-        # Job should not have run
-        assert execution_log == []
-
-
 class TestConfigIntegration:
     """Integration tests for configuration loading."""
 
@@ -366,19 +346,3 @@ class TestConfigIntegration:
             assert all(
                 key in default_bounds for key in ["minx", "miny", "maxx", "maxy"]
             )
-
-    def test_cron_schedules_are_validated(self, temp_settings_file, env_vars):
-        """Test that CRON schedules in config are valid."""
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            config = Config(settings_path=temp_settings_file)
-
-            # These should not raise - they were validated at init time
-            schedules = config.get_job_schedules()
-
-            assert "process_band_13" in schedules
-            assert "process_band_9" in schedules
-
-            # Verify they're non-empty strings
-            for job_name, cron_expr in schedules.items():
-                assert isinstance(cron_expr, str)
-                assert len(cron_expr) > 0
