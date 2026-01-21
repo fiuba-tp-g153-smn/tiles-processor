@@ -13,11 +13,7 @@ from models.stage import Stage
 from models.work_unit import WorkUnit
 from worker.stage_handlers.base_handler import BaseStageHandler
 from worker.stage_handlers.download_handler import DownloadHandler
-from worker.stage_handlers.georeference_handler import GeoreferenceHandler
-from worker.stage_handlers.brightness_handler import BrightnessTemperatureHandler
-from worker.stage_handlers.geotiff_handler import GeoTIFFHandler
-from worker.stage_handlers.tiles_upload_handler import TilesUploadHandler
-from worker.stage_handlers.cleanup_handler import CleanupHandler
+from worker.stage_handlers.process_handler import ProcessHandler
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +33,7 @@ class Worker:
 
     Stage Handlers:
         - DOWNLOAD: DownloadHandler
-        - GEOREFERENCE: GeoreferenceHandler
-        - BRIGHTNESS_TEMPERATURE: BrightnessTemperatureHandler
-        - GEOTIFF: GeoTIFFHandler
-        - TILES_AND_UPLOAD: TilesUploadHandler
-        - CLEANUP: CleanupHandler
+        - PROCESS: ProcessHandler
 
     Error Handling:
         - Transient errors: Retry up to max_retries times
@@ -52,11 +44,7 @@ class Worker:
     # Map stages to handler classes
     HANDLER_MAP: Dict[Stage, Type[BaseStageHandler]] = {
         Stage.DOWNLOAD: DownloadHandler,
-        Stage.GEOREFERENCE: GeoreferenceHandler,
-        Stage.BRIGHTNESS_TEMPERATURE: BrightnessTemperatureHandler,
-        Stage.GEOTIFF: GeoTIFFHandler,
-        Stage.TILES_AND_UPLOAD: TilesUploadHandler,
-        Stage.CLEANUP: CleanupHandler,
+        Stage.PROCESS: ProcessHandler,
     }
 
     def __init__(self, config: Config, rabbitmq_client: RabbitMQClient):

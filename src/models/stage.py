@@ -9,32 +9,21 @@ class Stage(Enum):
     Processing stages for satellite image processing pipeline.
 
     Each stage represents a discrete unit of work that can be
-    processed independently by a worker. Stages are executed
-    sequentially, with each stage producing output that becomes
-    input for the next stage.
+    processed independently by a worker.
 
     Stage Flow:
-        DOWNLOAD -> GEOREFERENCE -> BRIGHTNESS_TEMPERATURE ->
-        GEOTIFF -> TILES_AND_UPLOAD -> CLEANUP -> (complete)
+        DOWNLOAD -> PROCESS -> (complete)
     """
 
     DOWNLOAD = "DOWNLOAD"
-    GEOREFERENCE = "GEOREFERENCE"
-    BRIGHTNESS_TEMPERATURE = "BRIGHTNESS_TEMPERATURE"
-    GEOTIFF = "GEOTIFF"
-    TILES_AND_UPLOAD = "TILES_AND_UPLOAD"
-    CLEANUP = "CLEANUP"
+    PROCESS = "PROCESS"
 
     @property
     def stage_number(self) -> int:
-        """Return the numeric order of this stage (1-6)."""
+        """Return the numeric order of this stage (1-2)."""
         order = {
             Stage.DOWNLOAD: 1,
-            Stage.GEOREFERENCE: 2,
-            Stage.BRIGHTNESS_TEMPERATURE: 3,
-            Stage.GEOTIFF: 4,
-            Stage.TILES_AND_UPLOAD: 5,
-            Stage.CLEANUP: 6,
+            Stage.PROCESS: 2,
         }
         return order[self]
 
@@ -42,12 +31,8 @@ class Stage(Enum):
     def next_stage(self) -> Optional["Stage"]:
         """Return the next stage in the pipeline, or None if this is the last stage."""
         transitions = {
-            Stage.DOWNLOAD: Stage.GEOREFERENCE,
-            Stage.GEOREFERENCE: Stage.BRIGHTNESS_TEMPERATURE,
-            Stage.BRIGHTNESS_TEMPERATURE: Stage.GEOTIFF,
-            Stage.GEOTIFF: Stage.TILES_AND_UPLOAD,
-            Stage.TILES_AND_UPLOAD: Stage.CLEANUP,
-            Stage.CLEANUP: None,
+            Stage.DOWNLOAD: Stage.PROCESS,
+            Stage.PROCESS: None,
         }
         return transitions[self]
 

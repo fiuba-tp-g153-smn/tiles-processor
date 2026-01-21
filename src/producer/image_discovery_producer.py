@@ -41,7 +41,7 @@ class ImageDiscoveryProducer:
     """
 
     # Number of images to process per band (4 hours at 10-min intervals)
-    TARGET_IMAGES = 24
+    TARGET_IMAGES = 26
 
     # How many hours back to search for images
     MAX_HOURS_BACK = 5

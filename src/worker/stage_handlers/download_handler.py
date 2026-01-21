@@ -61,6 +61,6 @@ class DownloadHandler(BaseStageHandler):
         logger.info(f"[DOWNLOAD] Saved to {local_path}")
 
         # Update work unit with the local path
-        work_unit.paths.local_netcdf = str(local_path)
+        work_unit.paths.downloaded_file = str(local_path)
 
         return work_unit

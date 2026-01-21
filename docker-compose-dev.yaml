@@ -10,7 +10,7 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq_dev_data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 5s
@@ -89,7 +89,7 @@ services:
       dockerfile: Dockerfile
     command: python3 src/main.py producer
     volumes:
-      - tiles_data:/app/data
+      - ./data:${DATA_DIR}
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
@@ -119,7 +119,7 @@ services:
       dockerfile: Dockerfile
     command: python3 src/main.py worker
     volumes:
-      - tiles_data:/app/data
+      - ./data:${DATA_DIR}
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}

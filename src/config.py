@@ -14,8 +14,8 @@ class Config:
 
         # Environment variables
         self.LOG_LEVEL: str = self._get_required_env("LOG_LEVEL").upper()
-        data_dir = Path(self._get_required_env("DATA_DIR"))
-        self.TMP_DIR: str = str(data_dir / "tmp")
+        self.DATA_DIR: str = self._get_required_env("DATA_DIR")
+        self.TMP_DIR: str = str(Path(self.DATA_DIR) / "tmp")
 
         # S3 Configuration
         self.S3_TILES_DATA_ENDPOINT: str = self._get_required_env(
@@ -94,6 +94,7 @@ class Config:
         logger.info(f"TIMEZONE: {self.TIMEZONE}")
         logger.info(f"ENABLE_BAND_13: {self.ENABLE_BAND_13}")
         logger.info(f"ENABLE_BAND_9: {self.ENABLE_BAND_9}")
+        logger.info(f"DATA_DIR: {self.DATA_DIR}")
         logger.info(f"TMP_DIR: {self.TMP_DIR}")
         logger.info(f"MAX_TMP_DIR_SIZE_BYTES: {self.MAX_TMP_DIR_SIZE_BYTES}")
         logger.info(f"BOUNDS_MINX: {self.BOUNDS_MINX}")
