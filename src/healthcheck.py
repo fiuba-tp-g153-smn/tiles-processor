@@ -10,16 +10,15 @@ from logging_config import setup_logging
 """
 Application Health Check Script.
 
-This script verifies the system's health by checking the freshness of a sentinel file.
+This script verifies the worker's health by checking the freshness of a sentinel file.
 
 HOW IT WORKS:
-1. The Scheduler runs a `HeartbeatJob` periodically (e.g., every 1 minute).
-2. The `HeartbeatJob` updates the modification time (mtime) of /tmp/healthy.
-3. This script runs periodically (via Docker HEALTHCHECK) to inspect that file.
+1. The Worker updates the heartbeat file after processing each message.
+2. This script runs periodically (via Docker HEALTHCHECK) to inspect that file.
 
 LOGIC:
-- If /tmp/healthy is missing: UNHEALTHY (Scheduler never started?)
-- If /tmp/healthy is older than MAX_DELAY_SECONDS: UNHEALTHY (Scheduler stuck?)
+- If /tmp/healthy is missing: UNHEALTHY (Worker never started?)
+- If /tmp/healthy is older than MAX_DELAY_SECONDS: UNHEALTHY (Worker stuck?)
 - If /tmp/healthy is fresh: HEALTHY
 
 EXIT CODES:
@@ -27,9 +26,10 @@ EXIT CODES:
 - 1: Unhealthy
 """
 
-# Maximum age of the heartbeat file in seconds (e.g., 2 minutes)
-# Logic: Scheduler runs job every 1 min. If > 2 min, something is stuck.
-MAX_DELAY_SECONDS = 120
+# Maximum age of the heartbeat file in seconds
+# Workers should update this after each processed message
+# Allow 5 minutes since satellite images take time to process
+MAX_DELAY_SECONDS = 300
 HEALTH_FILE = Path("/app/data/tmp/healthy")
 
 EXIT_ERROR_CODE = 1
