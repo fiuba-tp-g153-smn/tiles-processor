@@ -171,7 +171,7 @@ class GoesProcessor(ImageProcessor):
             )
 
             total_count = len(tileset_prefixes)
-            retention_count = 23
+            retention_count = 26
 
             if total_count <= retention_count:
                 logger.debug(
