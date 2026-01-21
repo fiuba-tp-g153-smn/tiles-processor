@@ -23,58 +23,34 @@ This project is a Python-based scheduler application designed to process GOES-19
 - **Dockerized**: Fully containerized environment for easy deployment.
 - **Scheduler**: Uses `APScheduler` for precise job scheduling (cron-based).
 
-## Processing Pipeline
+## Processing Architecture
 
-Each job (Band 13 and Band 9) follows this processing pipeline:
+The system uses a robust queue-based architecture powered by **RabbitMQ** to manage high-volume satellite data processing. Reliability and scalability are achieved through a producer-worker pattern.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              JOB EXECUTION FLOW                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+![Queuing System Architecture](docs/imgs/queue_system.png)
 
-1. DOWNLOAD (S3Client)
-   │  Downloads 24 images from NOAA's noaa-goes19 bucket
-   │  Pattern: ABI-L1b-RadF/{YYYY}/{DDD}/{HH}/...C13_G19... (or C09_G19)
-   │  Goes back up to 5 hours to find 24 files (4 hours of data)
-   │  [OPTIMIZATION] Checks local cache & existing tiles first
-   │  Returns: Dict[filename, bytes] (skips files where tiles exist)
-   │
-   ▼
-2. GEOREFERENCE (SetupGOESGeorreferencingService)
-   │  - Opens NetCDF files from bytes (h5netcdf engine)
-   │  - Extracts GOES satellite projection metadata
-   │  - Applies coordinate transformation (x,y → geostationary coords)
-   │  - Sets CRS from goes_imager_projection attributes
-   │  Returns: Dict[filename, xr.Dataset]
-   │
-   ▼
-3. BRIGHTNESS TEMPERATURE (ComputeBrightnessTemperaturesService)
-   │  - Extracts radiance data ("Rad" variable)
-   │  - Reads Planck constants (fk1, fk2, bc1, bc2) from file
-   │  - Applies Planck equation: T = (fk2 / ln((fk1/L) + 1) - bc1) / bc2
-   │  - Filters non-physical values (keeps 150K-350K only)
-   │  Returns: Dict[filename, xr.DataArray]  (temperature in Kelvin)
-   │
-   ▼
-4. GEOTIFF GENERATION (GenerateGeoTIFFFilesService)
-   │  - Reprojects to EPSG:4326 (lat/lon)
-   │  - Clips to configured bounds (default: Argentina region)
-   │  - Normalizes temperature to color palette (0-255)
-   │  - Creates RGBA GeoTIFF with transparency for NaN
-   │  Output: .tmp/band_{N}/geotiff/{original_filename}.tif
-   │
-   ▼
-5. TILE GENERATION (GenerateTilesService)
-   │  - Runs gdal2tiles.py for each GeoTIFF
-   │  - Generates XYZ tiles (zoom 3-7, WEBP format, Leaflet-compatible)
-   │  Output: .tmp/band_{N}/tiles/{original_filename}_tiles/{z}/{x}/{y}.webp
-   │
-   ▼
-6. S3 UPLOAD (MinioUploadClient)
-      - Uploads generated tiles to MinIO S3 bucket
-      - Uses same directory structure as local storage
-      S3 Key: {bucket}/band_{N}/tiles/{original_filename}_tiles/{z}/{x}/{y}.webp
-```
+### Workflow
+
+1.  **Discovery (Producer)**
+    - Runs on a cron schedule.
+    - Scans NOAA's S3 bucket for the latest images.
+    - Checks MinIO to skip already processed images.
+    - Publishes `DOWNLOAD` tasks to the RabbitMQ `tiles_work_queue`.
+
+2.  **Download Stage (Worker)**
+    - A worker picks up a `DOWNLOAD` task.
+    - Downloads the raw NetCDF file from NOAA to a local shared volume.
+    - Publishes a new `PROCESS` task to the queue with the path to the downloaded file.
+
+3.  **Process Stage (Worker)**
+    - A worker picks up a `PROCESS` task.
+    - Executes the synchronous processing pipeline:
+        1.  **Georeference**: Applies projection correction to the raw data.
+        2.  **Brightness Temp**: Converts radiance to brightness temperature (Kelvin).
+        3.  **GeoTIFF**: Generates a colorized GeoTIFF (EPSG:4326).
+        4.  **Tile Generation**: Runs `gdal2tiles` to create XYZ Protocol map tiles.
+        5.  **Upload**: Uploads the generated tiles to MinIO.
+        6.  **Cleanup**: Deletes local temporary files and enforces retention policy (keeps last 26 sets).
 
 ### Band Specifications
 

@@ -1,0 +1,36 @@
+graph TD
+    subgraph Producer System
+        Cron[Cron Schedule] -->|Triggers| IDP[Image Discovery Producer]
+        IDP -->|1. List & Filter| NOAA[NOAA S3]
+        IDP -->|2. Check Exists| MinIO[MinIO S3]
+        IDP -->|3. Check In-Progress| DB[(SQLite Tracker)]
+        IDP -->|4. Publish| Q[RabbitMQ: tiles_work_queue]
+    end
+
+    subgraph Worker System
+        Q -->|Consume| Worker[Worker Service]
+        Worker -->|Dispatch| Router{Stage?}
+        
+        Router -->|DOWNLOAD| DL[Download Handler]
+        Router -->|PROCESS| PH[Process Handler]
+        
+        subgraph Stage 1: Download
+            DL -->|Download| LocalFile[Local NetCDF]
+            DL -->|Publish Next| Q
+        end
+
+        subgraph Stage 2: Process Pipeline
+            PH -->|Delegate| GP[GoesProcessor]
+            GP -->|Step 1| Georef[Georeferencing]
+            Georef -->|Step 2| BT[Brightness Temp]
+            BT -->|Step 3| GT[GeoTIFF Gen]
+            GT -->|Step 4| Tiles[Tile Gen gdal2tiles]
+            Tiles -->|Step 5| Upload[Upload to MinIO]
+            Upload -->|Step 6| Retention[Enforce Retention]
+            Retention -->|Cleanup| Done[Mark Complete]
+        end
+    end
+
+    style Q fill:#f9f,stroke:#333,stroke-width:2px
+    style IDP fill:#bbf,stroke:#333
+    style Worker fill:#bbf,stroke:#333
