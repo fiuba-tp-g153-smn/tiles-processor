@@ -55,8 +55,7 @@ class TestConfig:
             config = Config(settings_path=temp_settings_file)
 
             assert config.TIMEZONE == "UTC"
-            assert config.BAND_13_SCHEDULE_CRON == "*/10 * * * *"
-            assert config.BAND_9_SCHEDULE_CRON == "0 * * * *"
+            assert config.TIMEZONE == "UTC"
             assert config.ENABLE_BAND_13 is True
             assert config.ENABLE_BAND_9 is False
             assert config.BOUNDS_MINX == -90.0
@@ -71,7 +70,7 @@ class TestConfig:
 
             assert config.LOG_LEVEL == "DEBUG"
             assert config.TMP_DIR == "/tmp/test/tmp"
-            assert config.SCHEDULER_DB_PATH == "/tmp/test/scheduler/jobs.db"
+            assert config.TMP_DIR == "/tmp/test/tmp"
 
     def test_config_raises_on_missing_env_var(self, temp_settings_file):
         """Test that Config raises ValueError when required env var is missing."""
@@ -108,123 +107,3 @@ class TestConfig:
                 "maxx": -30.0,
                 "maxy": -15.0,
             }
-
-    def test_get_job_schedules_returns_dict(self, temp_settings_file, env_vars):
-        """Test that get_job_schedules returns correct dictionary."""
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            config = Config(settings_path=temp_settings_file)
-            schedules = config.get_job_schedules()
-
-            assert schedules == {
-                "process_band_13": "*/10 * * * *",
-                "process_band_9": "0 * * * *",
-                "heartbeat": "* * * * *",
-            }
-
-
-class TestValidateCronExpression:
-    """Tests for CRON expression validation."""
-
-    @pytest.fixture
-    def temp_settings_file(self, tmp_path):
-        """Create a temporary settings.json with valid cron."""
-        settings = {
-            "timezone": "UTC",
-            "scheduler": {"band_13_cron": "*/10 * * * *", "band_9_cron": "0 * * * *"},
-            "features": {"enable_band_13": True, "enable_band_9": True},
-            "bounds": {"minx": -90.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
-        }
-        settings_path = tmp_path / "settings.json"
-        settings_path.write_text(json.dumps(settings))
-        return settings_path
-
-    @pytest.fixture
-    def env_vars(self):
-        return {
-            "LOG_LEVEL": "INFO",
-            "DATA_DIR": "/tmp/test",
-            "S3_TILES_DATA_ENDPOINT": "minio:9000",
-            "S3_TILES_DATA_TILES_PROCESSOR_USER": "minioadmin",
-            "S3_TILES_DATA_TILES_PROCESSOR_PASSWORD": "minioadmin",
-        }
-
-    def test_valid_every_10_minutes(self, temp_settings_file, env_vars):
-        """Test valid expression: every 10 minutes."""
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            config = Config(settings_path=temp_settings_file)
-            assert config.BAND_13_SCHEDULE_CRON == "*/10 * * * *"
-
-    def test_valid_daily_at_9am(self, tmp_path, env_vars):
-        """Test valid expression: daily at 9:00."""
-        settings = {
-            "timezone": "UTC",
-            "scheduler": {"band_13_cron": "0 9 * * *", "band_9_cron": "0 9 * * *"},
-            "features": {"enable_band_13": True, "enable_band_9": True},
-            "bounds": {"minx": -90.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
-        }
-        settings_path = tmp_path / "settings.json"
-        settings_path.write_text(json.dumps(settings))
-
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            config = Config(settings_path=settings_path)
-            assert config.BAND_13_SCHEDULE_CRON == "0 9 * * *"
-
-    def test_valid_weekly_monday(self, tmp_path, env_vars):
-        """Test valid expression: every Monday at midnight."""
-        settings = {
-            "timezone": "UTC",
-            "scheduler": {"band_13_cron": "0 0 * * 1", "band_9_cron": "0 0 * * 1"},
-            "features": {"enable_band_13": True, "enable_band_9": True},
-            "bounds": {"minx": -90.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
-        }
-        settings_path = tmp_path / "settings.json"
-        settings_path.write_text(json.dumps(settings))
-
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            config = Config(settings_path=settings_path)
-            assert config.BAND_13_SCHEDULE_CRON == "0 0 * * 1"
-
-    def test_invalid_cron_raises_error(self, tmp_path, env_vars):
-        """Test that invalid CRON expression raises ValueError."""
-        settings = {
-            "timezone": "UTC",
-            "scheduler": {"band_13_cron": "invalid", "band_9_cron": "0 * * * *"},
-            "features": {"enable_band_13": True, "enable_band_9": True},
-            "bounds": {"minx": -90.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
-        }
-        settings_path = tmp_path / "settings.json"
-        settings_path.write_text(json.dumps(settings))
-
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises(ValueError, match="Invalid CRON expression"):
-                Config(settings_path=settings_path)
-
-    def test_invalid_too_few_fields(self, tmp_path, env_vars):
-        """Test that expression with too few fields raises ValueError."""
-        settings = {
-            "timezone": "UTC",
-            "scheduler": {"band_13_cron": "* * *", "band_9_cron": "0 * * * *"},
-            "features": {"enable_band_13": True, "enable_band_9": True},
-            "bounds": {"minx": -90.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
-        }
-        settings_path = tmp_path / "settings.json"
-        settings_path.write_text(json.dumps(settings))
-
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises(ValueError, match="Invalid CRON expression"):
-                Config(settings_path=settings_path)
-
-    def test_invalid_out_of_range_minute(self, tmp_path, env_vars):
-        """Test that invalid minute value raises ValueError."""
-        settings = {
-            "timezone": "UTC",
-            "scheduler": {"band_13_cron": "60 * * * *", "band_9_cron": "0 * * * *"},
-            "features": {"enable_band_13": True, "enable_band_9": True},
-            "bounds": {"minx": -90.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
-        }
-        settings_path = tmp_path / "settings.json"
-        settings_path.write_text(json.dumps(settings))
-
-        with mock.patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises(ValueError, match="Invalid CRON expression"):
-                Config(settings_path=settings_path)

@@ -1,132 +1,106 @@
-import asyncio
+"""
+Tiles Processor - Main Entry Point
+
+This application processes GOES-19 satellite imagery using a RabbitMQ work queue.
+
+Modes:
+    worker   - Start a worker that consumes and processes work units
+    producer - Run the producer once to discover new images and publish work units
+
+Usage:
+    python3 src/main.py worker    # Start a worker
+    python3 src/main.py producer  # Run producer once (for cron)
+
+The producer is designed to be run periodically (e.g., via cron or systemd timer)
+to discover new satellite images and publish work units to the queue.
+
+Workers run continuously, consuming work units and processing them through
+the satellite image processing pipeline.
+"""
+
 import logging
 import sys
-import signal
 
 from config import Config
 from logging_config import setup_logging
-from jobs.process_band_13_job import ProcessBand13Job
-from jobs.process_band_9_job import ProcessBand9Job
-from scheduler import start_scheduler
-from jobs.heartbeat_job import HeartbeatJob
-
-# Centralized job registry
-# Keys match the keys used in config.py for scheduling
-AVAILABLE_JOBS = {
-    "process_band_13": ProcessBand13Job,
-    "process_band_9": ProcessBand9Job,
-    "heartbeat": HeartbeatJob,
-}
 
 EXIT_ERROR_CODE = 1
 EXIT_SUCCESS_CODE = 0
 
 
-def get_enabled_jobs(config: Config, logger: logging.Logger) -> dict:
-    """Filter available jobs based on configuration settings."""
-    enabled_jobs = {}
-
-    # Heartbeat is always enabled
-    enabled_jobs["heartbeat"] = AVAILABLE_JOBS["heartbeat"]
-
-    if config.ENABLE_BAND_13:
-        enabled_jobs["process_band_13"] = AVAILABLE_JOBS["process_band_13"]
-    else:
-        logger.warning("Band 13 processing is DISABLED in config.")
-
-    if config.ENABLE_BAND_9:
-        enabled_jobs["process_band_9"] = AVAILABLE_JOBS["process_band_9"]
-    else:
-        logger.warning("Band 9 processing is DISABLED in config.")
-
-    return enabled_jobs
+def print_usage():
+    """Print usage information."""
+    print("Usage: python3 src/main.py <mode>")
+    print()
+    print("Modes:")
+    print("  worker   - Start a worker to process work units from the queue")
+    print("  producer - Run the producer to discover and publish new images")
+    print()
+    print("Examples:")
+    print("  python3 src/main.py worker    # Start a worker")
+    print("  python3 src/main.py producer  # Discover and publish new images")
 
 
-def get_scheduler_jobs(config: Config, logger: logging.Logger) -> dict | None:
-    logger.info("Starting scheduler mode for ALL jobs")
-    target_jobs = get_enabled_jobs(config, logger)
+def run_worker(config: Config) -> int:
+    """Start a worker that processes work units."""
+    logger = logging.getLogger(__name__)
+    logger.info("Starting worker mode...")
 
-    if not target_jobs:
-        logger.error("No jobs are enabled. Exiting.")
-        return None
-    return target_jobs
+    try:
+        from worker.worker import run_worker as start_worker
 
-
-def get_single_job(job_name: str, logger: logging.Logger) -> dict | None:
-    job_class = AVAILABLE_JOBS.get(job_name)
-    if not job_class:
-        logger.error(
-            f"Job '{job_name}' not found. Available jobs: {list(AVAILABLE_JOBS.keys())}"
-        )
-        return None
-
-    logger.info(f"Starting scheduler mode for SINGLE job: {job_name}")
-    target_jobs = {job_name: job_class}
-
-    # Always run heartbeat for healthchecks, even in single-job mode
-    if "heartbeat" in AVAILABLE_JOBS and job_name != "heartbeat":
-        target_jobs["heartbeat"] = AVAILABLE_JOBS["heartbeat"]
-
-    return target_jobs
+        start_worker(config)
+        return EXIT_SUCCESS_CODE
+    except Exception as e:
+        logger.exception(f"Worker failed: {e}")
+        return EXIT_ERROR_CODE
 
 
-def get_target_jobs(
-    config: Config, job_name: str, logger: logging.Logger
-) -> dict | None:
-    """Determine which jobs to run based on the job name argument.
+def run_producer(config: Config) -> int:
+    """Run the producer to discover and publish new images."""
+    logger = logging.getLogger(__name__)
+    logger.info("Starting producer mode...")
 
-    Returns None if no valid jobs are found or enabled.
-    """
-    if job_name == "scheduler":
-        return get_scheduler_jobs(config, logger)
+    try:
+        from producer.image_discovery_producer import run_producer as start_producer
 
-    return get_single_job(job_name, logger)
-
-
-def setup_signal_handlers(
-    loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event, logger: logging.Logger
-) -> None:
-    """Setup graceful shutdown signal handlers."""
-
-    def handle_signal(sig):
-        logger.info(f"Received exit signal {sig.name}...")
-        stop_event.set()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: handle_signal(s))
+        start_producer(config)
+        return EXIT_SUCCESS_CODE
+    except Exception as e:
+        logger.exception(f"Producer failed: {e}")
+        return EXIT_ERROR_CODE
 
 
-async def main() -> int:
-    # Setup logging first thing
+def main() -> int:
+    """Main entry point."""
+    # Parse command line
+    if len(sys.argv) < 2:
+        print_usage()
+        return EXIT_ERROR_CODE
+
+    mode = sys.argv[1].lower()
+
+    # Setup config and logging
     config = Config()
     setup_logging(config)
     logger = logging.getLogger(__name__)
 
     config.log_config()
 
-    if len(sys.argv) < 2:
-        logger.error("Usage: python3 ./src/main.py <job_name|scheduler>")
+    # Dispatch to appropriate mode
+    if mode == "worker":
+        return run_worker(config)
+    elif mode == "producer":
+        return run_producer(config)
+    else:
+        logger.error(f"Unknown mode: {mode}")
+        print_usage()
         return EXIT_ERROR_CODE
-
-    job_name = sys.argv[1]
-
-    target_jobs = get_target_jobs(config, job_name, logger)
-    if target_jobs is None:
-        return EXIT_ERROR_CODE
-
-    loop = asyncio.get_running_loop()
-    stop_event = asyncio.Event()
-
-    setup_signal_handlers(loop, stop_event, logger)
-
-    await start_scheduler(config, target_jobs, stop_event=stop_event)
-
-    return EXIT_SUCCESS_CODE
 
 
 if __name__ == "__main__":
     try:
-        exit_code = asyncio.run(main())
+        exit_code = main()
         sys.exit(exit_code)
     except KeyboardInterrupt:
         logger = logging.getLogger(__name__)

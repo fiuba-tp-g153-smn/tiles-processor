@@ -31,7 +31,7 @@ RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED
 # Re-generate lock file if it is outdated, then install all dependencies (except dev/test deps)
 # "--without dev": keep container smaller by skipping development deps
 # "--no-root": don't install this project as a package itself, we run code mounted in /app
-RUN (poetry check --lock || poetry lock --no-update) && poetry install --without dev --no-root --no-ansi
+RUN (poetry check --lock || poetry lock) && poetry install --without dev --no-root --no-ansi
 
 # Copy project source code
 COPY src/ ./src/

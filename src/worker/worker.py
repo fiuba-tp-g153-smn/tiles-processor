@@ -1,0 +1,229 @@
+"""Worker implementation for processing work units from RabbitMQ."""
+
+import asyncio
+import logging
+import signal
+from pathlib import Path
+from typing import Dict, Type, Optional
+
+from clients.rabbitmq_client import RabbitMQClient
+from clients.progress_tracker import ProgressTracker
+from config import Config
+from models.stage import Stage
+from models.work_unit import WorkUnit
+from worker.stage_handlers.base_handler import BaseStageHandler
+from worker.stage_handlers.download_handler import DownloadHandler
+from worker.stage_handlers.process_handler import ProcessHandler
+
+logger = logging.getLogger(__name__)
+
+# Healthcheck file path
+HEALTH_FILE = Path("/app/data/tmp/healthy")
+
+
+class Worker:
+    """
+    Worker that consumes work units from RabbitMQ and processes them.
+
+    The worker:
+    1. Connects to RabbitMQ and starts consuming from the work queue
+    2. Dispatches each work unit to the appropriate stage handler
+    3. On success, publishes the next stage work unit and acknowledges
+    4. On failure, either retries or sends to dead letter queue
+
+    Stage Handlers:
+        - DOWNLOAD: DownloadHandler
+        - PROCESS: ProcessHandler
+
+    Error Handling:
+        - Transient errors: Retry up to max_retries times
+        - Permanent errors: Send to dead letter queue
+        - Handler exceptions are caught and logged
+    """
+
+    # Map stages to handler classes
+    HANDLER_MAP: Dict[Stage, Type[BaseStageHandler]] = {
+        Stage.DOWNLOAD: DownloadHandler,
+        Stage.PROCESS: ProcessHandler,
+    }
+
+    def __init__(
+        self,
+        config: Config,
+        rabbitmq_client: RabbitMQClient,
+        progress_tracker: ProgressTracker,
+    ):
+        self._config = config
+        self._rabbitmq = rabbitmq_client
+        self._progress_tracker = progress_tracker
+        self._handlers: Dict[Stage, BaseStageHandler] = {}
+        self._running = True
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+        # Initialize handlers
+        self._handlers[Stage.DOWNLOAD] = DownloadHandler(config)
+        self._handlers[Stage.PROCESS] = ProcessHandler(config, progress_tracker)
+
+    def _update_heartbeat(self) -> None:
+        """Update the heartbeat file for health checks."""
+        try:
+            HEALTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+            HEALTH_FILE.touch()
+        except Exception as e:
+            logger.warning(f"Failed to update heartbeat file: {e}")
+
+    def start(self) -> None:
+        """
+        Start the worker.
+
+        This is a blocking call that runs until the worker is stopped.
+        Uses a single asyncio event loop for all async operations.
+        """
+        logger.info("Worker starting...")
+
+        # Create a single event loop for the worker's lifetime
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+
+        # Update heartbeat on startup
+        self._update_heartbeat()
+
+        # Set up signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
+        try:
+            # Start consuming (blocking)
+            self._rabbitmq.consume(
+                callback=self._process_message,
+                prefetch_count=1,
+            )
+        except KeyboardInterrupt:
+            logger.info("Worker interrupted by user")
+        finally:
+            self._shutdown()
+
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully."""
+        logger.info(f"Received signal {signum}, initiating shutdown...")
+        self._running = False
+        # The consume loop will exit on the next iteration
+
+    def _shutdown(self) -> None:
+        """Clean shutdown of the worker."""
+        logger.info("Worker shutting down...")
+        try:
+            self._rabbitmq.close()
+        except Exception as e:
+            logger.warning(f"Error closing RabbitMQ connection: {e}")
+
+        # Close the event loop
+        if self._loop and not self._loop.is_closed():
+            self._loop.close()
+
+        logger.info("Worker stopped")
+
+    def _process_message(
+        self, work_unit: WorkUnit, client: RabbitMQClient, delivery_tag: int
+    ) -> bool:
+        """
+        Process a single work unit message.
+
+        This is called by the RabbitMQ consumer for each message.
+        Returns True to acknowledge the message, False to reject it.
+
+        Args:
+            work_unit: The work unit to process
+            client: RabbitMQ client for publishing
+            delivery_tag: Message delivery tag for ack/nack
+
+        Returns:
+            True if message should be acknowledged
+        """
+        logger.info(f"Processing: {work_unit}")
+
+        try:
+            # Run the async handler in the shared event loop
+            updated_work_unit = self._loop.run_until_complete(
+                self._handle_work_unit(work_unit)
+            )
+
+            # Success - publish next stage if not terminal
+            if not updated_work_unit.is_terminal:
+                next_work_unit = updated_work_unit.create_next_stage()
+                if next_work_unit:
+                    client.publish(next_work_unit)
+                    logger.info(f"Published next stage: {next_work_unit}")
+            else:
+                logger.info(f"Completed terminal stage for {work_unit.image_id}")
+
+            # Update heartbeat after successful processing
+            self._update_heartbeat()
+
+            return True  # Acknowledge
+
+        except Exception as e:
+            logger.exception(f"Error processing {work_unit}: {e}")
+
+            # Check if we can retry
+            if work_unit.can_retry:
+                retry_unit = work_unit.create_retry()
+                logger.info(
+                    f"Retrying {work_unit} (attempt {retry_unit.retry_count}/{retry_unit.max_retries})"
+                )
+                client.publish(retry_unit)
+            else:
+                # Max retries exceeded, send to DLQ
+                logger.error(f"Max retries exceeded for {work_unit}, sending to DLQ")
+                client.publish_to_dlq(work_unit, str(e))
+
+            return True  # Acknowledge (we've handled it via retry or DLQ)
+
+    async def _handle_work_unit(self, work_unit: WorkUnit) -> WorkUnit:
+        """
+        Dispatch work unit to the appropriate stage handler.
+
+        Args:
+            work_unit: The work unit to process
+
+        Returns:
+            Updated work unit with stage outputs populated
+
+        Raises:
+            Exception: If the handler fails
+        """
+        handler = self._handlers.get(work_unit.stage)
+        if handler is None:
+            raise ValueError(f"No handler for stage: {work_unit.stage}")
+
+        logger.info(f"Dispatching to {handler.__class__.__name__}")
+        return await handler.handle(work_unit)
+
+
+def run_worker(config: Config) -> None:
+    """
+    Entry point to run a worker.
+
+    Creates and starts a worker that processes work units from RabbitMQ.
+
+    Args:
+        config: Application configuration
+    """
+    # Create RabbitMQ client
+    rabbitmq = RabbitMQClient(
+        host=config.RABBITMQ_HOST,
+        port=config.RABBITMQ_PORT,
+        username=config.RABBITMQ_USER,
+        password=config.RABBITMQ_PASSWORD,
+    )
+
+    # Connect with retry
+    rabbitmq.connect(max_retries=10, retry_delay=5.0)
+
+    # Create progress tracker
+    tracker_file = Path(config.TMP_DIR) / "progress_tracker.json"
+    progress_tracker = ProgressTracker(tracker_file)
+
+    # Create and start worker
+    worker = Worker(config, rabbitmq, progress_tracker)
+    worker.start()

@@ -128,7 +128,7 @@ class TestGenerateTilesService:
             assert "-z" in cmd
             assert "3-7" in cmd
             assert "-w" in cmd
-            assert "leaflet" in cmd
+            assert "none" in cmd
             assert "--tiledriver=WEBP" in cmd
             assert f"--processes={service.GDAL_PROCESSES}" in cmd
             assert str(geotiff_path) in cmd

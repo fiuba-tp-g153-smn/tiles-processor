@@ -105,7 +105,32 @@ class S3Client:
             kwargs["config"] = BotoConfig(signature_version=UNSIGNED)
         return kwargs
 
-    async def download_file(
+    async def download_single_file(
+        self,
+        s3_key: str,
+        retries: int = 3,
+    ) -> Optional[bytes]:
+        """
+        Download a single file from S3 and return its content.
+
+        This is a convenience method that handles the S3 client context internally.
+
+        Args:
+            s3_key: The S3 key (path) of the file to download
+            retries: Number of retry attempts
+
+        Returns:
+            File content as bytes, or None if download failed
+        """
+        async with self._session.client(
+            "s3", **self._get_client_kwargs(authenticated=True)
+        ) as s3_client:
+            _, content = await self._download_file_internal(
+                s3_client, s3_key, retries=retries
+            )
+            return content
+
+    async def _download_file_internal(
         self,
         s3_client,
         relative_file_path: str,
@@ -210,7 +235,9 @@ class S3Client:
             "s3", **self._get_client_kwargs(authenticated=True)
         ) as s3_client:
             tasks = [
-                self.download_file(s3_client, fp, local_cache_dir=local_cache_dir)
+                self._download_file_internal(
+                    s3_client, fp, local_cache_dir=local_cache_dir
+                )
                 for fp in files_to_download
             ]
             results = await asyncio.gather(*tasks, return_exceptions=False)

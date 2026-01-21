@@ -1,9 +1,5 @@
 {
   "timezone": "America/Argentina/Buenos_Aires",
-  "scheduler": {
-    "band_13_cron": "*/5 * * * *",
-    "band_9_cron": "*/5 * * * *"
-  },
   "features": {
     "enable_band_13": true,
     "enable_band_9": true
