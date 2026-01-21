@@ -25,7 +25,8 @@ class BaseStageHandler(ABC):
 
     def __init__(self, config: Config):
         self._config = config
-        self._base_dir = Path.cwd() / config.TMP_DIR
+        # Use Path directly - TMP_DIR is an absolute path
+        self._base_dir = Path(config.TMP_DIR)
 
     @abstractmethod
     async def handle(self, work_unit: WorkUnit) -> WorkUnit:

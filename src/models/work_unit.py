@@ -122,8 +122,7 @@ class WorkUnit:
             stage=next_stage,
             paths=WorkUnitPaths(
                 source_s3_uri=self.paths.source_s3_uri,
-                downloaded_file=self.paths.downloaded_file
-                or self.paths.local_netcdf,  # backwards compat
+                downloaded_file=self.paths.downloaded_file,
                 s3_tileset_prefix=self.paths.s3_tileset_prefix,
             ),
             bounds=self.bounds.copy(),

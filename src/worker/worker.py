@@ -3,9 +3,8 @@
 import asyncio
 import logging
 import signal
-import sys
 from pathlib import Path
-from typing import Dict, Type
+from typing import Dict, Type, Optional
 
 from clients.rabbitmq_client import RabbitMQClient
 from clients.progress_tracker import ProgressTracker
@@ -59,6 +58,7 @@ class Worker:
         self._progress_tracker = progress_tracker
         self._handlers: Dict[Stage, BaseStageHandler] = {}
         self._running = True
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         # Initialize handlers
         self._handlers[Stage.DOWNLOAD] = DownloadHandler(config)
@@ -77,9 +77,13 @@ class Worker:
         Start the worker.
 
         This is a blocking call that runs until the worker is stopped.
-        Uses an asyncio event loop to handle async stage handlers.
+        Uses a single asyncio event loop for all async operations.
         """
         logger.info("Worker starting...")
+
+        # Create a single event loop for the worker's lifetime
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
 
         # Update heartbeat on startup
         self._update_heartbeat()
@@ -112,6 +116,11 @@ class Worker:
             self._rabbitmq.close()
         except Exception as e:
             logger.warning(f"Error closing RabbitMQ connection: {e}")
+
+        # Close the event loop
+        if self._loop and not self._loop.is_closed():
+            self._loop.close()
+
         logger.info("Worker stopped")
 
     def _process_message(
@@ -134,15 +143,10 @@ class Worker:
         logger.info(f"Processing: {work_unit}")
 
         try:
-            # Run the async handler in the event loop
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                updated_work_unit = loop.run_until_complete(
-                    self._handle_work_unit(work_unit)
-                )
-            finally:
-                loop.close()
+            # Run the async handler in the shared event loop
+            updated_work_unit = self._loop.run_until_complete(
+                self._handle_work_unit(work_unit)
+            )
 
             # Success - publish next stage if not terminal
             if not updated_work_unit.is_terminal:

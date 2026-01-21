@@ -151,11 +151,18 @@ class GoesProcessor(ImageProcessor):
 
     async def _enforce_retention_policy(self, s3_prefix: str) -> None:
         """
-        Enforce retention policy: keep only the latest 23 tilesets.
+        Enforce retention policy: keep only the latest N tilesets.
+
+        This is designed to be safe for concurrent execution by multiple workers:
+        - Uses defensive listing and sorting
+        - Handles deletion failures gracefully
+        - Does not fail the overall processing if cleanup fails
 
         Args:
             s3_prefix: The S3 prefix for the band (e.g., "band_13/tiles")
         """
+        retention_count = 26
+
         try:
             # List existing tilesets
             # Note: list_prefixes returns prefixes ending with /, e.g., "band_13/tiles/xxx_tiles/"
@@ -163,15 +170,13 @@ class GoesProcessor(ImageProcessor):
                 f"{s3_prefix}/", delimiter="/"
             )
 
-            # Filter and Sort
-            # We assume standard naming convention allows alphanumeric sorting for time
+            # Filter and Sort by timestamp in filename
             # Format: OR_ABI-L1b-RadF-M6C09_G19_sYYYYJJJHHMMSS..._tiles/
             tileset_prefixes = sorted(
                 [p for p in prefixes if p.rstrip("/").endswith("_tiles")]
             )
 
             total_count = len(tileset_prefixes)
-            retention_count = 26
 
             if total_count <= retention_count:
                 logger.debug(
@@ -182,19 +187,42 @@ class GoesProcessor(ImageProcessor):
             # Identify old tilesets to delete
             # Keep the last N (latest), delete the rest (oldest)
             to_delete = tileset_prefixes[:-retention_count]
+
+            # Safety check: never delete more than a reasonable number in one pass
+            # This prevents runaway deletion in case of bugs
+            max_delete_per_pass = 10
+            if len(to_delete) > max_delete_per_pass:
+                logger.warning(
+                    f"Limiting deletion to {max_delete_per_pass} tilesets "
+                    f"(wanted to delete {len(to_delete)})"
+                )
+                to_delete = to_delete[:max_delete_per_pass]
+
             logger.info(
-                f"Retention policy: Deleting {len(to_delete)} old tilesets (keeping {retention_count})"
+                f"Retention policy: Deleting {len(to_delete)} old tilesets "
+                f"(total: {total_count}, keeping: {retention_count})"
             )
 
+            deleted_count = 0
             for prefix in to_delete:
                 try:
+                    # Double-check the prefix still exists before deleting
+                    # (another worker might have deleted it)
                     await self._minio_client.delete_prefix(prefix)
+                    deleted_count += 1
                     logger.info(f"Deleted old tileset: {prefix}")
                 except Exception as e:
-                    logger.warning(f"Failed to delete old tileset {prefix}: {e}")
+                    # Log but don't fail - another worker might have deleted it
+                    logger.debug(f"Could not delete tileset {prefix}: {e}")
+
+            if deleted_count > 0:
+                logger.info(
+                    f"Retention policy: Successfully deleted {deleted_count} tilesets"
+                )
 
         except Exception as e:
-            logger.warning(f"Error enforcing retention policy: {e}")
+            # Log but don't fail the overall processing
+            logger.warning(f"Error enforcing retention policy (non-fatal): {e}")
 
     def _apply_georeferencing(self, netcdf_path: Path) -> xr.Dataset:
         """Apply GOES satellite projection transformation."""
@@ -254,21 +282,41 @@ class GoesProcessor(ImageProcessor):
         color_palette: list,
     ) -> Path:
         """Generate a colorized RGBA GeoTIFF."""
+        logger.info(f"Generating GeoTIFF for {image_id}")
+        logger.debug(f"Bounds: {bounds}")
+        logger.debug(f"Input data shape: {bt_data.shape}")
+
         # Clean attributes
         if "grid_mapping" in bt_data.attrs:
             del bt_data.attrs["grid_mapping"]
 
         # Reproject
+        logger.debug("Reprojecting to EPSG:4326...")
         bt_reproj = bt_data.rio.reproject("EPSG:4326")
         bt_reproj = bt_reproj.rio.write_nodata(np.nan, inplace=False)
+        logger.debug(f"Reprojected shape: {bt_reproj.shape}")
 
-        # Clip
+        # Clip to bounds
+        logger.debug(
+            f"Clipping to bounds: minx={bounds['minx']}, miny={bounds['miny']}, maxx={bounds['maxx']}, maxy={bounds['maxy']}"
+        )
         bt_clipped = bt_reproj.rio.clip_box(
             minx=bounds["minx"],
             miny=bounds["miny"],
             maxx=bounds["maxx"],
             maxy=bounds["maxy"],
         )
+        logger.info(
+            f"Clipped data shape: {bt_clipped.shape} (y={bt_clipped.shape[0]}, x={bt_clipped.shape[1]})"
+        )
+
+        # Warn if clipped data is very small
+        if bt_clipped.shape[0] < 100 or bt_clipped.shape[1] < 100:
+            logger.warning(
+                f"Clipped data is small ({bt_clipped.shape}), "
+                f"this may result in missing zoom levels"
+            )
+
         del bt_reproj
         gc.collect()
 
@@ -366,17 +414,75 @@ class GoesProcessor(ImageProcessor):
                 str(tmp_tiles_dir),
             ]
 
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            logger.info(f"Running gdal2tiles: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+            if result.returncode != 0:
+                logger.error(f"gdal2tiles failed with return code {result.returncode}")
+                logger.error(f"stderr: {result.stderr}")
+                logger.error(f"stdout: {result.stdout}")
+                raise RuntimeError(f"gdal2tiles failed: {result.stderr}")
+
+            # Log any warnings from stdout/stderr
+            if result.stderr:
+                logger.warning(f"gdal2tiles stderr: {result.stderr}")
+            if result.stdout:
+                logger.debug(f"gdal2tiles stdout: {result.stdout}")
+
+            # Validate that expected zoom levels were generated
+            self._validate_tiles(tmp_tiles_dir)
 
             if tiles_output_dir.exists():
                 shutil.rmtree(tiles_output_dir)
             tmp_tiles_dir.rename(tiles_output_dir)
 
+            logger.info(f"Tiles generated successfully: {tiles_output_dir}")
             return tiles_output_dir
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"gdal2tiles timed out after 600 seconds")
+            if tmp_tiles_dir.exists():
+                shutil.rmtree(tmp_tiles_dir)
+            raise RuntimeError("gdal2tiles timed out")
         except subprocess.CalledProcessError as e:
             logger.error(f"gdal2tiles failed: {e.stderr}")
+            if tmp_tiles_dir.exists():
+                shutil.rmtree(tmp_tiles_dir)
             raise RuntimeError(f"gdal2tiles failed: {e.stderr}")
         except Exception:
             if tmp_tiles_dir.exists():
                 shutil.rmtree(tmp_tiles_dir)
             raise
+
+    def _validate_tiles(self, tiles_dir: Path) -> None:
+        """Validate that the expected zoom levels were generated."""
+        # Parse zoom range from ZOOM_LEVELS (e.g., "3-7")
+        zoom_parts = self.ZOOM_LEVELS.split("-")
+        min_zoom = int(zoom_parts[0])
+        max_zoom = int(zoom_parts[1]) if len(zoom_parts) > 1 else min_zoom
+
+        missing_zooms = []
+        for zoom in range(min_zoom, max_zoom + 1):
+            zoom_dir = tiles_dir / str(zoom)
+            if not zoom_dir.exists():
+                missing_zooms.append(zoom)
+            else:
+                # Count tiles at this zoom level
+                tile_count = sum(1 for _ in zoom_dir.rglob("*.webp"))
+                if tile_count == 0:
+                    missing_zooms.append(zoom)
+                else:
+                    logger.debug(f"Zoom {zoom}: {tile_count} tiles generated")
+
+        if missing_zooms:
+            logger.warning(
+                f"Missing or empty zoom levels: {missing_zooms}. "
+                f"Expected range: {min_zoom}-{max_zoom}"
+            )
+            # List what was actually generated
+            generated_zooms = [
+                d.name for d in tiles_dir.iterdir() if d.is_dir() and d.name.isdigit()
+            ]
+            logger.warning(
+                f"Actually generated zoom directories: {sorted(generated_zooms, key=int)}"
+            )

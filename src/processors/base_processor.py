@@ -22,6 +22,8 @@ class ImageProcessor(ABC):
 
     def __init__(self, config: Config):
         self.config = config
+        # Use TMP_DIR for consistency with stage handlers
+        self._base_dir = Path(config.TMP_DIR)
 
     @abstractmethod
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
@@ -44,7 +46,7 @@ class ImageProcessor(ABC):
 
     def _get_band_dir(self, work_unit: WorkUnit) -> Path:
         """Get base directory for this work unit's band data."""
-        return Path(self.config.DATA_DIR) / "processing" / work_unit.band_id
+        return self._base_dir / work_unit.band_id
 
     def _cleanup_file(self, file_path: Path) -> None:
         """Safe cleanup of a single file."""
