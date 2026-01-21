@@ -407,7 +407,8 @@ class GoesProcessor(ImageProcessor):
                 "-z",
                 self.ZOOM_LEVELS,
                 "-w",
-                "leaflet",
+                "none",  # No web viewer needed, just tiles
+                "--xyz",  # Use XYZ tile scheme (OSM/Slippy map standard) instead of TMS
                 "--tiledriver=WEBP",
                 f"--processes={self.GDAL_PROCESSES}",
                 str(geotiff_path),

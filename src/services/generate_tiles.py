@@ -8,7 +8,7 @@ web mapping libraries.
 Tile Specifications:
     - Format: WEBP (compressed, supports transparency)
     - Zoom levels: 3-7 (continental to regional scale)
-    - Profile: Leaflet-compatible (TMS with flipped Y)
+    - Profile: XYZ (OSM/Slippy map standard, Y=0 at top)
     - Structure: {output_dir}/{image_name}_tiles/{z}/{x}/{y}.webp
 
 Concurrency Control:
@@ -56,13 +56,12 @@ class GenerateTilesService:
     Output Structure:
         {output_dir}/
             {geotiff_stem}_tiles/
-                leaflet.html        # Leaflet viewer
                 {z}/                # Zoom level directories
                     {x}/            # X coordinate directories
                         {y}.webp    # Individual tiles
 
     gdal2tiles Command:
-        gdal2tiles.py -z 3-7 -w leaflet --tiledriver=WEBP --processes=2 input.tif output/
+        gdal2tiles.py -z 3-7 -w none --xyz --tiledriver=WEBP --processes=2 input.tif output/
 
     Concurrency:
         Uses asyncio.Semaphore to limit concurrent tile generation, preventing
@@ -154,7 +153,8 @@ class GenerateTilesService:
                 "-z",
                 "3-7",
                 "-w",
-                "leaflet",
+                "none",  # No web viewer needed
+                "--xyz",  # Use XYZ tile scheme (OSM/Slippy map standard) instead of TMS
                 "--tiledriver=WEBP",
                 f"--processes={self.GDAL_PROCESSES}",
                 str(geotiff_path),
@@ -166,6 +166,7 @@ class GenerateTilesService:
                 cmd,
                 capture_output=True,
                 text=True,
+                timeout=600,  # 10 minute timeout
                 check=False,  # Error handled manually
             )
 
