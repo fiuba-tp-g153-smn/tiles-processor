@@ -1,18 +1,13 @@
 """
-In-progress work tracker for avoiding duplicate work units.
+In-progress work tracker using SQLite for atomic operations.
 
-This module provides a simple file-based tracker to record which images
-are currently being processed in the pipeline. This prevents the producer
-from creating duplicate work units for images that are already in flight.
-
-Thread/Process Safety:
-    Uses file locking for safe concurrent access from multiple processes.
-    Each operation reads the current state, modifies, and writes back atomically.
+This module provides a robust tracker to record which images are currently
+being processed. It uses SQLite to ensure atomic transactions and safe
+concurrenct access from multiple processes/workers.
 """
 
-import json
 import logging
-import fcntl
+import sqlite3
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 from typing import Set
@@ -24,136 +19,119 @@ class ProgressTracker:
     """
     Tracks in-progress image processing to avoid duplicate work units.
 
-    The tracker maintains a JSON file with:
+    Uses SQLite for atomic operations and concurrency safety.
+    Tracks:
     - image_id: The image being processed
-    - started_at: When processing started
     - band_id: Which band is being processed
-
-    Stale entries (older than max_age) are automatically cleaned up.
+    - status: Current status (IN_PROGRESS, COMPLETED)
+    - created_at: Timestamp when processing started
+    - updated_at: Timestamp of last update
     """
 
-    def __init__(self, tracker_file: Path, max_age_hours: int = 2):
+    def __init__(self, db_path: Path, max_age_hours: int = 2):
         """
         Initialize the progress tracker.
 
         Args:
-            tracker_file: Path to the JSON file for tracking progress
-            max_age_hours: Maximum age for entries before cleanup (default: 2 hours)
+            db_path: Path to the SQLite database file
+            max_age_hours: Maximum age for entries before cleanup
         """
-        self._tracker_file = tracker_file
+        self._db_path = db_path.with_suffix(".db")  # Ensure .db extension
         self._max_age = timedelta(hours=max_age_hours)
 
         # Ensure parent directory exists
-        self._tracker_file.parent.mkdir(parents=True, exist_ok=True)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Initialize file if it doesn't exist
-        if not self._tracker_file.exists():
-            self._write_data({})
+        self._init_db()
 
-    def _read_data(self) -> dict:
-        """Read and return the tracker data with file locking."""
-        try:
-            with open(self._tracker_file, "r") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                try:
-                    data = json.load(f)
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                return data
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
+    def _get_connection(self) -> sqlite3.Connection:
+        """Get a database connection."""
+        conn = sqlite3.connect(
+            str(self._db_path),
+            timeout=30.0,  # Wait up to 30s for lock
+            isolation_level=None,  # Autocommit mode
+        )
+        conn.row_factory = sqlite3.Row
+        return conn
 
-    def _write_data(self, data: dict) -> None:
-        """Write tracker data with file locking."""
-        with open(self._tracker_file, "w") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            try:
-                json.dump(data, f, indent=2)
-            finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    def _init_db(self) -> None:
+        """Initialize the database schema."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS processed_images (
+                    image_id TEXT NOT NULL,
+                    band_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (image_id, band_id)
+                )
+            """
+            )
 
-    def _cleanup_stale(self, data: dict) -> dict:
+            # Index for cleanup queries
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_created_at 
+                ON processed_images(created_at)
+            """
+            )
+
+            # Enable WAL mode for better concurrency
+            conn.execute("PRAGMA journal_mode=WAL")
+
+    def _cleanup_stale(self) -> None:
         """Remove entries older than max_age."""
-        now = datetime.now(UTC)
-        cleaned = {}
-        for key, entry in data.items():
-            started_at = datetime.fromisoformat(entry["started_at"])
-            if now - started_at < self._max_age:
-                cleaned[key] = entry
-            else:
-                logger.debug(f"Cleaned up stale entry: {key}")
-        return cleaned
+        cutoff = datetime.now(UTC) - self._max_age
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM processed_images WHERE created_at < ?", (cutoff,))
 
     def is_in_progress(self, image_id: str, band_id: str) -> bool:
-        """
-        Check if an image is currently being processed.
+        """Check if an image is currently being processed."""
+        self._cleanup_stale()  # Clean up before checking
 
-        Args:
-            image_id: The image identifier
-            band_id: The band being processed
-
-        Returns:
-            True if the image is in progress, False otherwise
-        """
-        key = f"{band_id}:{image_id}"
-        data = self._read_data()
-        data = self._cleanup_stale(data)
-        return key in data
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT 1 FROM processed_images WHERE image_id = ? AND band_id = ?",
+                (image_id, band_id),
+            )
+            return cursor.fetchone() is not None
 
     def mark_in_progress(self, image_id: str, band_id: str) -> None:
-        """
-        Mark an image as in-progress.
-
-        Args:
-            image_id: The image identifier
-            band_id: The band being processed
-        """
-        key = f"{band_id}:{image_id}"
-        data = self._read_data()
-        data = self._cleanup_stale(data)
-        data[key] = {
-            "image_id": image_id,
-            "band_id": band_id,
-            "started_at": datetime.now(UTC).isoformat(),
-        }
-        self._write_data(data)
-        logger.debug(f"Marked in progress: {key}")
+        """Mark an image as in-progress."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO processed_images 
+                (image_id, band_id, status, created_at, updated_at)
+                VALUES (?, ?, 'IN_PROGRESS', ?, ?)
+                """,
+                (image_id, band_id, datetime.now(UTC), datetime.now(UTC)),
+            )
+        logger.debug(f"Marked in progress: {band_id}:{image_id}")
 
     def mark_completed(self, image_id: str, band_id: str) -> None:
-        """
-        Mark an image as completed (remove from in-progress).
-
-        Args:
-            image_id: The image identifier
-            band_id: The band being processed
-        """
-        key = f"{band_id}:{image_id}"
-        data = self._read_data()
-        if key in data:
-            del data[key]
-            self._write_data(data)
-            logger.debug(f"Marked completed: {key}")
+        """Mark an image as completed (remove from tracking)."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "DELETE FROM processed_images WHERE image_id = ? AND band_id = ?",
+                (image_id, band_id),
+            )
+        logger.debug(f"Marked completed: {band_id}:{image_id}")
 
     def get_in_progress_images(self, band_id: str) -> Set[str]:
-        """
-        Get all in-progress image IDs for a band.
+        """Get all in-progress image IDs for a band."""
+        self._cleanup_stale()
 
-        Args:
-            band_id: The band to check
-
-        Returns:
-            Set of image IDs currently in progress
-        """
-        data = self._read_data()
-        data = self._cleanup_stale(data)
-
-        in_progress = set()
-        for key, entry in data.items():
-            if entry["band_id"] == band_id:
-                in_progress.add(entry["image_id"])
-        return in_progress
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT image_id FROM processed_images WHERE band_id = ?", (band_id,)
+            )
+            return {row["image_id"] for row in cursor.fetchall()}
 
     def clear_all(self) -> None:
-        """Clear all in-progress entries."""
-        self._write_data({})
-        logger.info("Cleared all in-progress entries")
+        """Clear all entries."""
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM processed_images")
+        logger.info("Cleared all entries from tracker")

@@ -131,6 +131,10 @@ class GoesProcessor(ImageProcessor):
             work_unit.paths.s3_tileset_prefix = s3_prefix
             logger.info(f"Processing complete: {s3_prefix}")
 
+            # 6. Retention Policy Cleanup
+            logger.info("Step 6: Enforcing Retention Policy")
+            await self._enforce_retention_policy(band_config.s3_prefix)
+
         except Exception as e:
             logger.error(f"Processing failed for {work_unit.image_id}: {e}")
             raise
@@ -144,6 +148,53 @@ class GoesProcessor(ImageProcessor):
 
             # Force GC
             gc.collect()
+
+    async def _enforce_retention_policy(self, s3_prefix: str) -> None:
+        """
+        Enforce retention policy: keep only the latest 23 tilesets.
+
+        Args:
+            s3_prefix: The S3 prefix for the band (e.g., "band_13/tiles")
+        """
+        try:
+            # List existing tilesets
+            # Note: list_prefixes returns prefixes ending with /, e.g., "band_13/tiles/xxx_tiles/"
+            prefixes = await self._minio_client.list_prefixes(
+                f"{s3_prefix}/", delimiter="/"
+            )
+
+            # Filter and Sort
+            # We assume standard naming convention allows alphanumeric sorting for time
+            # Format: OR_ABI-L1b-RadF-M6C09_G19_sYYYYJJJHHMMSS..._tiles/
+            tileset_prefixes = sorted(
+                [p for p in prefixes if p.rstrip("/").endswith("_tiles")]
+            )
+
+            total_count = len(tileset_prefixes)
+            retention_count = 23
+
+            if total_count <= retention_count:
+                logger.debug(
+                    f"Retention policy check: {total_count} <= {retention_count}, no action needed."
+                )
+                return
+
+            # Identify old tilesets to delete
+            # Keep the last N (latest), delete the rest (oldest)
+            to_delete = tileset_prefixes[:-retention_count]
+            logger.info(
+                f"Retention policy: Deleting {len(to_delete)} old tilesets (keeping {retention_count})"
+            )
+
+            for prefix in to_delete:
+                try:
+                    await self._minio_client.delete_prefix(prefix)
+                    logger.info(f"Deleted old tileset: {prefix}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete old tileset {prefix}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Error enforcing retention policy: {e}")
 
     def _apply_georeferencing(self, netcdf_path: Path) -> xr.Dataset:
         """Apply GOES satellite projection transformation."""
