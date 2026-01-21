@@ -20,6 +20,10 @@ clean:
 	docker volume rm tiles-processor_minio_data || true
 	docker volume rm tiles-processor_minio_dev_data || true
 	docker volume rm tiles-processor_tiles_data || true
+	docker volume rm tiles-processor_rabbitmq_data || true
+	docker volume rm tiles-processor_rabbitmq_dev_data || true
+	docker volume rm tiles-processor_minio_cache || true
+	docker volume rm tiles-processor_minio_dev_cache || true
 
 radar-build:
 	docker build -f Dockerfile.script -t radar-tiles-processor .

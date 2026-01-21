@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Type
 
 from clients.rabbitmq_client import RabbitMQClient
+from clients.progress_tracker import ProgressTracker
 from config import Config
 from models.stage import Stage
 from models.work_unit import WorkUnit
@@ -47,15 +48,21 @@ class Worker:
         Stage.PROCESS: ProcessHandler,
     }
 
-    def __init__(self, config: Config, rabbitmq_client: RabbitMQClient):
+    def __init__(
+        self,
+        config: Config,
+        rabbitmq_client: RabbitMQClient,
+        progress_tracker: ProgressTracker,
+    ):
         self._config = config
         self._rabbitmq = rabbitmq_client
+        self._progress_tracker = progress_tracker
         self._handlers: Dict[Stage, BaseStageHandler] = {}
         self._running = True
 
         # Initialize handlers
-        for stage, handler_class in self.HANDLER_MAP.items():
-            self._handlers[stage] = handler_class(config)
+        self._handlers[Stage.DOWNLOAD] = DownloadHandler(config)
+        self._handlers[Stage.PROCESS] = ProcessHandler(config, progress_tracker)
 
     def _update_heartbeat(self) -> None:
         """Update the heartbeat file for health checks."""
@@ -209,6 +216,10 @@ def run_worker(config: Config) -> None:
     # Connect with retry
     rabbitmq.connect(max_retries=10, retry_delay=5.0)
 
+    # Create progress tracker
+    tracker_file = Path(config.TMP_DIR) / "progress_tracker.json"
+    progress_tracker = ProgressTracker(tracker_file)
+
     # Create and start worker
-    worker = Worker(config, rabbitmq)
+    worker = Worker(config, rabbitmq, progress_tracker)
     worker.start()

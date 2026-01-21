@@ -190,47 +190,59 @@ class ImageDiscoveryProducer:
         existing_tilesets: Set[str],
         in_progress: Set[str],
     ) -> List[str]:
-        """Find images in NOAA S3 that need processing."""
-        all_images = []
+        """
+        Find images in NOAA S3 that need processing.
+
+        Strategy: Strict Latest N
+        1. Collect all available images from the last MAX_HOURS_BACK.
+        2. Sort by timestamp (descending) to get the absolute latest images.
+        3. Take the top TARGET_IMAGES.
+        4. Filter out any that are already processed or in progress.
+        """
+        all_candidates = []
         hours_back = 0
 
-        # Search through recent hours until we have enough images
-        while (
-            len(all_images) < self.TARGET_IMAGES and hours_back <= self.MAX_HOURS_BACK
-        ):
+        # 1. Collect all candidates from the lookback window
+        while hours_back <= self.MAX_HOURS_BACK:
             search_time = current_time - timedelta(hours=hours_back)
             directory_path = self._build_directory_path(search_time)
 
             try:
-                # List files in this hour's directory
                 files = await self._noaa_client._get_folder_file_paths(
                     directory_path, file_pattern=file_pattern
                 )
-
-                for s3_key in files:
-                    # Extract base name (stem without extension)
-                    filename = s3_key.split("/")[-1]
-                    stem = Path(filename).stem
-
-                    # Skip if tiles already exist
-                    if stem in existing_tilesets:
-                        continue
-
-                    # Skip if already in progress
-                    if filename in in_progress:
-                        continue
-
-                    all_images.append(s3_key)
-
-                    if len(all_images) >= self.TARGET_IMAGES:
-                        break
-
+                all_candidates.extend(files)
             except Exception as e:
                 logger.warning(f"Error listing NOAA S3 for {directory_path}: {e}")
 
             hours_back += 1
 
-        return all_images[: self.TARGET_IMAGES]
+        # 2. Sort by timestamp (descending)
+        # Assuming filename format allows alphanumeric sorting, or extraction is needed.
+        # Files are typically: OR_ABI-L1b-RadF-M6C13_G19_s20260211000204...
+        # The 's' timestamp is correct for sorting.
+        all_candidates.sort(reverse=True)
+
+        # 3. Take top N (Strict Window)
+        target_candidates = all_candidates[: self.TARGET_IMAGES]
+
+        # 4. Filter
+        new_images = []
+        for s3_key in target_candidates:
+            filename = s3_key.split("/")[-1]
+            stem = Path(filename).stem
+
+            # Skip if tiles already exist
+            if stem in existing_tilesets:
+                continue
+
+            # Skip if already in progress
+            if filename in in_progress:
+                continue
+
+            new_images.append(s3_key)
+
+        return new_images
 
     def _build_directory_path(self, time: datetime) -> str:
         """Build the S3 directory path for a given time."""
