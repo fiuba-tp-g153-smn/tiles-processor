@@ -107,7 +107,7 @@ services:
 
   # Workers - process work units from the queue
   # 5 replicas as specified in requirements
-  worker:
+  worker1:
     image: tiles-processor
     depends_on:
       rabbitmq:
@@ -119,7 +119,7 @@ services:
       dockerfile: Dockerfile
     command: python3 src/main.py worker
     volumes:
-      - ./data:${DATA_DIR}
+      - tiles_data:/app/data
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
@@ -133,15 +133,46 @@ services:
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=${RABBITMQ_USER:-guest}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
-    deploy:
-      replicas: 2
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "/app/src/healthcheck.py"]
       interval: 30s
       timeout: 10s
       retries: 3
-  
+
+  worker2:
+    image: tiles-processor
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      minio-setup:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python3 src/main.py worker
+    volumes:
+      - tiles_data:/app/data
+      - ./settings.json:/app/settings.json:ro
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL}
+      - DATA_DIR=${DATA_DIR}
+      - S3_TILES_DATA_ENDPOINT=minio:9000
+      - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
+      - S3_TILES_DATA_SECURE=false
+      - S3_TILES_DATA_TILES_PROCESSOR_USER=${S3_TILES_DATA_TILES_PROCESSOR_USER}
+      - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "/app/src/healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   minio_dev_data:
   minio_dev_cache:
