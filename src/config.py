@@ -27,25 +27,26 @@ class Config:
         self.S3_TILES_DATA_RW_SECRET_KEY: str = self._get_required_env(
             "S3_TILES_DATA_TILES_PROCESSOR_PASSWORD"
         )
-        self.S3_TILES_DATA_BUCKET_NAME: str = os.getenv(
-            "S3_TILES_DATA_BUCKET_NAME", "tiles-data"
+        self.S3_TILES_DATA_BUCKET_NAME: str = self._get_required_env(
+            "S3_TILES_DATA_BUCKET_NAME"
         )
         self.S3_TILES_DATA_SECURE: bool = (
             os.getenv("S3_TILES_DATA_SECURE", "false").lower() == "true"
         )
 
         # RabbitMQ Configuration
-        self.RABBITMQ_HOST: str = os.getenv("RABBITMQ_HOST", "rabbitmq")
-        self.RABBITMQ_PORT: int = int(os.getenv("RABBITMQ_PORT", "5672"))
-        self.RABBITMQ_USER: str = os.getenv("RABBITMQ_USER", "guest")
-        self.RABBITMQ_PASSWORD: str = os.getenv("RABBITMQ_PASSWORD", "guest")
+        self.RABBITMQ_HOST: str = self._get_required_env("RABBITMQ_HOST")
+        self.RABBITMQ_PORT: int = int(self._get_required_env("RABBITMQ_PORT"))
+        self.RABBITMQ_USER: str = self._get_required_env("RABBITMQ_USER")
+        self.RABBITMQ_PASSWORD: str = self._get_required_env("RABBITMQ_PASSWORD")
 
         # Settings from JSON
         self.TIMEZONE: str = settings["timezone"]
 
         # Feature Toggles (from JSON)
-        self.ENABLE_BAND_13: bool = settings["features"]["enable_band_13"]
-        self.ENABLE_BAND_9: bool = settings["features"]["enable_band_9"]
+        self.ENABLE_BAND_13: bool = settings["features"].get("enable_band_13", True)
+        self.ENABLE_BAND_9: bool = settings["features"].get("enable_band_9", True)
+        self.ENABLE_RADAR: bool = settings["features"].get("enable_radar", True)
 
         # Bounding box (from JSON)
         # Coordinates are in EPSG:4326 (longitude/latitude)
@@ -53,9 +54,6 @@ class Config:
         self.BOUNDS_MINY: float = settings["bounds"]["miny"]  # South latitude
         self.BOUNDS_MAXX: float = settings["bounds"]["maxx"]  # East longitude
         self.BOUNDS_MAXY: float = settings["bounds"]["maxy"]  # North latitude
-
-        # Constants
-        self.MAX_TMP_DIR_SIZE_BYTES: int = 10 * 1024 * 1024 * 1024  # 10 GB
 
     @staticmethod
     def _get_required_env(key: str) -> str:
@@ -94,9 +92,9 @@ class Config:
         logger.info(f"TIMEZONE: {self.TIMEZONE}")
         logger.info(f"ENABLE_BAND_13: {self.ENABLE_BAND_13}")
         logger.info(f"ENABLE_BAND_9: {self.ENABLE_BAND_9}")
+        logger.info(f"ENABLE_RADAR: {self.ENABLE_RADAR}")
         logger.info(f"DATA_DIR: {self.DATA_DIR}")
         logger.info(f"TMP_DIR: {self.TMP_DIR}")
-        logger.info(f"MAX_TMP_DIR_SIZE_BYTES: {self.MAX_TMP_DIR_SIZE_BYTES}")
         logger.info(f"BOUNDS_MINX: {self.BOUNDS_MINX}")
         logger.info(f"BOUNDS_MINY: {self.BOUNDS_MINY}")
         logger.info(f"BOUNDS_MAXX: {self.BOUNDS_MAXX}")

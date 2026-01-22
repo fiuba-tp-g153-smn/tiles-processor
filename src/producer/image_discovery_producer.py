@@ -106,6 +106,8 @@ class ImageDiscoveryProducer:
             return self._config.ENABLE_BAND_13
         elif source_id == "goes19_band_9":
             return self._config.ENABLE_BAND_9
+        elif source_id == "radar_nexrad":
+            return self._config.ENABLE_RADAR
 
         # Default: enabled if registered
         return True

@@ -40,10 +40,10 @@ class RabbitMQClient:
 
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 5672,
-        username: str = "guest",
-        password: str = "guest",
+        host: str,
+        port: int,
+        username: str,
+        password: str,
         virtual_host: str = "/",
     ):
         self._host = host
@@ -267,26 +267,3 @@ class RabbitMQClient:
 
         result = self._channel.queue_declare(queue=queue_name, passive=True)
         return result.method.message_count
-
-
-def create_rabbitmq_client(
-    host: str = "localhost",
-    port: int = 5672,
-    username: str = "guest",
-    password: str = "guest",
-) -> RabbitMQClient:
-    """
-    Factory function to create and connect a RabbitMQ client.
-
-    Args:
-        host: RabbitMQ host
-        port: RabbitMQ port
-        username: RabbitMQ username
-        password: RabbitMQ password
-
-    Returns:
-        Connected RabbitMQClient instance
-    """
-    client = RabbitMQClient(host=host, port=port, username=username, password=password)
-    client.connect()
-    return client

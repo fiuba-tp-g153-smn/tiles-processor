@@ -4,11 +4,22 @@ services:
     image: rabbitmq:4.2.2-management
     container_name: tiles-processor-rabbitmq
     ports:
-      - "${RABBITMQ_PORT:-5672}:5672"      # AMQP protocol
-      - "${RABBITMQ_MGMT_PORT:-15672}:15672"  # Management UI
+      - "${RABBITMQ_PORT}:5672"      # AMQP protocol
+      - "${RABBITMQ_MGMT_PORT}:15672"  # Management UI
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+
+      # Reduce CPU usage by disabling Erlang scheduler busy-wait tuning.
+      # These settings are beneficial for low-throughput or idle-heavy workloads,
+      # where minimizing background CPU wakeups is more important than latency.
+      # +sbwt none       # Disable scheduler busy wait thresholds
+      # +sbwtdcpu none   # Disable busy wait tuning for CPU-bound schedulers
+      # +sbwtdio none    # Disable busy wait tuning for I/O-bound schedulers
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: >
+        +sbwt none
+        +sbwtdcpu none
+        +sbwtdio none
     volumes:
       - rabbitmq_dev_data:/var/lib/rabbitmq
     healthcheck:
@@ -100,15 +111,16 @@ services:
       - S3_TILES_DATA_TILES_PROCESSOR_USER=${S3_TILES_DATA_TILES_PROCESSOR_USER}
       - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
       - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
-      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
     restart: unless-stopped
 
   # Workers - process work units from the queue
   # 5 replicas as specified in requirements
   worker1:
     image: tiles-processor
+    container_name: tiles-processor-worker1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -119,7 +131,7 @@ services:
       dockerfile: Dockerfile
     command: python3 src/main.py worker
     volumes:
-      - tiles_data:/app/data
+      - ./data:${DATA_DIR}
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
@@ -130,9 +142,9 @@ services:
       - S3_TILES_DATA_TILES_PROCESSOR_USER=${S3_TILES_DATA_TILES_PROCESSOR_USER}
       - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
       - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
-      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "/app/src/healthcheck.py"]
@@ -142,6 +154,7 @@ services:
 
   worker2:
     image: tiles-processor
+    container_name: tiles-processor-worker2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -152,7 +165,7 @@ services:
       dockerfile: Dockerfile
     command: python3 src/main.py worker
     volumes:
-      - tiles_data:/app/data
+      - ./data:${DATA_DIR}
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
@@ -163,9 +176,9 @@ services:
       - S3_TILES_DATA_TILES_PROCESSOR_USER=${S3_TILES_DATA_TILES_PROCESSOR_USER}
       - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
       - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
-      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "/app/src/healthcheck.py"]

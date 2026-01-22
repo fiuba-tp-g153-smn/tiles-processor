@@ -2,7 +2,8 @@
   "timezone": "America/Argentina/Buenos_Aires",
   "features": {
     "enable_band_13": true,
-    "enable_band_9": true
+    "enable_band_9": true,
+    "enable_radar": true
   },
   "bounds": {
     "minx": -90.0,
