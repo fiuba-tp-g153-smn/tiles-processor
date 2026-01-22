@@ -48,6 +48,9 @@ class Config:
         self.ENABLE_BAND_9: bool = settings["features"].get("enable_band_9", True)
         self.ENABLE_RADAR: bool = settings["features"].get("enable_radar", True)
 
+        # Job Configuration
+        self.JOB_TTL_MINUTES: int = int(os.getenv("JOB_TTL_MINUTES", "20"))
+
         # Bounding box (from JSON)
         # Coordinates are in EPSG:4326 (longitude/latitude)
         self.BOUNDS_MINX: float = settings["bounds"]["minx"]  # West longitude

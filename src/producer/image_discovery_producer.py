@@ -3,7 +3,7 @@
 from asyncio import Event, run
 from logging import getLogger
 from signal import signal, SIGINT, SIGTERM
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 from pathlib import Path
 from typing import Set
 
@@ -223,7 +223,9 @@ def run_producer(config: Config) -> None:
 
     # Create progress tracker (SQLite-based)
     tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"
-    progress_tracker = ProgressTracker(tracker_path)
+    progress_tracker = ProgressTracker(
+        tracker_path, ttl=timedelta(minutes=config.JOB_TTL_MINUTES)
+    )
 
     # Create RabbitMQ client
     rabbitmq = RabbitMQClient(

@@ -28,16 +28,28 @@ class ProgressTracker:
     - updated_at: Timestamp of last update
     """
 
-    def __init__(self, db_path: Path, max_age_hours: int = 2):
+    def __init__(
+        self,
+        db_path: Path,
+        ttl: timedelta | None = None,
+        max_age_hours: int | None = None,
+    ):
         """
         Initialize the progress tracker.
 
         Args:
             db_path: Path to the SQLite database file
-            max_age_hours: Maximum age for entries before cleanup
+            ttl: Maximum age for entries before cleanup (takes precedence over max_age_hours)
+            max_age_hours: Deprecated. Use ttl instead. Maximum age for entries before cleanup.
         """
         self._db_path = db_path.with_suffix(".db")  # Ensure .db extension
-        self._max_age = timedelta(hours=max_age_hours)
+
+        if ttl is not None:
+            self._ttl = ttl
+        elif max_age_hours is not None:
+            self._ttl = timedelta(hours=max_age_hours)
+        else:
+            self._ttl = timedelta(hours=2)  # Default
 
         # Ensure parent directory exists
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,10 +94,15 @@ class ProgressTracker:
             conn.execute("PRAGMA journal_mode=WAL")
 
     def _cleanup_stale(self) -> None:
-        """Remove entries older than max_age."""
-        cutoff = datetime.now(UTC) - self._max_age
+        """Remove entries in PROCESSING state older than ttl."""
+        cutoff = datetime.now(UTC) - self._ttl
         with self._get_connection() as conn:
-            conn.execute("DELETE FROM processed_images WHERE created_at < ?", (cutoff,))
+            # Only clean up items that are PROCESSING and older than TTL
+            # IN_PROGRESS items (in queue) should NOT be expired
+            conn.execute(
+                "DELETE FROM processed_images WHERE status = 'PROCESSING' AND updated_at < ?",
+                (cutoff,),
+            )
 
     def is_in_progress(self, image_id: str, band_id: str) -> bool:
         """Check if an image is currently being processed."""
@@ -109,7 +126,19 @@ class ProgressTracker:
                 """,
                 (image_id, band_id, datetime.now(UTC), datetime.now(UTC)),
             )
-        logger.debug(f"Marked in progress: {band_id}:{image_id}")
+
+    def mark_processing(self, image_id: str, band_id: str) -> None:
+        """Mark an image as currently being processed by a worker."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE processed_images 
+                SET status = 'PROCESSING', updated_at = ?
+                WHERE image_id = ? AND band_id = ?
+                """,
+                (datetime.now(UTC), image_id, band_id),
+            )
+        logger.debug(f"Marked as processing: {band_id}:{image_id}")
 
     def mark_completed(self, image_id: str, band_id: str) -> None:
         """Mark an image as completed (remove from tracking)."""

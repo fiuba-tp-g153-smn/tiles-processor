@@ -89,10 +89,11 @@ class WorkHandler:
             # Log timing summary
             total_time = perf_counter() - total_start
             logger.info(
-                f"[HANDLER] Completed {work_unit.image_id} | "
+                f"[HANDLER] Completed end2end processing and upload | "
                 f"download: {download_time:.2f}s, "
                 f"process: {process_time:.2f}s, "
-                f"total: {total_time:.2f}s"
+                f"total: {total_time:.2f}s | "
+                f"image_id: {work_unit.image_id}"
             )
 
         finally:
