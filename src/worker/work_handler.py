@@ -2,6 +2,7 @@
 
 from logging import getLogger
 from pathlib import Path
+from time import perf_counter
 
 from clients.progress_tracker import ProgressTracker
 from config import Config
@@ -58,6 +59,7 @@ class WorkHandler:
         Raises:
             Exception: If download or processing fails
         """
+        total_start = perf_counter()
         logger.info(f"[HANDLER] Starting processing for {work_unit}")
 
         # Get data source and processor
@@ -70,16 +72,28 @@ class WorkHandler:
 
         try:
             # Step 1: Download
+            download_start = perf_counter()
             logger.info(f"[HANDLER] Downloading {work_unit.image_id}")
             await data_source.download(work_unit.source_uri, local_path)
+            download_time = perf_counter() - download_start
 
             # Step 2: Process
+            process_start = perf_counter()
             logger.info(f"[HANDLER] Processing {work_unit.image_id}")
             await processor.process(str(local_path), work_unit)
+            process_time = perf_counter() - process_start
 
             # Step 3: Mark as completed in SQLite
             self._progress_tracker.mark_completed(work_unit.image_id, work_unit.band_id)
-            logger.info(f"[HANDLER] Completed {work_unit.image_id}")
+
+            # Log timing summary
+            total_time = perf_counter() - total_start
+            logger.info(
+                f"[HANDLER] Completed {work_unit.image_id} | "
+                f"download: {download_time:.2f}s, "
+                f"process: {process_time:.2f}s, "
+                f"total: {total_time:.2f}s"
+            )
 
         finally:
             # Cleanup downloaded file
