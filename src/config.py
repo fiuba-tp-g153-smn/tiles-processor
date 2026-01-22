@@ -39,9 +39,9 @@ class Config:
         self.RABBITMQ_PORT: int = int(self._get_required_env("RABBITMQ_PORT"))
         self.RABBITMQ_USER: str = self._get_required_env("RABBITMQ_USER")
         self.RABBITMQ_PASSWORD: str = self._get_required_env("RABBITMQ_PASSWORD")
-        self.RABBITMQ_QUEUE: str = os.getenv("RABBITMQ_QUEUE", "tiles_work_queue")
-        self.RABBITMQ_DLQ: str = os.getenv("RABBITMQ_DLQ", "tiles_dead_letter_queue")
-        self.RABBITMQ_DLX: str = os.getenv("RABBITMQ_DLX", "tiles_dlx")
+        self.RABBITMQ_QUEUE: str = self._get_required_env("RABBITMQ_QUEUE")
+        self.RABBITMQ_DLQ: str = self._get_required_env("RABBITMQ_DLQ")
+        self.RABBITMQ_DLX: str = self._get_required_env("RABBITMQ_DLX")
 
         # Settings from JSON
         self.TIMEZONE: str = settings["timezone"]
@@ -52,7 +52,7 @@ class Config:
         self.ENABLE_RADAR: bool = settings["features"].get("enable_radar", True)
 
         # Job Configuration
-        self.JOB_TTL_MINUTES: int = int(os.getenv("JOB_TTL_MINUTES", "20"))
+        self.JOB_TTL_MINUTES: int = int(self._get_required_env("JOB_TTL_MINUTES"))
 
         # Bounding box (from JSON)
         # Coordinates are in EPSG:4326 (longitude/latitude)
@@ -110,4 +110,8 @@ class Config:
         logger.info(f"S3_TILES_DATA_SECURE: {self.S3_TILES_DATA_SECURE}")
         logger.info(f"RABBITMQ_HOST: {self.RABBITMQ_HOST}")
         logger.info(f"RABBITMQ_PORT: {self.RABBITMQ_PORT}")
+        logger.info(f"RABBITMQ_QUEUE: {self.RABBITMQ_QUEUE}")
+        logger.info(f"RABBITMQ_DLQ: {self.RABBITMQ_DLQ}")
+        logger.info(f"RABBITMQ_DLX: {self.RABBITMQ_DLX}")
+        logger.info(f"JOB_TTL_MINUTES: {self.JOB_TTL_MINUTES}")
         logger.info("=====================")

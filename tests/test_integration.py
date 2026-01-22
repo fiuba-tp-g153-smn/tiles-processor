@@ -67,6 +67,10 @@ def env_vars(tmp_path):
         "RABBITMQ_PORT": "5672",
         "RABBITMQ_USER": "guest",
         "RABBITMQ_PASSWORD": "guest",
+        "RABBITMQ_QUEUE": "tiles_work_queue",
+        "RABBITMQ_DLQ": "tiles_dead_letter_queue",
+        "RABBITMQ_DLX": "tiles_dlx",
+        "JOB_TTL_MINUTES": "20",
     }
 
 

@@ -114,6 +114,10 @@ services:
       - RABBITMQ_PORT=${RABBITMQ_PORT}
       - RABBITMQ_USER=${RABBITMQ_USER}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_QUEUE=${RABBITMQ_QUEUE}
+      - RABBITMQ_DLQ=${RABBITMQ_DLQ}
+      - RABBITMQ_DLX=${RABBITMQ_DLX}
+      - JOB_TTL_MINUTES=${JOB_TTL_MINUTES}
     restart: unless-stopped
 
   # Workers - process work units from the queue
@@ -145,6 +149,10 @@ services:
       - RABBITMQ_PORT=${RABBITMQ_PORT}
       - RABBITMQ_USER=${RABBITMQ_USER}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_QUEUE=${RABBITMQ_QUEUE}
+      - RABBITMQ_DLQ=${RABBITMQ_DLQ}
+      - RABBITMQ_DLX=${RABBITMQ_DLX}
+      - JOB_TTL_MINUTES=${JOB_TTL_MINUTES}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "/app/src/healthcheck.py"]
@@ -179,6 +187,10 @@ services:
       - RABBITMQ_PORT=${RABBITMQ_PORT}
       - RABBITMQ_USER=${RABBITMQ_USER}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_QUEUE=${RABBITMQ_QUEUE}
+      - RABBITMQ_DLQ=${RABBITMQ_DLQ}
+      - RABBITMQ_DLX=${RABBITMQ_DLX}
+      - JOB_TTL_MINUTES=${JOB_TTL_MINUTES}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "/app/src/healthcheck.py"]

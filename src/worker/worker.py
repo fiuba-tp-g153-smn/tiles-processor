@@ -210,7 +210,7 @@ def run_worker(config: Config) -> None:
     )
 
     # Connect with retry
-    rabbitmq.connect(max_retries=10, retry_delay=5.0)
+    mq_client.connect(max_retries=10, retry_delay=5.0)
 
     # Create progress tracker (SQLite-based)
     tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"
