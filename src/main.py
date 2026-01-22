@@ -18,11 +18,13 @@ Workers run continuously, consuming work units and processing them through
 the satellite image processing pipeline.
 """
 
-import logging
-import sys
+from logging import getLogger
+from sys import argv, exit
 
 from config import Config
 from logging_config import setup_logging
+from producer.image_discovery_producer import run_producer as start_producer
+from worker.worker import run_worker as start_worker
 
 EXIT_ERROR_CODE = 1
 EXIT_SUCCESS_CODE = 0
@@ -43,12 +45,10 @@ def print_usage():
 
 def run_worker(config: Config) -> int:
     """Start a worker that processes work units."""
-    logger = logging.getLogger(__name__)
+    logger = getLogger(__name__)
     logger.info("Starting worker mode...")
 
     try:
-        from worker.worker import run_worker as start_worker
-
         start_worker(config)
         return EXIT_SUCCESS_CODE
     except Exception as e:
@@ -58,12 +58,10 @@ def run_worker(config: Config) -> int:
 
 def run_producer(config: Config) -> int:
     """Run the producer to discover and publish new images."""
-    logger = logging.getLogger(__name__)
+    logger = getLogger(__name__)
     logger.info("Starting producer mode...")
 
     try:
-        from producer.image_discovery_producer import run_producer as start_producer
-
         start_producer(config)
         return EXIT_SUCCESS_CODE
     except Exception as e:
@@ -74,16 +72,16 @@ def run_producer(config: Config) -> int:
 def main() -> int:
     """Main entry point."""
     # Parse command line
-    if len(sys.argv) < 2:
+    if len(argv) < 2:
         print_usage()
         return EXIT_ERROR_CODE
 
-    mode = sys.argv[1].lower()
+    mode = argv[1].lower()
 
     # Setup config and logging
     config = Config()
     setup_logging(config)
-    logger = logging.getLogger(__name__)
+    logger = getLogger(__name__)
 
     config.log_config()
 
@@ -101,8 +99,8 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         exit_code = main()
-        sys.exit(exit_code)
+        exit(exit_code)
     except KeyboardInterrupt:
-        logger = logging.getLogger(__name__)
+        logger = getLogger(__name__)
         logger.info("Application stopped by user (KeyboardInterrupt).")
-        sys.exit(EXIT_SUCCESS_CODE)
+        exit(EXIT_SUCCESS_CODE)

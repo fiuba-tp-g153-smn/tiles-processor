@@ -53,7 +53,7 @@ class GoesProcessor(ImageProcessor):
         Execute the full processing pipeline.
         """
         logger.info(
-            f"[{work_unit.processor_type.upper()}] Starting processing for {work_unit.image_id}"
+            f"[{work_unit.processor_id.upper()}] Starting processing for {work_unit.image_id}"
         )
 
         # Verify input
@@ -127,8 +127,6 @@ class GoesProcessor(ImageProcessor):
             await self._minio_client.ensure_bucket_exists()
             await self._minio_client.upload_directory(tiles_output_dir, s3_prefix)
 
-            # Update work unit with final result
-            work_unit.paths.s3_tileset_prefix = s3_prefix
             logger.info(f"Processing complete: {s3_prefix}")
 
             # 6. Retention Policy Cleanup

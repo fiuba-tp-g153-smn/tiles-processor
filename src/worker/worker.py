@@ -1,21 +1,21 @@
 """Worker implementation for processing work units from RabbitMQ."""
 
-import asyncio
-import logging
-import signal
+from asyncio import AbstractEventLoop, new_event_loop, set_event_loop
+from logging import getLogger
+from signal import signal, SIGINT, SIGTERM
 from pathlib import Path
-from typing import Dict, Type, Optional
+from typing import Optional
 
+import processors  # noqa: F401
 from clients.rabbitmq_client import RabbitMQClient
 from clients.progress_tracker import ProgressTracker
 from config import Config
-from models.stage import Stage
+from data_sources import DataSourceRegistry, Goes19DataSource
+from models.band_config import BAND_CONFIGS
 from models.work_unit import WorkUnit
-from worker.stage_handlers.base_handler import BaseStageHandler
-from worker.stage_handlers.download_handler import DownloadHandler
-from worker.stage_handlers.process_handler import ProcessHandler
+from worker.work_handler import WorkHandler
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # Healthcheck file path
 HEALTH_FILE = Path("/app/data/tmp/healthy")
@@ -27,25 +27,15 @@ class Worker:
 
     The worker:
     1. Connects to RabbitMQ and starts consuming from the work queue
-    2. Dispatches each work unit to the appropriate stage handler
-    3. On success, publishes the next stage work unit and acknowledges
+    2. Processes each work unit (download + process in single atomic operation)
+    3. On success, acknowledges the message
     4. On failure, either retries or sends to dead letter queue
-
-    Stage Handlers:
-        - DOWNLOAD: DownloadHandler
-        - PROCESS: ProcessHandler
 
     Error Handling:
         - Transient errors: Retry up to max_retries times
         - Permanent errors: Send to dead letter queue
         - Handler exceptions are caught and logged
     """
-
-    # Map stages to handler classes
-    HANDLER_MAP: Dict[Stage, Type[BaseStageHandler]] = {
-        Stage.DOWNLOAD: DownloadHandler,
-        Stage.PROCESS: ProcessHandler,
-    }
 
     def __init__(
         self,
@@ -56,13 +46,11 @@ class Worker:
         self._config = config
         self._rabbitmq = rabbitmq_client
         self._progress_tracker = progress_tracker
-        self._handlers: Dict[Stage, BaseStageHandler] = {}
         self._running = True
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: Optional[AbstractEventLoop] = None
 
-        # Initialize handlers
-        self._handlers[Stage.DOWNLOAD] = DownloadHandler(config)
-        self._handlers[Stage.PROCESS] = ProcessHandler(config, progress_tracker)
+        # Initialize the unified work handler
+        self._handler = WorkHandler(config, progress_tracker)
 
     def _update_heartbeat(self) -> None:
         """Update the heartbeat file for health checks."""
@@ -82,15 +70,15 @@ class Worker:
         logger.info("Worker starting...")
 
         # Create a single event loop for the worker's lifetime
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
+        self._loop = new_event_loop()
+        set_event_loop(self._loop)
 
         # Update heartbeat on startup
         self._update_heartbeat()
 
         # Set up signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal(SIGINT, self._signal_handler)
+        signal(SIGTERM, self._signal_handler)
 
         try:
             # Start consuming (blocking)
@@ -144,22 +132,12 @@ class Worker:
 
         try:
             # Run the async handler in the shared event loop
-            updated_work_unit = self._loop.run_until_complete(
-                self._handle_work_unit(work_unit)
-            )
-
-            # Success - publish next stage if not terminal
-            if not updated_work_unit.is_terminal:
-                next_work_unit = updated_work_unit.create_next_stage()
-                if next_work_unit:
-                    client.publish(next_work_unit)
-                    logger.info(f"Published next stage: {next_work_unit}")
-            else:
-                logger.info(f"Completed terminal stage for {work_unit.image_id}")
+            self._loop.run_until_complete(self._handler.handle(work_unit))
 
             # Update heartbeat after successful processing
             self._update_heartbeat()
 
+            logger.info(f"Successfully processed {work_unit.image_id}")
             return True  # Acknowledge
 
         except Exception as e:
@@ -179,26 +157,6 @@ class Worker:
 
             return True  # Acknowledge (we've handled it via retry or DLQ)
 
-    async def _handle_work_unit(self, work_unit: WorkUnit) -> WorkUnit:
-        """
-        Dispatch work unit to the appropriate stage handler.
-
-        Args:
-            work_unit: The work unit to process
-
-        Returns:
-            Updated work unit with stage outputs populated
-
-        Raises:
-            Exception: If the handler fails
-        """
-        handler = self._handlers.get(work_unit.stage)
-        if handler is None:
-            raise ValueError(f"No handler for stage: {work_unit.stage}")
-
-        logger.info(f"Dispatching to {handler.__class__.__name__}")
-        return await handler.handle(work_unit)
-
 
 def run_worker(config: Config) -> None:
     """
@@ -209,6 +167,11 @@ def run_worker(config: Config) -> None:
     Args:
         config: Application configuration
     """
+    # Register GOES19 data sources for each band
+    for band_id, band_config in BAND_CONFIGS.items():
+        data_source = Goes19DataSource(band_config)
+        DataSourceRegistry.register(data_source)
+
     # Create RabbitMQ client
     rabbitmq = RabbitMQClient(
         host=config.RABBITMQ_HOST,

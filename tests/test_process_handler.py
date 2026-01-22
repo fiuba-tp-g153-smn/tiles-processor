@@ -1,5 +1,5 @@
 """
-Tests for the PROCESS stage handler and GoesProcessor.
+Tests for the GoesProcessor.
 """
 
 import sys
@@ -10,9 +10,8 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import pytest
-from worker.stage_handlers.process_handler import ProcessHandler
 from processors.goes_processor import GoesProcessor
-from models.work_unit import WorkUnit, Stage, WorkUnitPaths
+from models.work_unit import WorkUnit
 from config import Config
 
 
@@ -26,86 +25,6 @@ def mock_config():
     config.S3_TILES_DATA_RW_SECRET_KEY = "pass"
     config.S3_TILES_DATA_SECURE = False
     return config
-
-
-@pytest.fixture
-def mock_tracker():
-    return MagicMock()
-
-
-class TestProcessHandler:
-    """Tests for the ProcessHandler."""
-
-    @pytest.mark.asyncio
-    async def test_handle_dispatches_to_correct_processor(
-        self, mock_config, mock_tracker
-    ):
-        """Test that handle() calls the correct processor for the band."""
-        handler = ProcessHandler(mock_config, mock_tracker)
-
-        # Mock the processors
-        mock_b13 = AsyncMock()
-        mock_b9 = AsyncMock()
-        handler._processors = {
-            "band_13": mock_b13,
-            "band_9": mock_b9,
-        }
-
-        # Create work unit
-        work_unit = WorkUnit(
-            work_unit_id="1",
-            image_id="img1",
-            band_id="band_13",
-            stage=Stage.PROCESS,
-            paths=WorkUnitPaths(
-                source_s3_uri="s3://src/img1.nc", downloaded_file="/tmp/img1.nc"
-            ),
-            bounds={},
-            processor_type="band_13",
-        )
-
-        # Execute
-        result = await handler.handle(work_unit)
-
-        # Verify
-        mock_b13.process.assert_awaited_once_with("/tmp/img1.nc", work_unit)
-        mock_b9.process.assert_not_awaited()
-
-        # Verify tracker updated
-        mock_tracker.mark_completed.assert_called_once_with("img1", "band_13")
-
-        # Verify result is passed back
-        assert result is work_unit
-
-    @pytest.mark.asyncio
-    async def test_handle_cleanup_downloaded_file(self, mock_config, mock_tracker):
-        """Test that downloaded file is cleaned up after processing."""
-        handler = ProcessHandler(mock_config, mock_tracker)
-
-        mock_processor = AsyncMock()
-        handler._processors = {"band_13": mock_processor}
-
-        # Create dummy file
-        downloaded_file = Path("/tmp/test_download.nc")
-        # We mock _cleanup_file to check it's called, avoiding actual file IO issues in generic test env
-
-        with patch.object(handler, "_cleanup_file") as mock_cleanup:
-            work_unit = WorkUnit(
-                work_unit_id="1",
-                image_id="img1",
-                band_id="band_13",
-                stage=Stage.PROCESS,
-                paths=WorkUnitPaths(
-                    source_s3_uri="s3://src/img1.nc",
-                    downloaded_file=str(downloaded_file),
-                ),
-                bounds={},
-                processor_type="band_13",
-            )
-
-            await handler.handle(work_unit)
-
-            mock_cleanup.assert_called_once_with(str(downloaded_file))
 
 
 class TestGoesProcessor:
@@ -130,17 +49,15 @@ class TestGoesProcessor:
             processor._cleanup_file = MagicMock()
             processor._cleanup_directory = MagicMock()
 
-            # Create work unit
-            work_unit = WorkUnit(
-                work_unit_id="1",
-                image_id="img1",
-                band_id="band_13",
-                stage=Stage.PROCESS,
-                paths=WorkUnitPaths(
-                    source_s3_uri="s3://src/img1.nc", downloaded_file="/tmp/img1.nc"
-                ),
+            # Create work unit using new format
+            work_unit = WorkUnit.create(
+                image_id="img1.nc",
+                source_uri="s3://noaa-goes19/path/to/img1.nc",
+                data_source_id="goes19_band_13",
+                processor_id="goes_band_13",
+                output_prefix="band_13/tiles",
                 bounds={"minx": 0, "miny": 0, "maxx": 10, "maxy": 10},
-                processor_type="band_13",
+                band_id="band_13",
             )
 
             # Mock existence of input file
@@ -154,7 +71,3 @@ class TestGoesProcessor:
             processor._generate_tiles.assert_called_once()
             processor._minio_client.upload_directory.assert_awaited_once()
             processor._enforce_retention_policy.assert_awaited_once()
-
-            # Helper: verify s3 path populated
-            assert work_unit.paths.s3_tileset_prefix is not None
-            assert "tiles" in work_unit.paths.s3_tileset_prefix

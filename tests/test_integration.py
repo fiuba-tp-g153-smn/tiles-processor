@@ -21,7 +21,8 @@ import numpy as np
 from config import Config
 import logging
 from worker.worker import Worker
-from models.work_unit import WorkUnit, WorkUnitPaths, Stage
+from worker.work_handler import WorkHandler
+from models.work_unit import WorkUnit
 from models.band_config import BandConfig
 
 logger = logging.getLogger(__name__)
@@ -78,50 +79,44 @@ class TestWorkerIntegration:
     def test_worker_processes_message_successfully(
         self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
     ):
-        """Test that worker processes a work unit and publishes the next stage."""
+        """Test that worker processes a work unit and acknowledges it."""
 
         with mock.patch.dict(os.environ, env_vars, clear=True):
             config = Config(settings_path=temp_settings_file)
 
             worker = Worker(config, mock_rabbitmq, mock_tracker)
 
-            # Create a mock handler for the DOWNLOAD stage
-            mock_handler = AsyncMock()
-
-            # Setup the handler to return a modified work unit (as if download finished)
-            async def mock_handle(work_unit):
-                work_unit.paths.downloaded_file = "/tmp/downloaded.nc"
-                return work_unit
-
-            mock_handler.handle.side_effect = mock_handle
+            # Mock the handler to simulate successful processing
+            mock_handler = MagicMock()
+            mock_handler.handle = AsyncMock()
+            worker._handler = mock_handler
 
             # Initialize loop for the worker manually since we are not calling start()
             worker._loop = asyncio.new_event_loop()
 
-            # Inject the mock handler
-            worker._handlers[Stage.DOWNLOAD] = mock_handler
-
-            # Create a test work unit
-            work_unit = WorkUnit.create_download_work_unit(
-                source_s3_uri="s3://bucket/test_image.nc",
-                band_id="band_13",
+            # Create a test work unit using new format
+            work_unit = WorkUnit.create(
+                image_id="test_image.nc",
+                source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
+                data_source_id="goes19_band_13",
+                processor_id="goes_band_13",
+                output_prefix="band_13/tiles",
                 bounds=config.get_bounds(),
+                band_id="band_13",
             )
 
             # Process the message
             result = worker._process_message(work_unit, mock_rabbitmq, 1)
 
-            # Verify acknowledgemenet
+            # Verify acknowledgement
             assert result is True
 
             # Verify handler was called
-            mock_handler.handle.assert_called_once()
+            mock_handler.handle.assert_called_once_with(work_unit)
 
-            # Verify next stage was published (DOWNLOAD -> PROCESS)
-            assert mock_rabbitmq.publish.call_count == 1
-            published_unit = mock_rabbitmq.publish.call_args[0][0]
-            assert published_unit.stage == Stage.PROCESS
-            assert published_unit.paths.downloaded_file == "/tmp/downloaded.nc"
+            # Verify no retry or DLQ publish since processing succeeded
+            mock_rabbitmq.publish.assert_not_called()
+            mock_rabbitmq.publish_to_dlq.assert_not_called()
 
     def test_worker_handles_failure_and_retries(
         self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
@@ -133,18 +128,22 @@ class TestWorkerIntegration:
             worker = Worker(config, mock_rabbitmq, mock_tracker)
 
             # Mock handler to raise exception
-            mock_handler = AsyncMock()
-            mock_handler.handle.side_effect = Exception("Download failed")
-            worker._handlers[Stage.DOWNLOAD] = mock_handler
+            mock_handler = MagicMock()
+            mock_handler.handle = AsyncMock(side_effect=Exception("Processing failed"))
+            worker._handler = mock_handler
 
             # Initialize loop
             worker._loop = asyncio.new_event_loop()
 
             # Create work unit
-            work_unit = WorkUnit.create_download_work_unit(
-                source_s3_uri="s3://bucket/test_image.nc",
-                band_id="band_13",
+            work_unit = WorkUnit.create(
+                image_id="test_image.nc",
+                source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
+                data_source_id="goes19_band_13",
+                processor_id="goes_band_13",
+                output_prefix="band_13/tiles",
                 bounds=config.get_bounds(),
+                band_id="band_13",
             )
 
             # Process
@@ -168,18 +167,22 @@ class TestWorkerIntegration:
             worker = Worker(config, mock_rabbitmq, mock_tracker)
 
             # Mock handler to raise exception
-            mock_handler = AsyncMock()
-            mock_handler.handle.side_effect = Exception("Persistent failure")
-            worker._handlers[Stage.DOWNLOAD] = mock_handler
+            mock_handler = MagicMock()
+            mock_handler.handle = AsyncMock(side_effect=Exception("Persistent failure"))
+            worker._handler = mock_handler
 
             # Initialize loop
             worker._loop = asyncio.new_event_loop()
 
             # Create work unit with max retries reached
-            work_unit = WorkUnit.create_download_work_unit(
-                source_s3_uri="s3://bucket/test_image.nc",
-                band_id="band_13",
+            work_unit = WorkUnit.create(
+                image_id="test_image.nc",
+                source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
+                data_source_id="goes19_band_13",
+                processor_id="goes_band_13",
+                output_prefix="band_13/tiles",
                 bounds=config.get_bounds(),
+                band_id="band_13",
             )
             work_unit.retry_count = 3
             work_unit.max_retries = 3
