@@ -13,6 +13,10 @@ os.environ.setdefault("RABBITMQ_HOST", "rabbitmq")
 os.environ.setdefault("RABBITMQ_PORT", "5672")
 os.environ.setdefault("RABBITMQ_USER", "guest")
 os.environ.setdefault("RABBITMQ_PASSWORD", "guest")
+os.environ.setdefault("RABBITMQ_QUEUE", "tiles_queue")
+os.environ.setdefault("RABBITMQ_DLQ", "tiles_dlq")
+os.environ.setdefault("RABBITMQ_DLX", "tiles_dlx")
+os.environ.setdefault("JOB_TTL_MINUTES", "20")
 
 
 @pytest.fixture(autouse=True)

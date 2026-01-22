@@ -52,6 +52,10 @@ class TestConfig:
             "RABBITMQ_PORT": "5672",
             "RABBITMQ_USER": "guest",
             "RABBITMQ_PASSWORD": "guest",
+            "RABBITMQ_QUEUE": "tiles_queue",
+            "RABBITMQ_DLQ": "tiles_dlq",
+            "RABBITMQ_DLX": "tiles_dlx",
+            "JOB_TTL_MINUTES": "20",
         }
 
     def test_config_loads_from_settings_file(self, temp_settings_file, env_vars):
