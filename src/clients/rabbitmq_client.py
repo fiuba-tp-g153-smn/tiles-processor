@@ -12,13 +12,11 @@ from models.work_unit import WorkUnit
 
 logger = logging.getLogger(__name__)
 
-# Queue names
-WORK_QUEUE = "tiles_work_queue"
-DEAD_LETTER_QUEUE = "tiles_dead_letter_queue"
-DEAD_LETTER_EXCHANGE = "tiles_dlx"
+
+from clients.message_queue_client import MessageQueueClient
 
 
-class RabbitMQClient:
+class RabbitMQClient(MessageQueueClient):
     """
     RabbitMQ client for publishing and consuming work units.
 
@@ -44,6 +42,9 @@ class RabbitMQClient:
         port: int,
         username: str,
         password: str,
+        queue_name: str = "tiles_work_queue",
+        dlq_name: str = "tiles_dead_letter_queue",
+        dlx_name: str = "tiles_dlx",
         virtual_host: str = "/",
     ):
         self._host = host
@@ -51,6 +52,10 @@ class RabbitMQClient:
         self._username = username
         self._password = password
         self._virtual_host = virtual_host
+
+        self._queue_name = queue_name
+        self._dlq_name = dlq_name
+        self._dlx_name = dlx_name
 
         self._connection: Optional[pika.BlockingConnection] = None
         self._channel: Optional[BlockingChannel] = None
@@ -100,35 +105,35 @@ class RabbitMQClient:
         """Declare queues and exchanges for the work queue system."""
         # Declare dead letter exchange
         self._channel.exchange_declare(
-            exchange=DEAD_LETTER_EXCHANGE,
+            exchange=self._dlx_name,
             exchange_type="direct",
             durable=True,
         )
 
         # Declare dead letter queue
         self._channel.queue_declare(
-            queue=DEAD_LETTER_QUEUE,
+            queue=self._dlq_name,
             durable=True,
         )
 
         # Bind dead letter queue to exchange
         self._channel.queue_bind(
-            queue=DEAD_LETTER_QUEUE,
-            exchange=DEAD_LETTER_EXCHANGE,
-            routing_key=DEAD_LETTER_QUEUE,
+            queue=self._dlq_name,
+            exchange=self._dlx_name,
+            routing_key=self._dlq_name,
         )
 
         # Declare main work queue with dead letter configuration
         self._channel.queue_declare(
-            queue=WORK_QUEUE,
+            queue=self._queue_name,
             durable=True,
             arguments={
-                "x-dead-letter-exchange": DEAD_LETTER_EXCHANGE,
-                "x-dead-letter-routing-key": DEAD_LETTER_QUEUE,
+                "x-dead-letter-exchange": self._dlx_name,
+                "x-dead-letter-routing-key": self._dlq_name,
             },
         )
 
-        logger.info(f"Queues configured: {WORK_QUEUE}, {DEAD_LETTER_QUEUE}")
+        logger.info(f"Queues configured: {self._queue_name}, {self._dlq_name}")
 
     def close(self) -> None:
         """Close the connection to RabbitMQ."""
@@ -154,7 +159,7 @@ class RabbitMQClient:
 
         self._channel.basic_publish(
             exchange="",
-            routing_key=WORK_QUEUE,
+            routing_key=self._queue_name,
             body=message.encode("utf-8"),
             properties=pika.BasicProperties(
                 delivery_mode=2,  # Persistent
@@ -185,8 +190,8 @@ class RabbitMQClient:
         message = json.dumps(data)
 
         self._channel.basic_publish(
-            exchange=DEAD_LETTER_EXCHANGE,
-            routing_key=DEAD_LETTER_QUEUE,
+            exchange=self._dlx_name,
+            routing_key=self._dlq_name,
             body=message.encode("utf-8"),
             properties=pika.BasicProperties(
                 delivery_mode=2,
@@ -198,7 +203,7 @@ class RabbitMQClient:
 
     def consume(
         self,
-        callback: Callable[[WorkUnit, "RabbitMQClient", int], bool],
+        callback: Callable[[WorkUnit, "MessageQueueClient", int], bool],
         prefetch_count: int = 1,
     ) -> None:
         """
@@ -242,12 +247,12 @@ class RabbitMQClient:
                 channel.basic_nack(delivery_tag=delivery_tag, requeue=False)
 
         self._channel.basic_consume(
-            queue=WORK_QUEUE,
+            queue=self._queue_name,
             on_message_callback=on_message,
             auto_ack=False,
         )
 
-        logger.info(f"Started consuming from {WORK_QUEUE}")
+        logger.info(f"Started consuming from {self._queue_name}")
         self._channel.start_consuming()
 
     def ack(self, delivery_tag: int) -> None:
@@ -260,10 +265,12 @@ class RabbitMQClient:
         if self._channel and not self._channel.is_closed:
             self._channel.basic_nack(delivery_tag=delivery_tag, requeue=requeue)
 
-    def get_queue_size(self, queue_name: str = WORK_QUEUE) -> int:
+    def get_queue_size(self, queue_name: Optional[str] = None) -> int:
         """Get the number of messages in a queue."""
         if not self._channel or self._channel.is_closed:
             raise RuntimeError("Not connected to RabbitMQ")
 
-        result = self._channel.queue_declare(queue=queue_name, passive=True)
+        target_queue = queue_name if queue_name else self._queue_name
+
+        result = self._channel.queue_declare(queue=target_queue, passive=True)
         return result.method.message_count

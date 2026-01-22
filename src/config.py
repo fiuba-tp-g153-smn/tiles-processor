@@ -39,6 +39,9 @@ class Config:
         self.RABBITMQ_PORT: int = int(self._get_required_env("RABBITMQ_PORT"))
         self.RABBITMQ_USER: str = self._get_required_env("RABBITMQ_USER")
         self.RABBITMQ_PASSWORD: str = self._get_required_env("RABBITMQ_PASSWORD")
+        self.RABBITMQ_QUEUE: str = os.getenv("RABBITMQ_QUEUE", "tiles_work_queue")
+        self.RABBITMQ_DLQ: str = os.getenv("RABBITMQ_DLQ", "tiles_dead_letter_queue")
+        self.RABBITMQ_DLX: str = os.getenv("RABBITMQ_DLX", "tiles_dlx")
 
         # Settings from JSON
         self.TIMEZONE: str = settings["timezone"]

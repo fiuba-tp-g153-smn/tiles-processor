@@ -12,3 +12,4 @@ __pycache__/
 reports/
 .claude
 benchmark_results/
+.agent

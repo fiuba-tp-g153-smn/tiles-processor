@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from clients.rabbitmq_client import RabbitMQClient
+from clients.message_queue_client import MessageQueueClient
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from data_sources import DataSourceRegistry, Goes19DataSource, RadarDataSource
@@ -40,11 +41,11 @@ class Worker:
     def __init__(
         self,
         config: Config,
-        rabbitmq_client: RabbitMQClient,
+        mq_client: MessageQueueClient,
         handler: WorkHandler,
     ):
         self._config = config
-        self._rabbitmq = rabbitmq_client
+        self._mq_client = mq_client
         self._handler = handler
         self._running = True
         self._loop: Optional[AbstractEventLoop] = None
@@ -79,7 +80,7 @@ class Worker:
 
         try:
             # Start consuming (blocking)
-            self._rabbitmq.consume(
+            self._mq_client.consume(
                 callback=self._process_message,
                 prefetch_count=1,
             )
@@ -98,7 +99,7 @@ class Worker:
         """Clean shutdown of the worker."""
         logger.info("Worker shutting down...")
         try:
-            self._rabbitmq.close()
+            self._mq_client.close()
         except Exception as e:
             logger.warning(f"Error closing RabbitMQ connection: {e}")
 
@@ -109,7 +110,7 @@ class Worker:
         logger.info("Worker stopped")
 
     def _process_message(
-        self, work_unit: WorkUnit, client: RabbitMQClient, delivery_tag: int
+        self, work_unit: WorkUnit, client: MessageQueueClient, delivery_tag: int
     ) -> bool:
         """
         Process a single work unit message.
@@ -197,12 +198,15 @@ def run_worker(config: Config) -> None:
     data_source_registry = _create_data_source_registry()
     processor_registry = _create_processor_registry()
 
-    # Create RabbitMQ client
-    rabbitmq = RabbitMQClient(
+    # Create Message Queue client
+    mq_client = RabbitMQClient(
         host=config.RABBITMQ_HOST,
         port=config.RABBITMQ_PORT,
         username=config.RABBITMQ_USER,
         password=config.RABBITMQ_PASSWORD,
+        queue_name=config.RABBITMQ_QUEUE,
+        dlq_name=config.RABBITMQ_DLQ,
+        dlx_name=config.RABBITMQ_DLX,
     )
 
     # Connect with retry
@@ -221,5 +225,5 @@ def run_worker(config: Config) -> None:
     )
 
     # Create and start worker
-    worker = Worker(config, rabbitmq, handler)
+    worker = Worker(config, mq_client, handler)
     worker.start()

@@ -11,6 +11,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from clients.rabbitmq_client import RabbitMQClient
+from clients.message_queue_client import MessageQueueClient
 from clients.s3_client import S3Client
 from clients.progress_tracker import ProgressTracker
 from config import Config
@@ -48,12 +49,12 @@ class ImageDiscoveryProducer:
     def __init__(
         self,
         config: Config,
-        rabbitmq_client: RabbitMQClient,
+        mq_client: MessageQueueClient,
         progress_tracker: ProgressTracker,
         data_source_registry: DataSourceRegistry,
     ):
         self._config = config
-        self._rabbitmq = rabbitmq_client
+        self._mq_client = mq_client
         self._progress_tracker = progress_tracker
         self._data_source_registry = data_source_registry
 
@@ -167,7 +168,7 @@ class ImageDiscoveryProducer:
                 bounds=bounds,
                 band_id=band_id,
             )
-            self._rabbitmq.publish(work_unit)
+            self._mq_client.publish(work_unit)
             published += 1
             logger.debug(f"Published work unit for {image_info.image_id}")
 
@@ -227,19 +228,22 @@ def run_producer(config: Config) -> None:
         tracker_path, ttl=timedelta(minutes=config.JOB_TTL_MINUTES)
     )
 
-    # Create RabbitMQ client
-    rabbitmq = RabbitMQClient(
+    # Create Message Queue client
+    mq_client = RabbitMQClient(
         host=config.RABBITMQ_HOST,
         port=config.RABBITMQ_PORT,
         username=config.RABBITMQ_USER,
         password=config.RABBITMQ_PASSWORD,
+        queue_name=config.RABBITMQ_QUEUE,
+        dlq_name=config.RABBITMQ_DLQ,
+        dlx_name=config.RABBITMQ_DLX,
     )
-    rabbitmq.connect(max_retries=10, retry_delay=5.0)
+    mq_client.connect(max_retries=10, retry_delay=5.0)
 
     # Create producer with dependencies
     producer = ImageDiscoveryProducer(
         config=config,
-        rabbitmq_client=rabbitmq,
+        mq_client=mq_client,
         progress_tracker=progress_tracker,
         data_source_registry=data_source_registry,
     )
@@ -289,7 +293,7 @@ def run_producer(config: Config) -> None:
         await stop_event.wait()
 
         scheduler.shutdown()
-        rabbitmq.close()
+        mq_client.close()
         logger.info("Producer stopped")
 
     # Run the async scheduler
