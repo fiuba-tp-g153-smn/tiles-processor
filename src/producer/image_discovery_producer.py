@@ -1,4 +1,4 @@
-"""Producer that discovers new satellite images and publishes work units."""
+"""Producer that discovers new images and publishes work units."""
 
 from asyncio import Event, run
 from logging import getLogger
@@ -19,6 +19,7 @@ from data_sources import (
     DataSource,
     DiscoveryConfig,
     Goes19DataSource,
+    RadarDataSource,
 )
 from models.band_config import BAND_CONFIGS
 from models.work_unit import WorkUnit
@@ -28,7 +29,7 @@ logger = getLogger(__name__)
 
 class ImageDiscoveryProducer:
     """
-    Producer that discovers new satellite images and publishes work units.
+    Producer that discovers new images and publishes work units.
 
     This producer:
     1. Runs on a schedule using APScheduler
@@ -38,6 +39,7 @@ class ImageDiscoveryProducer:
     5. Checks in-progress tracker (to avoid duplicate work units)
     6. Creates work units for new images
     7. Publishes work units to RabbitMQ
+    8. Marks images as in-progress in SQLite before publishing
     """
 
     # Default schedule: every 5 minutes
@@ -48,10 +50,12 @@ class ImageDiscoveryProducer:
         config: Config,
         rabbitmq_client: RabbitMQClient,
         progress_tracker: ProgressTracker,
+        data_source_registry: DataSourceRegistry,
     ):
         self._config = config
         self._rabbitmq = rabbitmq_client
         self._progress_tracker = progress_tracker
+        self._data_source_registry = data_source_registry
 
         # S3 client for MinIO (to check existing tiles)
         self._minio_client = S3Client.create_with_credentials(
@@ -74,7 +78,7 @@ class ImageDiscoveryProducer:
         total_published = 0
 
         # Process each registered data source
-        for data_source in DataSourceRegistry.get_all():
+        for data_source in self._data_source_registry.get_all():
             if not self._is_source_enabled(data_source):
                 logger.info(f"Skipping {data_source.source_id} (disabled in config)")
                 continue
@@ -123,7 +127,7 @@ class ImageDiscoveryProducer:
             f"Found {len(existing_tilesets)} existing tilesets for {data_source.source_id}"
         )
 
-        # Get in-progress images
+        # Get in-progress images from SQLite
         in_progress = self._progress_tracker.get_in_progress_images(band_id)
         logger.info(
             f"Found {len(in_progress)} images in progress for {data_source.source_id}"
@@ -149,7 +153,7 @@ class ImageDiscoveryProducer:
         # Publish work units for new images
         published = 0
         for image_info in new_images:
-            # Mark as in-progress before publishing
+            # Mark as in-progress in SQLite BEFORE publishing to queue
             self._progress_tracker.mark_in_progress(image_info.image_id, band_id)
 
             work_unit = WorkUnit.create(
@@ -186,6 +190,21 @@ class ImageDiscoveryProducer:
             return set()
 
 
+def _create_data_source_registry() -> DataSourceRegistry:
+    """Create and populate the data source registry."""
+    registry = DataSourceRegistry()
+
+    # Register GOES19 data sources for each band
+    for band_id, band_config in BAND_CONFIGS.items():
+        data_source = Goes19DataSource(band_config)
+        registry.register(data_source)
+
+    # Register Radar data source (placeholder)
+    registry.register(RadarDataSource())
+
+    return registry
+
+
 def run_producer(config: Config) -> None:
     """
     Entry point to run the producer with APScheduler.
@@ -195,16 +214,14 @@ def run_producer(config: Config) -> None:
     Args:
         config: Application configuration
     """
-    # Register GOES19 data sources for each enabled band
-    for band_id, band_config in BAND_CONFIGS.items():
-        data_source = Goes19DataSource(band_config)
-        DataSourceRegistry.register(data_source)
+    # Create data source registry
+    data_source_registry = _create_data_source_registry()
 
     logger.info("Producer starting with APScheduler...")
 
-    # Create progress tracker
-    tracker_file = Path(config.TMP_DIR) / "progress_tracker.json"
-    progress_tracker = ProgressTracker(tracker_file)
+    # Create progress tracker (SQLite-based)
+    tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"
+    progress_tracker = ProgressTracker(tracker_path)
 
     # Create RabbitMQ client
     rabbitmq = RabbitMQClient(
@@ -215,8 +232,13 @@ def run_producer(config: Config) -> None:
     )
     rabbitmq.connect(max_retries=10, retry_delay=5.0)
 
-    # Create producer
-    producer = ImageDiscoveryProducer(config, rabbitmq, progress_tracker)
+    # Create producer with dependencies
+    producer = ImageDiscoveryProducer(
+        config=config,
+        rabbitmq_client=rabbitmq,
+        progress_tracker=progress_tracker,
+        data_source_registry=data_source_registry,
+    )
 
     # Create scheduler
     scheduler = AsyncIOScheduler(timezone=config.TIMEZONE)
@@ -234,7 +256,7 @@ def run_producer(config: Config) -> None:
         job_wrapper,
         CronTrigger.from_crontab(cron_schedule),
         id="image_discovery",
-        name="Discover new satellite images",
+        name="Discover new images",
         max_instances=1,
         coalesce=True,
         misfire_grace_time=60,

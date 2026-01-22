@@ -6,13 +6,13 @@ from signal import signal, SIGINT, SIGTERM
 from pathlib import Path
 from typing import Optional
 
-import processors  # noqa: F401
 from clients.rabbitmq_client import RabbitMQClient
 from clients.progress_tracker import ProgressTracker
 from config import Config
-from data_sources import DataSourceRegistry, Goes19DataSource
+from data_sources import DataSourceRegistry, Goes19DataSource, RadarDataSource
 from models.band_config import BAND_CONFIGS
 from models.work_unit import WorkUnit
+from processors import ProcessorRegistry, GoesProcessor, RadarProcessor
 from worker.work_handler import WorkHandler
 
 logger = getLogger(__name__)
@@ -41,16 +41,13 @@ class Worker:
         self,
         config: Config,
         rabbitmq_client: RabbitMQClient,
-        progress_tracker: ProgressTracker,
+        handler: WorkHandler,
     ):
         self._config = config
         self._rabbitmq = rabbitmq_client
-        self._progress_tracker = progress_tracker
+        self._handler = handler
         self._running = True
         self._loop: Optional[AbstractEventLoop] = None
-
-        # Initialize the unified work handler
-        self._handler = WorkHandler(config, progress_tracker)
 
     def _update_heartbeat(self) -> None:
         """Update the heartbeat file for health checks."""
@@ -158,6 +155,35 @@ class Worker:
             return True  # Acknowledge (we've handled it via retry or DLQ)
 
 
+def _create_data_source_registry() -> DataSourceRegistry:
+    """Create and populate the data source registry."""
+    registry = DataSourceRegistry()
+
+    # Register GOES19 data sources for each band
+    for band_id, band_config in BAND_CONFIGS.items():
+        data_source = Goes19DataSource(band_config)
+        registry.register(data_source)
+
+    # Register Radar data source (placeholder)
+    registry.register(RadarDataSource())
+
+    return registry
+
+
+def _create_processor_registry() -> ProcessorRegistry:
+    """Create and populate the processor registry."""
+    registry = ProcessorRegistry()
+
+    # Register GOES processors
+    registry.register("goes_band_13", GoesProcessor)
+    registry.register("goes_band_9", GoesProcessor)
+
+    # Register Radar processor (placeholder)
+    registry.register("radar", RadarProcessor)
+
+    return registry
+
+
 def run_worker(config: Config) -> None:
     """
     Entry point to run a worker.
@@ -167,10 +193,9 @@ def run_worker(config: Config) -> None:
     Args:
         config: Application configuration
     """
-    # Register GOES19 data sources for each band
-    for band_id, band_config in BAND_CONFIGS.items():
-        data_source = Goes19DataSource(band_config)
-        DataSourceRegistry.register(data_source)
+    # Create registries
+    data_source_registry = _create_data_source_registry()
+    processor_registry = _create_processor_registry()
 
     # Create RabbitMQ client
     rabbitmq = RabbitMQClient(
@@ -183,10 +208,18 @@ def run_worker(config: Config) -> None:
     # Connect with retry
     rabbitmq.connect(max_retries=10, retry_delay=5.0)
 
-    # Create progress tracker
-    tracker_file = Path(config.TMP_DIR) / "progress_tracker.json"
-    progress_tracker = ProgressTracker(tracker_file)
+    # Create progress tracker (SQLite-based)
+    tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"
+    progress_tracker = ProgressTracker(tracker_path)
+
+    # Create work handler with dependencies
+    handler = WorkHandler(
+        config=config,
+        progress_tracker=progress_tracker,
+        data_source_registry=data_source_registry,
+        processor_registry=processor_registry,
+    )
 
     # Create and start worker
-    worker = Worker(config, rabbitmq, progress_tracker)
+    worker = Worker(config, rabbitmq, handler)
     worker.start()

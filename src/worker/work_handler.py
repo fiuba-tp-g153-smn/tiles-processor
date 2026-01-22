@@ -1,6 +1,6 @@
 """Unified work handler for processing work units (download + process)."""
 
-import logging
+from logging import getLogger
 from pathlib import Path
 
 from clients.progress_tracker import ProgressTracker
@@ -9,7 +9,7 @@ from data_sources import DataSourceRegistry
 from models.work_unit import WorkUnit
 from processors import ProcessorRegistry, ImageProcessor
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 
 class WorkHandler:
@@ -25,9 +25,17 @@ class WorkHandler:
     The download and process are combined into a single atomic unit of work.
     """
 
-    def __init__(self, config: Config, progress_tracker: ProgressTracker):
+    def __init__(
+        self,
+        config: Config,
+        progress_tracker: ProgressTracker,
+        data_source_registry: DataSourceRegistry,
+        processor_registry: ProcessorRegistry,
+    ):
         self._config = config
         self._progress_tracker = progress_tracker
+        self._data_source_registry = data_source_registry
+        self._processor_registry = processor_registry
         self._base_dir = Path(config.TMP_DIR)
 
         # Cache for processor instances (lazy instantiation)
@@ -36,7 +44,7 @@ class WorkHandler:
     def _get_processor(self, processor_id: str) -> ImageProcessor:
         """Get or create a processor instance."""
         if processor_id not in self._processor_cache:
-            processor_class = ProcessorRegistry.get(processor_id)
+            processor_class = self._processor_registry.get(processor_id)
             self._processor_cache[processor_id] = processor_class(self._config)
         return self._processor_cache[processor_id]
 
@@ -53,7 +61,7 @@ class WorkHandler:
         logger.info(f"[HANDLER] Starting processing for {work_unit}")
 
         # Get data source and processor
-        data_source = DataSourceRegistry.get(work_unit.data_source_id)
+        data_source = self._data_source_registry.get(work_unit.data_source_id)
         processor = self._get_processor(work_unit.processor_id)
 
         # Setup directories
@@ -69,7 +77,7 @@ class WorkHandler:
             logger.info(f"[HANDLER] Processing {work_unit.image_id}")
             await processor.process(str(local_path), work_unit)
 
-            # Step 3: Mark as completed
+            # Step 3: Mark as completed in SQLite
             self._progress_tracker.mark_completed(work_unit.image_id, work_unit.band_id)
             logger.info(f"[HANDLER] Completed {work_unit.image_id}")
 
