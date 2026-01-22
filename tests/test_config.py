@@ -47,6 +47,11 @@ class TestConfig:
             "S3_TILES_DATA_ENDPOINT": "minio:9000",
             "S3_TILES_DATA_TILES_PROCESSOR_USER": "minioadmin",
             "S3_TILES_DATA_TILES_PROCESSOR_PASSWORD": "minioadmin",
+            "S3_TILES_DATA_BUCKET_NAME": "tiles-data",
+            "RABBITMQ_HOST": "rabbitmq",
+            "RABBITMQ_PORT": "5672",
+            "RABBITMQ_USER": "guest",
+            "RABBITMQ_PASSWORD": "guest",
         }
 
     def test_config_loads_from_settings_file(self, temp_settings_file, env_vars):
