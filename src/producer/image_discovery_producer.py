@@ -24,6 +24,7 @@ from data_sources import (
 )
 from models.band_config import BAND_CONFIGS
 from models.work_unit import WorkUnit
+from health_server import HealthCheckServer
 
 logger = getLogger(__name__)
 
@@ -240,6 +241,17 @@ def run_producer(config: Config) -> None:
     )
     mq_client.connect(max_retries=10, retry_delay=5.0)
 
+    # Start health check server
+    def check_readiness() -> tuple[bool, str]:
+        if not mq_client.is_connected:
+            return False, "RabbitMQ not connected"
+        return True, "Dependencies healthy"
+
+    health_server = HealthCheckServer(
+        port=config.HEALTH_PORT, check_readiness=check_readiness
+    )
+    health_server.start()
+
     # Create producer with dependencies
     producer = ImageDiscoveryProducer(
         config=config,
@@ -294,6 +306,7 @@ def run_producer(config: Config) -> None:
 
         scheduler.shutdown()
         mq_client.close()
+        health_server.stop()
         logger.info("Producer stopped")
 
     # Run the async scheduler

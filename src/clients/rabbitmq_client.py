@@ -274,3 +274,8 @@ class RabbitMQClient(MessageQueueClient):
 
         result = self._channel.queue_declare(queue=target_queue, passive=True)
         return result.method.message_count
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if connected to RabbitMQ."""
+        return self._connection is not None and self._connection.is_open

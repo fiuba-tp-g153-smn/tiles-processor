@@ -49,4 +49,4 @@ ENV DATA_DIR=$DATA_DIR
 CMD ["python3", "src/main.py", "process_band_13"]
 
 # Health check
-HEALTHCHECK --interval=2s --timeout=10s --retries=3 CMD python3 /app/src/healthcheck.py || exit 1
+HEALTHCHECK --interval=5s --timeout=5s --retries=3 CMD curl -f http://localhost:8080/health || exit 1

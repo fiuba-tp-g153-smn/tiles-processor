@@ -15,11 +15,11 @@ from models.band_config import BAND_CONFIGS
 from models.work_unit import WorkUnit
 from processors import ProcessorRegistry, GoesProcessor, RadarProcessor
 from worker.work_handler import WorkHandler
+from health_server import HealthCheckServer
 
 logger = getLogger(__name__)
 
 # Healthcheck file path
-HEALTH_FILE = Path("/app/data/tmp/healthy")
 
 
 class Worker:
@@ -50,13 +50,12 @@ class Worker:
         self._running = True
         self._loop: Optional[AbstractEventLoop] = None
 
-    def _update_heartbeat(self) -> None:
-        """Update the heartbeat file for health checks."""
-        try:
-            HEALTH_FILE.parent.mkdir(parents=True, exist_ok=True)
-            HEALTH_FILE.touch()
-        except Exception as e:
-            logger.warning(f"Failed to update heartbeat file: {e}")
+    def _check_readiness(self) -> tuple[bool, str]:
+        """Check if external dependencies are available."""
+        # Check RabbitMQ connection
+        if not self._mq_client.is_connected:
+            return False, "RabbitMQ not connected"
+        return True, "Dependencies healthy"
 
     def start(self) -> None:
         """
@@ -71,8 +70,11 @@ class Worker:
         self._loop = new_event_loop()
         set_event_loop(self._loop)
 
-        # Update heartbeat on startup
-        self._update_heartbeat()
+        # Start health check server
+        self._health_server = HealthCheckServer(
+            port=self._config.HEALTH_PORT, check_readiness=self._check_readiness
+        )
+        self._health_server.start()
 
         # Set up signal handlers for graceful shutdown
         signal(SIGINT, self._signal_handler)
@@ -103,6 +105,10 @@ class Worker:
         except Exception as e:
             logger.warning(f"Error closing RabbitMQ connection: {e}")
 
+        # Stop health server
+        if hasattr(self, "_health_server"):
+            self._health_server.stop()
+
         # Close the event loop
         if self._loop and not self._loop.is_closed():
             self._loop.close()
@@ -131,9 +137,6 @@ class Worker:
         try:
             # Run the async handler in the shared event loop
             self._loop.run_until_complete(self._handler.handle(work_unit))
-
-            # Update heartbeat after successful processing
-            self._update_heartbeat()
 
             logger.info(f"Successfully processed {work_unit.image_id}")
             return True  # Acknowledge

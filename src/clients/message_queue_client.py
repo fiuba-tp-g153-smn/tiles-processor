@@ -100,3 +100,9 @@ class MessageQueueClient(ABC):
             Number of messages in the queue
         """
         pass
+
+    @property
+    @abstractmethod
+    def is_connected(self) -> bool:
+        """Check if connected to the message queue."""
+        pass

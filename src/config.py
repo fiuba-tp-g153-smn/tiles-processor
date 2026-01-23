@@ -54,6 +54,9 @@ class Config:
         # Job Configuration
         self.JOB_TTL_MINUTES: int = int(self._get_required_env("JOB_TTL_MINUTES"))
 
+        # Health Check
+        self.HEALTH_PORT: int = int(os.getenv("HEALTH_PORT", "8080"))
+
         # Bounding box (from JSON)
         # Coordinates are in EPSG:4326 (longitude/latitude)
         self.BOUNDS_MINX: float = settings["bounds"]["minx"]  # West longitude
@@ -114,4 +117,5 @@ class Config:
         logger.info(f"RABBITMQ_DLQ: {self.RABBITMQ_DLQ}")
         logger.info(f"RABBITMQ_DLX: {self.RABBITMQ_DLX}")
         logger.info(f"JOB_TTL_MINUTES: {self.JOB_TTL_MINUTES}")
+        logger.info(f"HEALTH_PORT: {self.HEALTH_PORT}")
         logger.info("=====================")
