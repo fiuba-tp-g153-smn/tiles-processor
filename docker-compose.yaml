@@ -26,7 +26,7 @@ services:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 5s
       timeout: 10s
-      retries: 10
+      retries: 20
 
   # MinIO S3-compatible object storage
   minio:
@@ -55,7 +55,7 @@ services:
       test: ["CMD", "mc", "ready", "local"]
       interval: 1s
       timeout: 5s
-      retries: 6
+      retries: 20
 
   # MinIO setup service (creates buckets and users)
   minio-setup:
@@ -83,7 +83,7 @@ services:
       test: ["CMD", "test", "-f", "/tmp/setup_done"]
       interval: 1s
       timeout: 1s
-      retries: 15
+      retries: 20
 
   # Producer - discovers new images and publishes work units
   # Runs continuously with APScheduler (every 5 minutes)
@@ -126,7 +126,7 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 3s
       timeout: 8s
-      retries: 3
+      retries: 20
 
   # Workers - process work units from the queue
   # 5 replicas as specified in requirements
@@ -169,7 +169,7 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 3s
       timeout: 8s
-      retries: 3
+      retries: 20
 
   worker2:
     image: tiles-processor
@@ -210,7 +210,7 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 3s
       timeout: 8s
-      retries: 3
+      retries: 20
 
 volumes:
   tiles_data:
