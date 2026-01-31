@@ -13,9 +13,12 @@ from config import Config
 from data_sources import DataSourceRegistry, Goes19DataSource, RadarDataSource
 from models.band_config import BAND_CONFIGS
 from models.work_unit import WorkUnit
-from processors import ProcessorRegistry, GoesProcessor, RadarProcessor
 from worker.work_handler import WorkHandler
 from health_server import HealthCheckServer
+
+# NOTE: Heavy processors (GoesProcessor, RadarProcessor) are NOT imported here.
+# Processing runs in a subprocess to isolate memory from pyproj/rioxarray/GDAL.
+# This keeps the main worker process lightweight when idle.
 
 logger = getLogger(__name__)
 
@@ -174,32 +177,18 @@ def _create_data_source_registry() -> DataSourceRegistry:
     return registry
 
 
-def _create_processor_registry() -> ProcessorRegistry:
-    """Create and populate the processor registry."""
-    registry = ProcessorRegistry()
-
-    # Register GOES processors
-    registry.register("goes_band_13", GoesProcessor)
-    registry.register("goes_band_9", GoesProcessor)
-
-    # Register Radar processor (placeholder)
-    registry.register("radar", RadarProcessor)
-
-    return registry
-
-
 def run_worker(config: Config) -> None:
     """
     Entry point to run a worker.
 
     Creates and starts a worker that processes work units from RabbitMQ.
+    Heavy image processing runs in subprocesses to keep this process lightweight.
 
     Args:
         config: Application configuration
     """
-    # Create registries
+    # Create data source registry (lightweight - only for downloads)
     data_source_registry = _create_data_source_registry()
-    processor_registry = _create_processor_registry()
 
     # Create Message Queue client
     mq_client = RabbitMQClient(
@@ -224,7 +213,6 @@ def run_worker(config: Config) -> None:
         config=config,
         progress_tracker=progress_tracker,
         data_source_registry=data_source_registry,
-        processor_registry=processor_registry,
     )
 
     # Create and start worker

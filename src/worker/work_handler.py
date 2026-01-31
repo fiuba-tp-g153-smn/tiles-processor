@@ -1,14 +1,16 @@
 """Unified work handler for processing work units (download + process)."""
 
+import subprocess
+import sys
 from logging import getLogger
 from pathlib import Path
+from threading import Thread
 from time import perf_counter
 
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from data_sources import DataSourceRegistry
 from models.work_unit import WorkUnit
-from processors import ProcessorRegistry, ImageProcessor
 
 logger = getLogger(__name__)
 
@@ -18,12 +20,15 @@ class WorkHandler:
     Unified handler for processing work units.
 
     This handler performs the complete processing flow:
-    1. Download image from data source
-    2. Process image with the appropriate processor
+    1. Download image from data source (in main process - lightweight)
+    2. Process image in subprocess (heavy libraries isolated)
     3. Cleanup temporary files
     4. Update progress tracker
 
-    The download and process are combined into a single atomic unit of work.
+    Memory Optimization:
+        The heavy processing (pyproj, rioxarray, GDAL) runs in a subprocess.
+        When the subprocess exits, all memory from those libraries is reclaimed.
+        This keeps the main worker process lightweight when idle.
     """
 
     def __init__(
@@ -31,23 +36,11 @@ class WorkHandler:
         config: Config,
         progress_tracker: ProgressTracker,
         data_source_registry: DataSourceRegistry,
-        processor_registry: ProcessorRegistry,
     ):
         self._config = config
         self._progress_tracker = progress_tracker
         self._data_source_registry = data_source_registry
-        self._processor_registry = processor_registry
         self._base_dir = Path(config.TMP_DIR)
-
-        # Cache for processor instances (lazy instantiation)
-        self._processor_cache: dict[str, ImageProcessor] = {}
-
-    def _get_processor(self, processor_id: str) -> ImageProcessor:
-        """Get or create a processor instance."""
-        if processor_id not in self._processor_cache:
-            processor_class = self._processor_registry.get(processor_id)
-            self._processor_cache[processor_id] = processor_class(self._config)
-        return self._processor_cache[processor_id]
 
     async def handle(self, work_unit: WorkUnit) -> None:
         """
@@ -62,25 +55,27 @@ class WorkHandler:
         total_start = perf_counter()
         logger.info(f"[HANDLER] Starting processing for {work_unit}")
 
-        # Get data source and processor
+        # Get data source for download
         data_source = self._data_source_registry.get(work_unit.data_source_id)
-        processor = self._get_processor(work_unit.processor_id)
 
         # Setup directories
         raw_dir = self._ensure_dir(self._base_dir / work_unit.band_id / "raw")
         local_path = raw_dir / work_unit.image_id
 
         try:
-            # Step 1: Download
+            # Step 1: Download (lightweight, stays in main process)
             download_start = perf_counter()
             logger.info(f"[HANDLER] Downloading {work_unit.image_id}")
             await data_source.download(work_unit.source_uri, local_path)
             download_time = perf_counter() - download_start
 
-            # Step 2: Process
+            # Step 2: Process in subprocess (heavy libraries isolated)
             process_start = perf_counter()
-            logger.info(f"[HANDLER] Processing {work_unit.image_id}")
-            await processor.process(str(local_path), work_unit)
+            logger.info(
+                f"[HANDLER] Processing {work_unit.image_id} in subprocess "
+                f"(processor: {work_unit.processor_id})"
+            )
+            self._run_processing_subprocess(work_unit, str(local_path))
             process_time = perf_counter() - process_start
 
             # Step 3: Mark as completed in SQLite
@@ -99,6 +94,86 @@ class WorkHandler:
         finally:
             # Cleanup downloaded file
             self._cleanup_file(local_path)
+
+    def _run_processing_subprocess(self, work_unit: WorkUnit, file_path: str) -> None:
+        """
+        Run image processing in a subprocess for memory isolation.
+
+        When the subprocess exits, all memory from heavy libraries
+        (pyproj, rioxarray, GDAL) is reclaimed by the OS.
+
+        Subprocess logs are streamed to parent's logger in real-time.
+
+        Args:
+            work_unit: The work unit to process
+            file_path: Path to the downloaded file
+
+        Raises:
+            RuntimeError: If subprocess fails
+        """
+        work_unit_json = work_unit.to_json()
+
+        # Start subprocess with pipes for real-time streaming
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "worker.subprocess_processor",
+                work_unit_json,
+                file_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,  # Line-buffered
+        )
+
+        # Stream stdout and stderr in separate threads
+        def stream_output(pipe, log_func, prefix=""):
+            """Stream pipe output line by line to logger."""
+            try:
+                for line in iter(pipe.readline, ""):
+                    line = line.rstrip()
+                    if line:
+                        log_func(f"{prefix}{line}")
+            finally:
+                pipe.close()
+
+        # Start streaming threads
+        stdout_thread = Thread(
+            target=stream_output,
+            args=(process.stdout, logger.info, ""),
+            daemon=True,
+        )
+        stderr_thread = Thread(
+            target=stream_output,
+            args=(process.stderr, logger.warning, "[STDERR] "),
+            daemon=True,
+        )
+
+        stdout_thread.start()
+        stderr_thread.start()
+
+        # Wait for process to complete (with timeout)
+        try:
+            return_code = process.wait(timeout=1800)  # 30 minute timeout
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            raise RuntimeError(
+                f"Processing subprocess timed out after 30 minutes "
+                f"for {work_unit.image_id}"
+            )
+
+        # Wait for streaming threads to finish
+        stdout_thread.join(timeout=5)
+        stderr_thread.join(timeout=5)
+
+        if return_code != 0:
+            raise RuntimeError(
+                f"Processing subprocess failed with exit code {return_code} "
+                f"for {work_unit.image_id}"
+            )
 
     def _ensure_dir(self, directory: Path) -> Path:
         """Ensure directory exists and return it."""
