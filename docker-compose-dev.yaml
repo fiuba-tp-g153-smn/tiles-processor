@@ -49,7 +49,7 @@ services:
       MINIO_CACHE_WATERMARK_HIGH: "95"
       MINIO_CACHE_EXPIRY: "1"
     volumes:
-      - minio_dev_data:/data
+      - ./data_minio:/data
       - minio_dev_cache:/cache
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
@@ -204,6 +204,5 @@ services:
       retries: 3
 
 volumes:
-  minio_dev_data:
   minio_dev_cache:
   rabbitmq_dev_data:

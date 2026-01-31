@@ -13,3 +13,4 @@ reports/
 .claude
 benchmark_results/
 .agent
+data_minio/
