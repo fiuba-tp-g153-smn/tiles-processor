@@ -36,11 +36,10 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import xarray as xr
-import rioxarray
 
 from config import Config
 
-# Note: Ensure you have rioxarray installed to use the rio accessor
+# Note: rioxarray is lazy-loaded in _generate_geotiff to reduce idle memory footprint
 
 logger = logging.getLogger(__name__)
 
@@ -694,6 +693,9 @@ class GenerateGeoTIFFFilesService:
         return successful
 
     def _generate_geotiff(self, file_name: str, c13_data: xr.DataArray) -> Path:
+        # Lazy import to reduce idle memory footprint (registers .rio accessor)
+        import rioxarray  # noqa: F401
+
         # Remove grid_mapping if present
         if "grid_mapping" in c13_data.attrs:
             del c13_data.attrs["grid_mapping"]

@@ -16,7 +16,6 @@ from typing import Tuple, List
 
 import numpy as np
 import xarray as xr
-from pyproj import CRS
 
 from config import Config
 from models.work_unit import WorkUnit
@@ -224,6 +223,10 @@ class GoesProcessor(ImageProcessor):
 
     def _apply_georeferencing(self, netcdf_path: Path) -> xr.Dataset:
         """Apply GOES satellite projection transformation."""
+        # Lazy imports to reduce idle memory footprint
+        from pyproj import CRS
+        import rioxarray  # noqa: F401 - registers .rio accessor
+
         with xr.open_dataset(netcdf_path, engine="h5netcdf") as dataset:
             # Get satellite perspective height
             sat_h = dataset["goes_imager_projection"].perspective_point_height
