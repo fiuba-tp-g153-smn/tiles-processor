@@ -119,7 +119,6 @@ services:
       - RABBITMQ_DLX=${RABBITMQ_DLX}
       - JOB_TTL_MINUTES=${JOB_TTL_MINUTES}
       - GDAL_CACHEMAX=${GDAL_CACHEMAX}
-      - PROJ_NETWORK=${PROJ_NETWORK}
       - CPL_VSIL_CURL_CACHE_SIZE=${CPL_VSIL_CURL_CACHE_SIZE}
     restart: unless-stopped
     healthcheck:
@@ -162,7 +161,6 @@ services:
       - RABBITMQ_DLX=${RABBITMQ_DLX}
       - JOB_TTL_MINUTES=${JOB_TTL_MINUTES}
       - GDAL_CACHEMAX=${GDAL_CACHEMAX}
-      - PROJ_NETWORK=${PROJ_NETWORK}
       - CPL_VSIL_CURL_CACHE_SIZE=${CPL_VSIL_CURL_CACHE_SIZE}
     restart: unless-stopped
     healthcheck:
@@ -203,7 +201,6 @@ services:
       - RABBITMQ_DLX=${RABBITMQ_DLX}
       - JOB_TTL_MINUTES=${JOB_TTL_MINUTES}
       - GDAL_CACHEMAX=${GDAL_CACHEMAX}
-      - PROJ_NETWORK=${PROJ_NETWORK}
       - CPL_VSIL_CURL_CACHE_SIZE=${CPL_VSIL_CURL_CACHE_SIZE}
     restart: unless-stopped
     healthcheck:
