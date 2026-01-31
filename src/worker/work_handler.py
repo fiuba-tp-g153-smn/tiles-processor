@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+from collections import deque
 from logging import getLogger
 from pathlib import Path
 from threading import Thread
@@ -109,7 +110,7 @@ class WorkHandler:
             file_path: Path to the downloaded file
 
         Raises:
-            RuntimeError: If subprocess fails
+            RuntimeError: If subprocess fails (includes error details from stderr)
         """
         work_unit_json = work_unit.to_json()
 
@@ -128,26 +129,39 @@ class WorkHandler:
             bufsize=1,  # Line-buffered
         )
 
-        # Stream stdout and stderr in separate threads
-        def stream_output(pipe, log_func, prefix=""):
-            """Stream pipe output line by line to logger."""
+        # Keep last N lines of stderr for error reporting
+        stderr_buffer: deque[str] = deque(maxlen=50)
+
+        def stream_stdout(pipe):
+            """Stream stdout line by line to logger."""
             try:
                 for line in iter(pipe.readline, ""):
                     line = line.rstrip()
                     if line:
-                        log_func(f"{prefix}{line}")
+                        logger.info(line)
+            finally:
+                pipe.close()
+
+        def stream_stderr(pipe, buffer: deque):
+            """Stream stderr line by line to logger and buffer for errors."""
+            try:
+                for line in iter(pipe.readline, ""):
+                    line = line.rstrip()
+                    if line:
+                        buffer.append(line)
+                        logger.error(f"[SUBPROCESS] {line}")
             finally:
                 pipe.close()
 
         # Start streaming threads
         stdout_thread = Thread(
-            target=stream_output,
-            args=(process.stdout, logger.info, ""),
+            target=stream_stdout,
+            args=(process.stdout,),
             daemon=True,
         )
         stderr_thread = Thread(
-            target=stream_output,
-            args=(process.stderr, logger.warning, "[STDERR] "),
+            target=stream_stderr,
+            args=(process.stderr, stderr_buffer),
             daemon=True,
         )
 
@@ -160,19 +174,29 @@ class WorkHandler:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+            # Wait for threads to capture any remaining output
+            stdout_thread.join(timeout=2)
+            stderr_thread.join(timeout=2)
             raise RuntimeError(
                 f"Processing subprocess timed out after 30 minutes "
                 f"for {work_unit.image_id}"
             )
 
-        # Wait for streaming threads to finish
+        # Wait for streaming threads to finish capturing all output
         stdout_thread.join(timeout=5)
         stderr_thread.join(timeout=5)
 
+        # Check for errors
         if return_code != 0:
+            # Build detailed error message from stderr buffer
+            error_details = (
+                "\n".join(stderr_buffer)
+                if stderr_buffer
+                else "No error details captured"
+            )
             raise RuntimeError(
-                f"Processing subprocess failed with exit code {return_code} "
-                f"for {work_unit.image_id}"
+                f"Processing subprocess failed for {work_unit.image_id} "
+                f"(exit code {return_code}):\n{error_details}"
             )
 
     def _ensure_dir(self, directory: Path) -> Path:
