@@ -18,7 +18,13 @@ The subprocess:
 
 import asyncio
 import logging
+import signal
 import sys
+
+from processors.base_processor import ShutdownRequested
+
+EXIT_ERROR_CODE = 1
+EXIT_SUCCESS_CODE = 0
 
 
 def create_processor_registry():
@@ -87,6 +93,11 @@ def run_processing(work_unit_json: str, file_path: str) -> None:
         f"[SUBPROCESS] Using {processor_class.__name__} for {work_unit.processor_id}"
     )
 
+    # Install signal handler so SIGTERM triggers graceful shutdown
+    # between processing steps instead of killing the process immediately
+    signal.signal(signal.SIGTERM, lambda _sig, _frame: processor.request_shutdown())
+    signal.signal(signal.SIGINT, lambda _sig, _frame: processor.request_shutdown())
+
     # Run processing
     asyncio.run(processor.process(file_path, work_unit))
 
@@ -100,21 +111,26 @@ def main() -> int:
             "Usage: python -m worker.subprocess_processor <work_unit_json> <file_path>",
             file=sys.stderr,
         )
-        return 1
+        return EXIT_ERROR_CODE
 
     work_unit_json = sys.argv[1]
     file_path = sys.argv[2]
 
     try:
         run_processing(work_unit_json, file_path)
-        return 0
+        return EXIT_SUCCESS_CODE
+
+    except ShutdownRequested:
+        logging.info("[SUBPROCESS] Shutdown requested, exiting gracefully")
+        return EXIT_ERROR_CODE
+
     except Exception as e:
         # Log the error (will go to stderr which parent captures)
         logging.error(f"[SUBPROCESS] Processing failed: {e}")
         import traceback
 
         traceback.print_exc()
-        return 1
+        return EXIT_ERROR_CODE
 
 
 if __name__ == "__main__":

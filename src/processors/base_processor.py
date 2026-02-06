@@ -10,6 +10,10 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
+class ShutdownRequested(Exception):
+    """Raised when graceful shutdown is requested between processing steps."""
+
+
 class ImageProcessor(ABC):
     """
     Abstract base class for image processors.
@@ -21,8 +25,17 @@ class ImageProcessor(ABC):
 
     def __init__(self, config: Config):
         self.config = config
-        # Use TMP_DIR for consistency with stage handlers
         self._base_dir = Path(config.TMP_DIR)
+        self._shutdown_requested = False
+
+    def request_shutdown(self) -> None:
+        """Signal that the processor should stop at the next checkpoint."""
+        self._shutdown_requested = True
+
+    def _check_shutdown(self) -> None:
+        """Raise ShutdownRequested if a graceful shutdown was requested."""
+        if self._shutdown_requested:
+            raise ShutdownRequested("Graceful shutdown requested")
 
     @abstractmethod
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:

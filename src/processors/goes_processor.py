@@ -19,7 +19,7 @@ import xarray as xr
 
 from config import Config
 from models.work_unit import WorkUnit
-from processors.base_processor import ImageProcessor
+from processors.base_processor import ImageProcessor, ShutdownRequested
 from clients.s3_client import S3Client
 from services.generate_geotiff_files import GenerateGeoTIFFFilesService
 
@@ -71,10 +71,12 @@ class GoesProcessor(ImageProcessor):
 
         try:
             # 1. Georeference
+            self._check_shutdown()
             logger.info("Step 1: Georeferencing")
             dataset = await asyncio.to_thread(self._apply_georeferencing, netcdf_path)
 
             # 2. Brightness Temperature
+            self._check_shutdown()
             logger.info("Step 2: Brightness Temperature")
             bt_data = await asyncio.to_thread(
                 self._compute_brightness_temperature, dataset
@@ -86,6 +88,7 @@ class GoesProcessor(ImageProcessor):
             gc.collect()
 
             # 3. GeoTIFF Generation
+            self._check_shutdown()
             logger.info("Step 3: GeoTIFF Generation")
             band_config = work_unit.band_config
 
@@ -113,12 +116,14 @@ class GoesProcessor(ImageProcessor):
             gc.collect()
 
             # 4. Tile Generation
+            self._check_shutdown()
             logger.info("Step 4: Tile Generation")
             tiles_output_dir = await asyncio.to_thread(
                 self._generate_tiles, geotiff_path, tiles_dir
             )
 
             # 5. Upload to S3
+            self._check_shutdown()
             logger.info("Step 5: Upload to S3")
             tileset_name = f"{geotiff_path.stem}_tiles"
             s3_prefix = f"{band_config.s3_prefix}/{tileset_name}"
@@ -129,9 +134,15 @@ class GoesProcessor(ImageProcessor):
             logger.info(f"Processing complete: {s3_prefix}")
 
             # 6. Retention Policy Cleanup
+            self._check_shutdown()
             logger.info("Step 6: Enforcing Retention Policy")
             await self._enforce_retention_policy(band_config.s3_prefix)
 
+        except ShutdownRequested:
+            logger.info(
+                f"Shutdown requested, aborting processing for {work_unit.image_id}"
+            )
+            raise
         except Exception as e:
             logger.error(f"Processing failed for {work_unit.image_id}: {e}")
             raise
