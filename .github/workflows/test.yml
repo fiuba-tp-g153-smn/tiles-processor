@@ -11,7 +11,7 @@ on:
 
 jobs:
   secret-leak-scan:
-    name: secret leak scan (gitleaks)
+    name: secrets scan (gitleaks)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
