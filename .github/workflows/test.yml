@@ -3,15 +3,15 @@ name: Run tests
 on:
   push:
     branches-ignore:
-      - 'main'
+      - "main"
   pull_request:
     branches-ignore:
-      - 'main'
+      - "main"
   workflow_call:
 
 jobs:
   secret-leak-scan:
-    name: Secret leak scan (gitleaks)
+    name: secret leak scan (gitleaks)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -29,21 +29,21 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12.3'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12.3"
 
-    - name: Setup Poetry
-      run: pip install poetry &&  poetry config virtualenvs.create false
+      - name: Setup Poetry
+        run: pip install poetry &&  poetry config virtualenvs.create false
 
-    - name: Install dependencies
-      run: poetry install --no-root --no-ansi
+      - name: Install dependencies
+        run: poetry install --no-root --no-ansi
 
-    - name: Create reports directory
-      run: mkdir -p reports
+      - name: Create reports directory
+        run: mkdir -p reports
 
-    - name: Run tests
-      run: poetry run pytest tests/ -m "not skip" --color=yes --junitxml=reports/junit_report.xml --cov=src --cov-report term --cov-report html:reports/coverage -W ignore::DeprecationWarning
+      - name: Run tests
+        run: poetry run pytest tests/ -m "not skip" --color=yes --junitxml=reports/junit_report.xml --cov=src --cov-report term --cov-report html:reports/coverage -W ignore::DeprecationWarning

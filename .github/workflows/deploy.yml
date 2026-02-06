@@ -15,7 +15,7 @@ jobs:
     uses: ./.github/workflows/test.yml
 
   image-scan:
-    name: Packages & image scan (Trivy)
+    name: packages and image scan (Trivy)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
