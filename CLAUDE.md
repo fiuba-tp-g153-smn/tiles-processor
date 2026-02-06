@@ -2,6 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## AI Collaboration Rules
+
+When assisting with this repository, **always follow these rules**:
+
+1. **Before writing any code**, describe your proposed approach and **wait for explicit approval**.
+   - If requirements are ambiguous or underspecified, **ask clarifying questions first**.
+
+2. If a task requires changes to **more than 3 files**, **stop** and break the work into
+   smaller, clearly defined tasks before proceeding.
+
+3. **After writing code**, explicitly list:
+   - What could break as a result of the change
+   - Which tests should be added or updated to cover those risks
+
 ## Build/Test/Lint Commands
 
 ```bash

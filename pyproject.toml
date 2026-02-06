@@ -1,14 +1,14 @@
 [project]
 name = "tiles-processor"
 version = "0.1.0"
-description = "GOES-19 Tiles Processor"
+description = "Tiles Processor"
 authors = [
     { name = "Agustín Altamirano", email = " aaltamirano@fi.uba.ar" },
     { name = "Gabriel Diem", email = "wdiem@fi.uba.ar" },
     { name = "Máximo Gismondi", email = "magismondi@fi.uba.ar" },
     { name = "Matías Valeriani", email = "mvaleriani@fi.uba.ar" },
 ]
-readme = {file = "README.md", content-type = "text/markdown"}
+readme = { file = "README.md", content-type = "text/markdown" }
 
 [tool.poetry]
 packages = [{ include = "src" }]
@@ -20,22 +20,21 @@ numpy = "^1.26.0"
 xarray = "^2025.12.0"
 rioxarray = "^0.15.0"
 aioboto3 = "^15.5.0"
-h5netcdf = "^1.7.3"
+h5netcdf = "^1.8.1"
 pyproj = "^3.7.2"
-scipy = "^1.16.3"
+scipy = "^1.17.0"
 pika = "^1.3.2"
-apscheduler = "^3.10.1"
+apscheduler = "^3.11.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.2"
+pytest-asyncio = "^1.3.0"
+pytest-cov = "^7.0.0"
+pylint = "^4.0.4"
+mypy = "^1.19.1"
+pyrefly = "^0.51.1"
+requests = "^2.32.5"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-[dependency-groups]
-dev = [
-    "pytest (>=9.0.2,<10.0.0)",
-    "pytest-asyncio (>=1.3.0,<2.0.0)",
-    "pytest-cov (>=7.0.0,<8.0.0)",
-    "pylint (>=4.0.4,<5.0.0)",
-    "mypy (>=1.19.1,<2.0.0)",
-    "pyrefly (>=0.49.0,<0.50.0)"
-]
