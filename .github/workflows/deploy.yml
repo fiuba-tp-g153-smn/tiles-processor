@@ -27,8 +27,8 @@ jobs:
       - name: Scan image for vulnerabilities
         run: |
           trivy image --download-db-only
-          trivy image --format table --exit-code 0 --severity CRITICAL,HIGH --skip-db-update tiles-processor:scan
-          trivy image --format json --exit-code 1 --severity CRITICAL --skip-db-update --quiet tiles-processor:scan
+          trivy image --format table --exit-code 0 --severity HIGH --skip-db-update tiles-processor:scan
+          trivy image --format table --exit-code 1 --severity CRITICAL --skip-db-update --quiet tiles-processor:scan
 
   deploy:
     needs: [test, trivy]
