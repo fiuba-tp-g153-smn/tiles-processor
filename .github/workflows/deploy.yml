@@ -14,7 +14,8 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
 
-  trivy:
+  image-scan:
+    name: Packages & image scan (Trivy)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -27,11 +28,11 @@ jobs:
       - name: Scan image for vulnerabilities
         run: |
           trivy image --download-db-only
-          trivy image --format table --exit-code 0 --severity HIGH --skip-db-update tiles-processor:scan
-          trivy image --format table --exit-code 1 --severity CRITICAL --skip-db-update --quiet tiles-processor:scan
+          trivy image --format table --exit-code 0 --severity HIGH --scanners vuln --skip-db-update tiles-processor:scan
+          trivy image --format table --exit-code 1 --severity CRITICAL --scanners vuln --skip-db-update --quiet tiles-processor:scan
 
   deploy:
-    needs: [test, trivy]
+    needs: [test, image-scan]
     runs-on: ubuntu-24.04
     environment:
       name: ${{ (github.ref_name == 'main' && 'prod') || 'unknown' }}

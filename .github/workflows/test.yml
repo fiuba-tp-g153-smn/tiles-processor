@@ -10,7 +10,8 @@ on:
   workflow_call:
 
 jobs:
-  gitleaks:
+  secret-leak-scan:
+    name: Secret leak scan (gitleaks)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +25,7 @@ jobs:
         run: gitleaks detect --source . --verbose
 
   test:
-    needs: [gitleaks]
+    needs: [secret-leak-scan]
     runs-on: ubuntu-24.04
 
     steps:
