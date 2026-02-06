@@ -42,6 +42,7 @@ class WorkHandler:
         self._progress_tracker = progress_tracker
         self._data_source_registry = data_source_registry
         self._base_dir = Path(config.TMP_DIR)
+        self._current_process: subprocess.Popen | None = None
 
     async def handle(self, work_unit: WorkUnit) -> None:
         """
@@ -96,6 +97,12 @@ class WorkHandler:
             # Cleanup downloaded file
             self._cleanup_file(local_path)
 
+    def abort(self) -> None:
+        """Terminate the current subprocess if one is running."""
+        if self._current_process and self._current_process.poll() is None:
+            logger.info("[HANDLER] Terminating subprocess for graceful shutdown...")
+            self._current_process.terminate()
+
     def _run_processing_subprocess(self, work_unit: WorkUnit, file_path: str) -> None:
         """
         Run image processing in a subprocess for memory isolation.
@@ -128,6 +135,7 @@ class WorkHandler:
             text=True,
             bufsize=1,  # Line-buffered
         )
+        self._current_process = process
 
         # Keep last N lines of stderr for error reporting
         stderr_buffer: deque[str] = deque(maxlen=50)
@@ -174,6 +182,7 @@ class WorkHandler:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+            self._current_process = None
             # Wait for threads to capture any remaining output
             stdout_thread.join(timeout=2)
             stderr_thread.join(timeout=2)
@@ -185,6 +194,7 @@ class WorkHandler:
         # Wait for streaming threads to finish capturing all output
         stdout_thread.join(timeout=5)
         stderr_thread.join(timeout=5)
+        self._current_process = None
 
         # Check for errors
         if return_code != 0:

@@ -196,6 +196,7 @@ services:
       context: .
       dockerfile: Dockerfile
     command: python3 src/main.py producer
+    stop_grace_period: 15s
     volumes:
       - ${APP_DATA_VOLUME}
       - ./settings.json:/app/settings.json:ro
@@ -242,6 +243,7 @@ for i in $(seq 1 "$NUM_WORKERS"); do
       context: .
       dockerfile: Dockerfile
     command: python3 src/main.py worker
+    stop_grace_period: 15s
     volumes:
       - ${APP_DATA_VOLUME}
       - ./settings.json:/app/settings.json:ro

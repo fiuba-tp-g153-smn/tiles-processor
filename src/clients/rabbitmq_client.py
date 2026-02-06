@@ -135,6 +135,16 @@ class RabbitMQClient(MessageQueueClient):
 
         logger.info(f"Queues configured: {self._queue_name}, {self._dlq_name}")
 
+    def stop_consuming(self) -> None:
+        """Signal the consume loop to stop.
+
+        Uses pika's add_callback_threadsafe to safely schedule
+        stop_consuming on the connection's I/O loop. This causes
+        start_consuming() to return after the current message finishes.
+        """
+        if self._connection and self._connection.is_open:
+            self._connection.add_callback_threadsafe(self._channel.stop_consuming)
+
     def close(self) -> None:
         """Close the connection to RabbitMQ."""
         if self._connection and self._connection.is_open:

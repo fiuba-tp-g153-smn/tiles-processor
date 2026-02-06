@@ -94,11 +94,12 @@ class Worker:
         finally:
             self._shutdown()
 
-    def _signal_handler(self, signum, frame):
+    def _signal_handler(self, signum, _frame):
         """Handle shutdown signals gracefully."""
-        logger.info(f"Received signal {signum}, initiating shutdown...")
+        logger.info(f"Received signal {signum}, initiating graceful shutdown...")
         self._running = False
-        # The consume loop will exit on the next iteration
+        self._handler.abort()
+        self._mq_client.stop_consuming()
 
     def _shutdown(self) -> None:
         """Clean shutdown of the worker."""
@@ -145,6 +146,10 @@ class Worker:
             return True  # Acknowledge
 
         except Exception as e:
+            if not self._running:
+                logger.info(f"Shutdown interrupted processing of {work_unit.image_id}")
+                return False  # Don't ack - RabbitMQ will requeue on disconnect
+
             logger.exception(f"Error processing {work_unit}: {e}")
 
             # Check if we can retry

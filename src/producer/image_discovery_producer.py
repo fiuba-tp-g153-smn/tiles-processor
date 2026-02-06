@@ -1,8 +1,8 @@
 """Producer that discovers new images and publishes work units."""
 
-from asyncio import Event, run
+from asyncio import Event, get_running_loop, run
 from logging import getLogger
-from signal import signal, SIGINT, SIGTERM
+from signal import SIGINT, SIGTERM
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 from typing import Set
@@ -282,18 +282,14 @@ def run_producer(config: Config) -> None:
         misfire_grace_time=60,
     )
 
-    # Set up signal handlers for graceful shutdown
-    stop_event = Event()
-
-    def signal_handler(signum, frame):
-        logger.info(f"Received signal {signum}, shutting down...")
-        stop_event.set()
-
-    signal(SIGINT, signal_handler)
-    signal(SIGTERM, signal_handler)
-
     # Run the scheduler
     async def run_scheduler():
+        # Set up signal handlers within the event loop for async safety
+        stop_event = Event()
+        loop = get_running_loop()
+        loop.add_signal_handler(SIGINT, stop_event.set)
+        loop.add_signal_handler(SIGTERM, stop_event.set)
+
         scheduler.start()
         logger.info(f"Producer scheduler started (schedule: {cron_schedule})")
 

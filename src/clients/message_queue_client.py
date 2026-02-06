@@ -52,6 +52,16 @@ class MessageQueueClient(ABC):
         pass
 
     @abstractmethod
+    def stop_consuming(self) -> None:
+        """Signal the consume loop to stop.
+
+        Safe to call from a signal handler context.
+        After the current message (if any) finishes processing,
+        the consume loop will exit.
+        """
+        pass
+
+    @abstractmethod
     def consume(
         self,
         callback: Callable[[WorkUnit, "MessageQueueClient", int], bool],
