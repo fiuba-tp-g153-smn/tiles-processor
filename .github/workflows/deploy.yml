@@ -25,7 +25,10 @@ jobs:
           TRIVY_VERSION=$(curl -s https://api.github.com/repos/aquasecurity/trivy/releases/latest | grep '"tag_name"' | sed 's/.*"v\(.*\)".*/\1/')
           curl -sSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | tar -xz -C /usr/local/bin trivy
       - name: Scan image for vulnerabilities
-        run: trivy image --format table --exit-code 1 --severity CRITICAL tiles-processor:scan && trivy image --format table --exit-code 0 --severity HIGH tiles-processor:scan
+        run: |
+          trivy image --download-db-only
+          trivy image --format table --exit-code 0 --severity CRITICAL,HIGH --skip-db-update tiles-processor:scan
+          trivy image --format json --exit-code 1 --severity CRITICAL --skip-db-update --quiet tiles-processor:scan
 
   deploy:
     needs: [test, trivy]
