@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
 ENV POETRY_HOME="/opt/poetry"
 ENV PATH="$POETRY_HOME/bin:$PATH"
 RUN curl -sSL https://install.python-poetry.org | python3 -
-RUN poetry config virtualenvs.create false
+RUN poetry config virtualenvs.in-project true
 
 # Set work directory
 WORKDIR /app
@@ -25,13 +25,13 @@ WORKDIR /app
 # Copy dependency files
 COPY pyproject.toml poetry.lock README.md ./
 
-# Remove the EXTERNALLY-MANAGED marker to allow pip/poetry to install system-wide
-RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED
-
 # Re-generate lock file if it is outdated, then install all dependencies (except dev/test deps)
 # "--without dev": keep container smaller by skipping development deps
 # "--no-root": don't install this project as a package itself, we run code mounted in /app
 RUN (poetry check --lock || poetry lock) && poetry install --without dev --no-root --no-ansi
+
+# Use the venv for all subsequent commands, isolating from system packages
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy project source code
 COPY src/ ./src/

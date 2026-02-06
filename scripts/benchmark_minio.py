@@ -3,7 +3,6 @@ import os
 import sys
 import time
 import shutil
-import random
 import csv
 from pathlib import Path
 from typing import Optional

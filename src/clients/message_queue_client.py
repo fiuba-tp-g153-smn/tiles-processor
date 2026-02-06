@@ -1,7 +1,7 @@
 """Abstract base class for message queue clients."""
 
 from abc import ABC, abstractmethod
-from typing import Callable, Any, Optional
+from typing import Callable, Optional
 
 from models.work_unit import WorkUnit
 

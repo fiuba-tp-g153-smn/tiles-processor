@@ -1,4 +1,3 @@
-import h5py
 import pyart
 import matplotlib.pyplot as plt
 

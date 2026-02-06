@@ -3,7 +3,7 @@
 import logging
 from datetime import timedelta
 from pathlib import Path
-from typing import Set, List
+from typing import List
 
 from clients.s3_client import S3Client
 from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
