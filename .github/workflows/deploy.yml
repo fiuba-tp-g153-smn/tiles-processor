@@ -14,7 +14,22 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
 
+  trivy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t tiles-processor:scan .
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'tiles-processor:scan'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
   deploy:
+    needs: [test, trivy]
     runs-on: ubuntu-24.04
     environment:
       name: ${{ (github.ref_name == 'main' && 'prod') || 'unknown' }}
