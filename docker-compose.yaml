@@ -30,9 +30,11 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 5s
+      interval: 30s
       timeout: 10s
-      retries: 20
+      retries: 10
+      start_period: 15s
+      start_interval: 1s
 
   # MinIO S3-compatible object storage
   minio:
@@ -59,9 +61,11 @@ services:
       - minio_cache:/cache
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
-      interval: 1s
-      timeout: 5s
-      retries: 20
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
+      start_interval: 1s
 
   # MinIO setup service (creates buckets and users)
   minio-setup:
@@ -87,9 +91,11 @@ services:
       S3_TILES_DATA_DATA_SERVICE_PASSWORD: ${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/setup_done"]
-      interval: 1s
-      timeout: 1s
-      retries: 20
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
+      start_interval: 1s
 
   # Producer - discovers new images and publishes work units
   # Runs continuously with APScheduler (every 5 minutes)
@@ -130,9 +136,11 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 5s
-      timeout: 5s
+      interval: 10s
+      timeout: 10s
       retries: 20
+      start_period: 15s
+      start_interval: 1s
 
   # Worker 1 - processes work units from the queue
   worker1:
@@ -172,9 +180,11 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 5s
-      timeout: 5s
+      interval: 10s
+      timeout: 10s
       retries: 20
+      start_period: 15s
+      start_interval: 1s
 
   # Worker 2 - processes work units from the queue
   worker2:
@@ -214,9 +224,11 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 5s
-      timeout: 5s
+      interval: 10s
+      timeout: 10s
       retries: 20
+      start_period: 15s
+      start_interval: 1s
 
 volumes:
   tiles_data:

@@ -57,4 +57,4 @@ ENV DATA_DIR=$DATA_DIR
 CMD ["python3", "src/main.py", "process_band_13"]
 
 # Health check
-HEALTHCHECK --interval=5s --timeout=5s --retries=3 CMD python3 -c 'import urllib.request; urllib.request.urlopen("http://localhost:8080/health")'
+HEALTHCHECK --interval=10s --timeout=10s --retries=5 CMD python3 -c 'import urllib.request; urllib.request.urlopen("http://localhost:8080/health")'
