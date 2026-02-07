@@ -37,6 +37,9 @@ class GoesProcessor(ImageProcessor):
     GDAL_PROCESSES = 2
     ZOOM_LEVELS = "3-7"
 
+    # Reprojection resolution in degrees (None = auto-compute from source)
+    REPROJECT_RESOLUTION = None
+
     def __init__(self, config: Config):
         super().__init__(config)
         self._minio_client = S3Client.create_with_credentials(
@@ -306,8 +309,10 @@ class GoesProcessor(ImageProcessor):
 
         # Reproject
         logger.debug("Reprojecting to EPSG:4326...")
-        bt_reproj = bt_data.rio.reproject("EPSG:4326")
-        bt_reproj = bt_reproj.rio.write_nodata(np.nan, inplace=False)
+        bt_reproj = bt_data.rio.reproject(
+            "EPSG:4326", resolution=self.REPROJECT_RESOLUTION
+        )
+        bt_reproj.rio.write_nodata(np.nan, inplace=True)
         logger.debug(f"Reprojected shape: {bt_reproj.shape}")
 
         # Clip to bounds

@@ -43,6 +43,10 @@ class Band2Processor(GoesProcessor):
     # Fewer GDAL processes for tile generation to reduce CPU pressure
     GDAL_PROCESSES = 1
 
+    # ~0.02° ≈ 2.2km at the equator, matches Band 13/9 native resolution
+    # and prevents output grid explosion during geostationary → lat/lon reprojection
+    REPROJECT_RESOLUTION = 0.02
+
     def _apply_georeferencing(self, netcdf_path: Path) -> xr.Dataset:
         """
         Apply GOES projection with 4x downsampling before CRS assignment.
