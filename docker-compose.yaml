@@ -129,9 +129,9 @@ services:
       - CPL_VSIL_CURL_CACHE_SIZE=${CPL_VSIL_CURL_CACHE_SIZE}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 3s
-      timeout: 8s
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 5s
+      timeout: 5s
       retries: 20
 
   # Worker 1 - processes work units from the queue
@@ -171,9 +171,9 @@ services:
       - CPL_VSIL_CURL_CACHE_SIZE=${CPL_VSIL_CURL_CACHE_SIZE}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 3s
-      timeout: 8s
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 5s
+      timeout: 5s
       retries: 20
 
   # Worker 2 - processes work units from the queue
@@ -213,9 +213,9 @@ services:
       - CPL_VSIL_CURL_CACHE_SIZE=${CPL_VSIL_CURL_CACHE_SIZE}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 3s
-      timeout: 8s
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 5s
+      timeout: 5s
       retries: 20
 
 volumes:
