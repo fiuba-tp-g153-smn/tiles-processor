@@ -49,6 +49,7 @@ class Config:
         # Feature Toggles (from JSON)
         self.ENABLE_BAND_13: bool = settings["features"].get("enable_band_13", True)
         self.ENABLE_BAND_9: bool = settings["features"].get("enable_band_9", True)
+        self.ENABLE_BAND_2: bool = settings["features"].get("enable_band_2", False)
         self.ENABLE_RADAR: bool = settings["features"].get("enable_radar", True)
 
         # Job Configuration
@@ -101,6 +102,7 @@ class Config:
         logger.info(f"TIMEZONE: {self.TIMEZONE}")
         logger.info(f"ENABLE_BAND_13: {self.ENABLE_BAND_13}")
         logger.info(f"ENABLE_BAND_9: {self.ENABLE_BAND_9}")
+        logger.info(f"ENABLE_BAND_2: {self.ENABLE_BAND_2}")
         logger.info(f"ENABLE_RADAR: {self.ENABLE_RADAR}")
         logger.info(f"DATA_DIR: {self.DATA_DIR}")
         logger.info(f"TMP_DIR: {self.TMP_DIR}")

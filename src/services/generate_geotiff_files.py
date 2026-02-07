@@ -607,6 +607,10 @@ class GenerateGeoTIFFFilesService:
         "#000000",
     ]
 
+    # Visible band grayscale palette (black → white, 256 entries)
+    # Low reflectance (surface/ocean) = dark, high reflectance (clouds) = white
+    VISIBLE_PALETTE = [f"#{i:02x}{i:02x}{i:02x}" for i in range(256)]
+
     def __init__(
         self,
         brightness_temperatures: Dict[str, xr.DataArray],

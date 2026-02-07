@@ -95,6 +95,8 @@ class GoesProcessor(ImageProcessor):
             # Determine palette
             if band_config.palette_name == "WATER_VAPOR_PALETTE":
                 color_palette = GenerateGeoTIFFFilesService.WATER_VAPOR_PALETTE
+            elif band_config.palette_name == "VISIBLE_PALETTE":
+                color_palette = GenerateGeoTIFFFilesService.VISIBLE_PALETTE
             else:
                 color_palette = GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE
 
