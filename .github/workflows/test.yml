@@ -37,7 +37,7 @@ jobs:
           python-version: "3.12.3"
 
       - name: Setup Poetry
-        run: pip install poetry &&  poetry config virtualenvs.create false
+        run: pip install poetry && poetry config virtualenvs.create false
 
       - name: Install dependencies
         run: poetry install --no-root --no-ansi
