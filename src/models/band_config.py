@@ -77,10 +77,21 @@ BAND_9_CONFIG = BandConfig(
     product_name="Water_Vapor",
 )
 
+BAND_2_CONFIG = BandConfig(
+    band_id="band_2",
+    file_pattern="C02_G19",
+    vmin=0.0,  # Reflectance factor min
+    vmax=1.0,  # Reflectance factor max
+    palette_name="VISIBLE_PALETTE",
+    s3_prefix="band_2/tiles",
+    product_name="Visible",
+)
+
 # Registry for looking up band configs by ID
 BAND_CONFIGS = {
     "band_13": BAND_13_CONFIG,
     "band_9": BAND_9_CONFIG,
+    "band_2": BAND_2_CONFIG,
 }
 
 

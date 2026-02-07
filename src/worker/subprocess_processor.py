@@ -37,6 +37,7 @@ def create_processor_registry():
     from processors import (
         ProcessorRegistry,
         GoesProcessor,
+        Band2Processor,
         RadarProcessor,
     )
 
@@ -45,6 +46,9 @@ def create_processor_registry():
     # Register GOES processors (both bands use the same processor class)
     registry.register("goes_band_13", GoesProcessor)
     registry.register("goes_band_9", GoesProcessor)
+
+    # Register Band 2 processor (downsampled visible imagery)
+    registry.register("goes_band_2", Band2Processor)
 
     # Register Radar processor
     registry.register("radar", RadarProcessor)
