@@ -168,6 +168,12 @@ class Band2Processor(GoesProcessor):
         )
 
         return super()._generate_geotiff(
-            bt_data, output_dir, image_id, bounds,
-            vmin, dynamic_vmax, product_name, color_palette,
+            bt_data,
+            output_dir,
+            image_id,
+            bounds,
+            vmin,
+            dynamic_vmax,
+            product_name,
+            color_palette,
         )
