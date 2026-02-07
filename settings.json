@@ -3,7 +3,7 @@
   "features": {
     "enable_band_13": true,
     "enable_band_9": true,
-    "enable_band_2": false,
+    "enable_band_2": true,
     "enable_radar": false
   },
   "bounds": {
