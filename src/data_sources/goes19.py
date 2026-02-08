@@ -147,16 +147,9 @@ class Goes19DataSource(DataSource):
         else:
             s3_key = source_uri
 
-        content = await self._s3_client.download_single_file(s3_key)
-
-        if content is None:
-            raise RuntimeError(f"Failed to download {s3_key}")
-
-        # Ensure parent directory exists
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write to local file
-        dest_path.write_bytes(content)
+        await self._s3_client.download_to_file(s3_key, dest_path)
         logger.info(f"[{self.source_id}] Downloaded to {dest_path}")
 
         return dest_path

@@ -144,6 +144,136 @@ class TestS3ClientDownloadFile:
         assert max_concurrent <= 2
 
 
+class TestS3ClientDownloadToFile:
+    """Tests for S3Client.download_to_file method."""
+
+    def _make_stream(self, data: bytes, chunk_size: int = 65_536):
+        """Create a mock stream that yields data in chunks via read(amt)."""
+        chunks = [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
+        chunks.append(b"")  # EOF sentinel
+
+        mock_stream = AsyncMock()
+        mock_stream.read = AsyncMock(side_effect=chunks)
+        return mock_stream
+
+    def _make_session_ctx(self, mock_s3_client):
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_s3_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        return mock_ctx
+
+    @pytest.mark.asyncio
+    async def test_download_to_file_success(self, tmp_path):
+        """Test successful streaming download writes correct content."""
+        client = S3Client(bucket_name="test-bucket")
+        dest = tmp_path / "output.nc"
+        payload = b"A" * 100_000
+
+        mock_s3_client = AsyncMock()
+        mock_s3_client.get_object = AsyncMock(
+            return_value={"Body": self._make_stream(payload, chunk_size=30_000)}
+        )
+
+        with patch.object(client, "_session") as mock_session:
+            mock_session.client.return_value = self._make_session_ctx(mock_s3_client)
+            await client.download_to_file("path/to/file.nc", dest)
+
+        assert dest.read_bytes() == payload
+        mock_s3_client.get_object.assert_called_once_with(
+            Bucket="test-bucket", Key="path/to/file.nc"
+        )
+
+    @pytest.mark.asyncio
+    async def test_download_to_file_flushes_at_buffer_threshold(self, tmp_path):
+        """Test that writes happen in ~20 MB buffered flushes, not per-chunk."""
+        client = S3Client(bucket_name="test-bucket")
+        dest = tmp_path / "output.nc"
+
+        # 45 MB payload → should produce 2 buffer flushes + 1 final flush
+        payload = b"X" * (45 * 1024 * 1024)
+
+        mock_s3_client = AsyncMock()
+        mock_s3_client.get_object = AsyncMock(
+            return_value={"Body": self._make_stream(payload)}
+        )
+
+        write_sizes = []
+        original_open = open
+
+        class TrackedFile:
+            def __init__(self, f):
+                self._f = f
+
+            def write(self, data):
+                write_sizes.append(len(data))
+                return self._f.write(data)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return self._f.__exit__(*args)
+
+        def tracking_open(path, mode, **kwargs):
+            f = original_open(path, mode, **kwargs)
+            return TrackedFile(f)
+
+        with patch.object(client, "_session") as mock_session:
+            mock_session.client.return_value = self._make_session_ctx(mock_s3_client)
+            with patch("builtins.open", side_effect=tracking_open):
+                await client.download_to_file("file.nc", dest)
+
+        # Should have 3 writes: two ~20 MB flushes + one ~5 MB remainder
+        assert len(write_sizes) == 3
+        assert all(size >= 5 * 1024 * 1024 for size in write_sizes)
+
+    @pytest.mark.asyncio
+    async def test_download_to_file_retry_cleans_partial_file(self, tmp_path):
+        """Test that partial file is deleted on failure before retry."""
+        client = S3Client(bucket_name="test-bucket")
+        dest = tmp_path / "output.nc"
+
+        mock_s3_client = AsyncMock()
+        mock_s3_client.get_object = AsyncMock(
+            side_effect=[
+                Exception("Connection reset"),
+                {"Body": self._make_stream(b"good data")},
+            ]
+        )
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with patch.object(client, "_session") as mock_session:
+                mock_session.client.return_value = self._make_session_ctx(
+                    mock_s3_client
+                )
+                await client.download_to_file("file.nc", dest, retries=2)
+
+        assert dest.read_bytes() == b"good data"
+        assert mock_s3_client.get_object.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_download_to_file_exhausts_retries(self, tmp_path):
+        """Test that RuntimeError is raised after all retries are exhausted."""
+        client = S3Client(bucket_name="test-bucket")
+        dest = tmp_path / "output.nc"
+
+        mock_s3_client = AsyncMock()
+        mock_s3_client.get_object = AsyncMock(
+            side_effect=Exception("Persistent failure")
+        )
+
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with patch.object(client, "_session") as mock_session:
+                mock_session.client.return_value = self._make_session_ctx(
+                    mock_s3_client
+                )
+                with pytest.raises(RuntimeError, match="Failed to download"):
+                    await client.download_to_file("file.nc", dest, retries=3)
+
+        assert not dest.exists()
+        assert mock_s3_client.get_object.call_count == 3
+
+
 class TestS3ClientDownloadFolder:
     """Tests for S3Client.download_folder method."""
 

@@ -14,7 +14,6 @@ import logging
 from typing import Callable, Dict, List, Optional
 from pathlib import Path
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -104,6 +103,68 @@ class S3Client:
         else:
             kwargs["config"] = BotoConfig(signature_version=UNSIGNED)
         return kwargs
+
+    async def download_to_file(
+        self,
+        s3_key: str,
+        dest_path: Path,
+        retries: int = 3,
+    ) -> None:
+        """
+        Stream-download an S3 object to a local file with buffered writes.
+
+        Avoids loading the entire file into memory. Chunks are accumulated
+        in a 20 MB buffer before flushing to disk to reduce I/O syscalls.
+
+        Args:
+            s3_key: The S3 key (path) of the file to download
+            dest_path: Local file path to write to
+            retries: Number of retry attempts
+
+        Raises:
+            RuntimeError: If download fails after all retries
+        """
+        flush_size = 20 * 1024 * 1024  # 20 MB
+        read_chunk = 65_536  # 64 KB
+
+        async with self._session.client(
+            "s3", **self._get_client_kwargs(authenticated=True)
+        ) as s3_client:
+            for attempt in range(retries):
+                try:
+                    async with self._semaphore:
+                        response = await s3_client.get_object(
+                            Bucket=self._bucket_name, Key=s3_key
+                        )
+                        stream = response["Body"]
+                        buffer = bytearray()
+                        with open(dest_path, "wb") as f:
+                            while True:
+                                chunk = await stream.read(read_chunk)
+                                if not chunk:
+                                    break
+                                buffer.extend(chunk)
+                                if len(buffer) >= flush_size:
+                                    f.write(buffer)
+                                    buffer.clear()
+                            if buffer:
+                                f.write(buffer)
+                                buffer.clear()
+
+                    logger.info(f"Downloaded to file: {s3_key}")
+                    return
+
+                except Exception as e:
+                    logger.warning(
+                        f"Attempt {attempt + 1}/{retries} failed for {s3_key}: {e}"
+                    )
+                    if dest_path.exists():
+                        dest_path.unlink()
+                    if attempt == retries - 1:
+                        raise RuntimeError(
+                            f"Failed to download {s3_key} after {retries} attempts"
+                        ) from e
+                    await asyncio.sleep(1)
 
     async def download_single_file(
         self,
