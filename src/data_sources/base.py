@@ -43,13 +43,11 @@ class DataSource(ABC):
     @abstractmethod
     def source_id(self) -> str:
         """Unique identifier for this data source."""
-        ...
 
     @property
     @abstractmethod
     def processor_id(self) -> str:
         """The processor ID to use for images from this source."""
-        ...
 
     @abstractmethod
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
@@ -62,7 +60,6 @@ class DataSource(ABC):
         Returns:
             List of ImageInfo for images that need processing.
         """
-        ...
 
     @abstractmethod
     async def download(self, source_uri: str, dest_path: Path) -> Path:
@@ -79,4 +76,3 @@ class DataSource(ABC):
         Raises:
             RuntimeError: If download fails.
         """
-        ...

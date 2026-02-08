@@ -1,3 +1,5 @@
+"""Logging configuration with timezone-aware formatting."""
+
 import logging
 import sys
 from datetime import datetime
@@ -7,6 +9,8 @@ from config import Config
 
 
 class TimezoneFormatter(logging.Formatter):
+    """Logging formatter that converts timestamps to a configurable timezone."""
+
     def __init__(self, fmt=None, datefmt=None, style="%", timezone_str="UTC"):
         super().__init__(fmt, datefmt, style)
         try:

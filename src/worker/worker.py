@@ -22,10 +22,8 @@ from health_server import HealthCheckServer
 
 logger = getLogger(__name__)
 
-# Healthcheck file path
 
-
-class Worker:
+class Worker:  # pylint: disable=too-few-public-methods
     """
     Worker that consumes work units from RabbitMQ and processes them.
 
@@ -52,6 +50,7 @@ class Worker:
         self._handler = handler
         self._running = True
         self._loop: Optional[AbstractEventLoop] = None
+        self._health_server: Optional[HealthCheckServer] = None
 
     def _check_readiness(self) -> tuple[bool, str]:
         """Check if external dependencies are available."""
@@ -96,7 +95,7 @@ class Worker:
 
     def _signal_handler(self, signum, _frame):
         """Handle shutdown signals gracefully."""
-        logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+        logger.info("Received signal %d, initiating graceful shutdown...", signum)
         self._running = False
         self._handler.abort()
         self._mq_client.stop_consuming()
@@ -106,11 +105,11 @@ class Worker:
         logger.info("Worker shutting down...")
         try:
             self._mq_client.close()
-        except Exception as e:
-            logger.warning(f"Error closing RabbitMQ connection: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning("Error closing RabbitMQ connection: %s", e)
 
         # Stop health server
-        if hasattr(self, "_health_server"):
+        if self._health_server:
             self._health_server.stop()
 
         # Close the event loop
@@ -120,7 +119,7 @@ class Worker:
         logger.info("Worker stopped")
 
     def _process_message(
-        self, work_unit: WorkUnit, client: MessageQueueClient, delivery_tag: int
+        self, work_unit: WorkUnit, client: MessageQueueClient, _delivery_tag: int
     ) -> bool:
         """
         Process a single work unit message.
@@ -131,37 +130,40 @@ class Worker:
         Args:
             work_unit: The work unit to process
             client: RabbitMQ client for publishing
-            delivery_tag: Message delivery tag for ack/nack
+            _delivery_tag: Message delivery tag for ack/nack
 
         Returns:
             True if message should be acknowledged
         """
-        logger.info(f"Processing: {work_unit}")
+        logger.info("Processing: %s", work_unit)
 
         try:
             # Run the async handler in the shared event loop
             self._loop.run_until_complete(self._handler.handle(work_unit))
 
-            logger.info(f"Successfully processed {work_unit.image_id}")
+            logger.info("Successfully processed %s", work_unit.image_id)
             return True  # Acknowledge
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             if not self._running:
-                logger.info(f"Shutdown interrupted processing of {work_unit.image_id}")
+                logger.info("Shutdown interrupted processing of %s", work_unit.image_id)
                 return False  # Don't ack - RabbitMQ will requeue on disconnect
 
-            logger.exception(f"Error processing {work_unit}: {e}")
+            logger.exception("Error processing %s: %s", work_unit, e)
 
             # Check if we can retry
             if work_unit.can_retry:
                 retry_unit = work_unit.create_retry()
                 logger.info(
-                    f"Retrying {work_unit} (attempt {retry_unit.retry_count}/{retry_unit.max_retries})"
+                    "Retrying %s (attempt %d/%d)",
+                    work_unit,
+                    retry_unit.retry_count,
+                    retry_unit.max_retries,
                 )
                 client.publish(retry_unit)
             else:
                 # Max retries exceeded, send to DLQ
-                logger.error(f"Max retries exceeded for {work_unit}, sending to DLQ")
+                logger.error("Max retries exceeded for %s, sending to DLQ", work_unit)
                 client.publish_to_dlq(work_unit, str(e))
 
             return True  # Acknowledge (we've handled it via retry or DLQ)
@@ -172,7 +174,7 @@ def _create_data_source_registry() -> DataSourceRegistry:
     registry = DataSourceRegistry()
 
     # Register GOES19 data sources for each band
-    for band_id, band_config in BAND_CONFIGS.items():
+    for _band_id, band_config in BAND_CONFIGS.items():
         data_source = Goes19DataSource(band_config)
         registry.register(data_source)
 

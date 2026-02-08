@@ -3,7 +3,6 @@
 import logging
 from datetime import timedelta
 from pathlib import Path
-from typing import List
 
 from clients.s3_client import S3Client
 from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
@@ -99,12 +98,14 @@ class Goes19DataSource(DataSource):
             )
 
         logger.info(
-            f"[{self.source_id}] Found {len(new_images)} new images "
-            f"(from {len(target_candidates)} candidates)"
+            "[%s] Found %d new images (from %d candidates)",
+            self.source_id,
+            len(new_images),
+            len(target_candidates),
         )
         return new_images
 
-    async def _collect_candidates(self, current_time) -> List[str]:
+    async def _collect_candidates(self, current_time) -> list[str]:
         """Collect all candidate files from the lookback window."""
         all_candidates = []
         hours_back = 0
@@ -114,12 +115,12 @@ class Goes19DataSource(DataSource):
             directory_path = self._build_directory_path(search_time)
 
             try:
-                files = await self._s3_client._get_folder_file_paths(
+                files = await self._s3_client.list_files(
                     directory_path, file_pattern=self._band_config.file_pattern
                 )
                 all_candidates.extend(files)
-            except Exception as e:
-                logger.warning(f"Error listing NOAA S3 for {directory_path}: {e}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.warning("Error listing NOAA S3 for %s: %s", directory_path, e)
 
             hours_back += 1
 
@@ -150,6 +151,6 @@ class Goes19DataSource(DataSource):
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
         await self._s3_client.download_to_file(s3_key, dest_path)
-        logger.info(f"[{self.source_id}] Downloaded to {dest_path}")
+        logger.info("[%s] Downloaded to %s", self.source_id, dest_path)
 
         return dest_path

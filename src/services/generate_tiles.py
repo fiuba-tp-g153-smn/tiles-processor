@@ -32,12 +32,11 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import List
 
 logger = logging.getLogger(__name__)
 
 
-class GenerateTilesService:
+class GenerateTilesService:  # pylint: disable=too-few-public-methods
     """
     Generates XYZ web map tiles from GeoTIFF files.
 
@@ -78,7 +77,7 @@ class GenerateTilesService:
     # Processes per gdal2tiles job
     GDAL_PROCESSES = 2
 
-    def __init__(self, geotiff_files: List[Path], output_dir: Path):
+    def __init__(self, geotiff_files: list[Path], output_dir: Path):
         self._geotiff_files = geotiff_files
         self._output_dir = output_dir
         self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_TILES)
@@ -119,7 +118,7 @@ class GenerateTilesService:
 
         if failed:
             for name, err in failed:
-                logger.error(f"Tile generation failed for {name}: {err}")
+                logger.error("Tile generation failed for %s: %s", name, err)
             raise RuntimeError(
                 f"Tile generation failed for {len(failed)}/{len(tasks)} files"
             )
@@ -160,7 +159,7 @@ class GenerateTilesService:
                 str(tmp_tiles_dir),
             ]
 
-            logger.info(f"Generating tiles for {geotiff_path.name}...")
+            logger.info("Generating tiles for %s...", geotiff_path.name)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -170,7 +169,7 @@ class GenerateTilesService:
             )
 
             if result.returncode != 0:
-                logger.error(f"gdal2tiles failed: {result.stderr}")
+                logger.error("gdal2tiles failed: %s", result.stderr)
                 raise RuntimeError(f"gdal2tiles failed for {geotiff_path.name}")
 
             # 3. Atomically move tiles to final destination
@@ -178,10 +177,10 @@ class GenerateTilesService:
                 shutil.rmtree(tiles_output_dir)
 
             tmp_tiles_dir.rename(tiles_output_dir)
-            logger.info(f"Tiles generated successfully: {tiles_output_dir}")
+            logger.info("Tiles generated successfully: %s", tiles_output_dir)
 
         except Exception as e:
-            logger.error(f"Error generating tiles for {geotiff_path.name}: {e}")
+            logger.error("Error generating tiles for %s: %s", geotiff_path.name, e)
             if tmp_tiles_dir.exists():
                 shutil.rmtree(tmp_tiles_dir)
             raise

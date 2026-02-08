@@ -14,14 +14,17 @@ GOES Geostationary Projection:
 
 import asyncio
 import io
+import logging
+
 from pyproj import CRS
-from typing import Dict
 import xarray as xr
+
+logger = logging.getLogger(__name__)
 
 # Note: Ensure you have rioxarray installed to use the rio accessor
 
 
-class SetupGOESGeorreferencingService:
+class SetupGOESGeorreferencingService:  # pylint: disable=too-few-public-methods
     """
     Applies georeferencing to GOES-19 satellite datasets.
 
@@ -48,11 +51,11 @@ class SetupGOESGeorreferencingService:
         to avoid issues with closed file handles in async processing.
     """
 
-    def __init__(self, goes_data: Dict[str, bytes], max_concurrency: int = 4):
+    def __init__(self, goes_data: dict[str, bytes], max_concurrency: int = 4):
         self._goes_data = goes_data
         self._max_concurrency = max_concurrency
 
-    async def run(self) -> Dict[str, xr.Dataset]:
+    async def run(self) -> dict[str, xr.Dataset]:
         """
         Async Concurrency Pattern: Semaphore + to_thread + gather.
 
@@ -64,9 +67,6 @@ class SetupGOESGeorreferencingService:
         This approach ensures the event loop remains responsive while processing heavy
         satellite data files, without overwhelming system resources.
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
         tasks = []
         file_names = []
 
@@ -96,7 +96,7 @@ class SetupGOESGeorreferencingService:
 
         if failed:
             for name, err in failed:
-                logger.error(f"Georeferencing failed for {name}: {err}")
+                logger.error("Georeferencing failed for %s: %s", name, err)
             raise RuntimeError(
                 f"Georeferencing failed for {len(failed)}/{len(tasks)} files"
             )

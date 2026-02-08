@@ -2,7 +2,6 @@
 
 from logging import getLogger
 
-from config import Config
 from models.work_unit import WorkUnit
 from processors.base_processor import ImageProcessor
 
@@ -16,9 +15,6 @@ class RadarProcessor(ImageProcessor):
     This is a placeholder implementation. To be implemented when
     integrating with weather radar data processing.
     """
-
-    def __init__(self, config: Config):
-        super().__init__(config)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """

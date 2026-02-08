@@ -55,7 +55,7 @@ class WorkHandler:
             Exception: If download or processing fails
         """
         total_start = perf_counter()
-        logger.info(f"[HANDLER] Starting processing for {work_unit}")
+        logger.info("[HANDLER] Starting processing for %s", work_unit)
 
         # Get data source for download
         data_source = self._data_source_registry.get(work_unit.data_source_id)
@@ -67,15 +67,16 @@ class WorkHandler:
         try:
             # Step 1: Download (lightweight, stays in main process)
             download_start = perf_counter()
-            logger.info(f"[HANDLER] Downloading {work_unit.image_id}")
+            logger.info("[HANDLER] Downloading %s", work_unit.image_id)
             await data_source.download(work_unit.source_uri, local_path)
             download_time = perf_counter() - download_start
 
             # Step 2: Process in subprocess (heavy libraries isolated)
             process_start = perf_counter()
             logger.info(
-                f"[HANDLER] Processing {work_unit.image_id} in subprocess "
-                f"(processor: {work_unit.processor_id})"
+                "[HANDLER] Processing %s in subprocess (processor: %s)",
+                work_unit.image_id,
+                work_unit.processor_id,
             )
             self._run_processing_subprocess(work_unit, str(local_path))
             process_time = perf_counter() - process_start
@@ -86,11 +87,13 @@ class WorkHandler:
             # Log timing summary
             total_time = perf_counter() - total_start
             logger.info(
-                f"[HANDLER] Completed end2end processing and upload | "
-                f"download: {download_time:.2f}s, "
-                f"process: {process_time:.2f}s, "
-                f"total: {total_time:.2f}s | "
-                f"image_id: {work_unit.image_id}"
+                "[HANDLER] Completed end2end processing and upload | "
+                "download: %.2fs, process: %.2fs, total: %.2fs | "
+                "image_id: %s",
+                download_time,
+                process_time,
+                total_time,
+                work_unit.image_id,
             )
 
         finally:
@@ -122,7 +125,7 @@ class WorkHandler:
         work_unit_json = work_unit.to_json()
 
         # Start subprocess with pipes for real-time streaming
-        process = subprocess.Popen(
+        with subprocess.Popen(
             [
                 sys.executable,
                 "-m",
@@ -134,80 +137,80 @@ class WorkHandler:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,  # Line-buffered
-        )
-        self._current_process = process
+        ) as process:
+            self._current_process = process
 
-        # Keep last N lines of stderr for error reporting
-        stderr_buffer: deque[str] = deque(maxlen=50)
+            # Keep last N lines of stderr for error reporting
+            stderr_buffer: deque[str] = deque(maxlen=50)
 
-        def stream_stdout(pipe):
-            """Stream stdout line by line to logger."""
+            def stream_stdout(pipe):
+                """Stream stdout line by line to logger."""
+                try:
+                    for line in iter(pipe.readline, ""):
+                        line = line.rstrip()
+                        if line:
+                            logger.info(line)
+                finally:
+                    pipe.close()
+
+            def stream_stderr(pipe, buffer: deque):
+                """Stream stderr line by line to logger and buffer for errors."""
+                try:
+                    for line in iter(pipe.readline, ""):
+                        line = line.rstrip()
+                        if line:
+                            buffer.append(line)
+                            logger.error("[SUBPROCESS] %s", line)
+                finally:
+                    pipe.close()
+
+            # Start streaming threads
+            stdout_thread = Thread(
+                target=stream_stdout,
+                args=(process.stdout,),
+                daemon=True,
+            )
+            stderr_thread = Thread(
+                target=stream_stderr,
+                args=(process.stderr, stderr_buffer),
+                daemon=True,
+            )
+
+            stdout_thread.start()
+            stderr_thread.start()
+
+            # Wait for process to complete (with timeout)
             try:
-                for line in iter(pipe.readline, ""):
-                    line = line.rstrip()
-                    if line:
-                        logger.info(line)
-            finally:
-                pipe.close()
+                return_code = process.wait(timeout=1800)  # 30 minute timeout
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                process.wait()
+                self._current_process = None
+                # Wait for threads to capture any remaining output
+                stdout_thread.join(timeout=2)
+                stderr_thread.join(timeout=2)
+                raise RuntimeError(
+                    f"Processing subprocess timed out after 30 minutes "
+                    f"for {work_unit.image_id}"
+                ) from exc
 
-        def stream_stderr(pipe, buffer: deque):
-            """Stream stderr line by line to logger and buffer for errors."""
-            try:
-                for line in iter(pipe.readline, ""):
-                    line = line.rstrip()
-                    if line:
-                        buffer.append(line)
-                        logger.error(f"[SUBPROCESS] {line}")
-            finally:
-                pipe.close()
-
-        # Start streaming threads
-        stdout_thread = Thread(
-            target=stream_stdout,
-            args=(process.stdout,),
-            daemon=True,
-        )
-        stderr_thread = Thread(
-            target=stream_stderr,
-            args=(process.stderr, stderr_buffer),
-            daemon=True,
-        )
-
-        stdout_thread.start()
-        stderr_thread.start()
-
-        # Wait for process to complete (with timeout)
-        try:
-            return_code = process.wait(timeout=1800)  # 30 minute timeout
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+            # Wait for streaming threads to finish capturing all output
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
             self._current_process = None
-            # Wait for threads to capture any remaining output
-            stdout_thread.join(timeout=2)
-            stderr_thread.join(timeout=2)
-            raise RuntimeError(
-                f"Processing subprocess timed out after 30 minutes "
-                f"for {work_unit.image_id}"
-            )
 
-        # Wait for streaming threads to finish capturing all output
-        stdout_thread.join(timeout=5)
-        stderr_thread.join(timeout=5)
-        self._current_process = None
-
-        # Check for errors
-        if return_code != 0:
-            # Build detailed error message from stderr buffer
-            error_details = (
-                "\n".join(stderr_buffer)
-                if stderr_buffer
-                else "No error details captured"
-            )
-            raise RuntimeError(
-                f"Processing subprocess failed for {work_unit.image_id} "
-                f"(exit code {return_code}):\n{error_details}"
-            )
+            # Check for errors
+            if return_code != 0:
+                # Build detailed error message from stderr buffer
+                error_details = (
+                    "\n".join(stderr_buffer)
+                    if stderr_buffer
+                    else "No error details captured"
+                )
+                raise RuntimeError(
+                    f"Processing subprocess failed for {work_unit.image_id} "
+                    f"(exit code {return_code}):\n{error_details}"
+                )
 
     def _ensure_dir(self, directory: Path) -> Path:
         """Ensure directory exists and return it."""
@@ -219,6 +222,6 @@ class WorkHandler:
         try:
             if file_path.exists():
                 file_path.unlink()
-                logger.debug(f"Cleaned up: {file_path}")
-        except Exception as e:
-            logger.warning(f"Failed to cleanup file {file_path}: {e}")
+                logger.debug("Cleaned up: %s", file_path)
+        except OSError as e:
+            logger.warning("Failed to cleanup file %s: %s", file_path, e)

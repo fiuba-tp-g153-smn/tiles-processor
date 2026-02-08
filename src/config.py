@@ -1,3 +1,5 @@
+"""Application configuration loaded from environment variables and settings.json."""
+
 import json
 import logging
 import os
@@ -5,7 +7,13 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-class Config:
+class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
+    """Application configuration from environment variables and settings.json.
+
+    Attributes use UPPER_CASE to match their environment variable names,
+    following the convention used by Django, Flask, and other Python frameworks.
+    """
+
     def __init__(self, settings_path: Path | None = None):
         if settings_path is None:
             settings_path = Path(__file__).parent.parent / "settings.json"
@@ -96,28 +104,29 @@ class Config:
         }
 
     def log_config(self) -> None:
+        """Log the current configuration values."""
         logger = logging.getLogger(__name__)
         logger.info("=== Configuration ===")
-        logger.info(f"LOG_LEVEL: {self.LOG_LEVEL}")
-        logger.info(f"TIMEZONE: {self.TIMEZONE}")
-        logger.info(f"ENABLE_BAND_13: {self.ENABLE_BAND_13}")
-        logger.info(f"ENABLE_BAND_9: {self.ENABLE_BAND_9}")
-        logger.info(f"ENABLE_BAND_2: {self.ENABLE_BAND_2}")
-        logger.info(f"ENABLE_RADAR: {self.ENABLE_RADAR}")
-        logger.info(f"DATA_DIR: {self.DATA_DIR}")
-        logger.info(f"TMP_DIR: {self.TMP_DIR}")
-        logger.info(f"BOUNDS_MINX: {self.BOUNDS_MINX}")
-        logger.info(f"BOUNDS_MINY: {self.BOUNDS_MINY}")
-        logger.info(f"BOUNDS_MAXX: {self.BOUNDS_MAXX}")
-        logger.info(f"BOUNDS_MAXY: {self.BOUNDS_MAXY}")
-        logger.info(f"S3_TILES_DATA_ENDPOINT: {self.S3_TILES_DATA_ENDPOINT}")
-        logger.info(f"S3_TILES_DATA_BUCKET_NAME: {self.S3_TILES_DATA_BUCKET_NAME}")
-        logger.info(f"S3_TILES_DATA_SECURE: {self.S3_TILES_DATA_SECURE}")
-        logger.info(f"RABBITMQ_HOST: {self.RABBITMQ_HOST}")
-        logger.info(f"RABBITMQ_PORT: {self.RABBITMQ_PORT}")
-        logger.info(f"RABBITMQ_QUEUE: {self.RABBITMQ_QUEUE}")
-        logger.info(f"RABBITMQ_DLQ: {self.RABBITMQ_DLQ}")
-        logger.info(f"RABBITMQ_DLX: {self.RABBITMQ_DLX}")
-        logger.info(f"JOB_TTL_MINUTES: {self.JOB_TTL_MINUTES}")
-        logger.info(f"HEALTH_PORT: {self.HEALTH_PORT}")
+        logger.info("LOG_LEVEL: %s", self.LOG_LEVEL)
+        logger.info("TIMEZONE: %s", self.TIMEZONE)
+        logger.info("ENABLE_BAND_13: %s", self.ENABLE_BAND_13)
+        logger.info("ENABLE_BAND_9: %s", self.ENABLE_BAND_9)
+        logger.info("ENABLE_BAND_2: %s", self.ENABLE_BAND_2)
+        logger.info("ENABLE_RADAR: %s", self.ENABLE_RADAR)
+        logger.info("DATA_DIR: %s", self.DATA_DIR)
+        logger.info("TMP_DIR: %s", self.TMP_DIR)
+        logger.info("BOUNDS_MINX: %s", self.BOUNDS_MINX)
+        logger.info("BOUNDS_MINY: %s", self.BOUNDS_MINY)
+        logger.info("BOUNDS_MAXX: %s", self.BOUNDS_MAXX)
+        logger.info("BOUNDS_MAXY: %s", self.BOUNDS_MAXY)
+        logger.info("S3_TILES_DATA_ENDPOINT: %s", self.S3_TILES_DATA_ENDPOINT)
+        logger.info("S3_TILES_DATA_BUCKET_NAME: %s", self.S3_TILES_DATA_BUCKET_NAME)
+        logger.info("S3_TILES_DATA_SECURE: %s", self.S3_TILES_DATA_SECURE)
+        logger.info("RABBITMQ_HOST: %s", self.RABBITMQ_HOST)
+        logger.info("RABBITMQ_PORT: %s", self.RABBITMQ_PORT)
+        logger.info("RABBITMQ_QUEUE: %s", self.RABBITMQ_QUEUE)
+        logger.info("RABBITMQ_DLQ: %s", self.RABBITMQ_DLQ)
+        logger.info("RABBITMQ_DLX: %s", self.RABBITMQ_DLX)
+        logger.info("JOB_TTL_MINUTES: %s", self.JOB_TTL_MINUTES)
+        logger.info("HEALTH_PORT: %s", self.HEALTH_PORT)
         logger.info("=====================")

@@ -1,7 +1,7 @@
 """
 Band 2 processor with downsampling for high-resolution visible imagery.
 
-Band 2 (0.64 µm Red Visible) has 500m resolution vs 2km for Band 13/9.
+Band 2 (0.64 um Red Visible) has 500m resolution vs 2km for Band 13/9.
 Full Disk grid is 21696x21696 (~470M pixels). CF-decoding this to float64
 would consume ~3.7 GB, so this processor loads raw int16 and
 downsamples 4x with coarsen().mean() BEFORE applying scale_factor/add_offset
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 class Band2Processor(GoesProcessor):
     """
-    Processor for Band 2 (0.64 µm Red Visible) with downsampling.
+    Processor for Band 2 (0.64 um Red Visible) with downsampling.
 
     Overrides georeferencing to downsample 4x and brightness temperature
     computation to use reflectance factor (kappa0 * radiance) instead
@@ -44,7 +44,9 @@ class Band2Processor(GoesProcessor):
     GDAL_PROCESSES = 1
 
     @override
-    def _apply_georeferencing(self, netcdf_path: Path) -> xr.Dataset:
+    def _apply_georeferencing(  # pylint: disable=too-many-locals
+        self, netcdf_path: Path
+    ) -> xr.Dataset:
         """
         Apply GOES projection with 4x downsampling before CRS assignment.
 
@@ -52,8 +54,8 @@ class Band2Processor(GoesProcessor):
         coarsens to 5424x5424, then applies scale_factor and
         add_offset on the small array.
         """
-        from pyproj import CRS
-        import rioxarray  # noqa: F401 - registers .rio accessor
+        from pyproj import CRS  # pylint: disable=import-outside-toplevel
+        import rioxarray  # noqa: F401  pylint: disable=import-outside-toplevel,unused-import
 
         # First open: extract metadata and coordinates (CF-decoded, all tiny)
         with xr.open_dataset(netcdf_path, engine="h5netcdf") as dataset:
@@ -76,9 +78,10 @@ class Band2Processor(GoesProcessor):
             raw_data = raw_ds["Rad"].values
 
         logger.info(
-            f"Loaded raw Band 2: shape={raw_data.shape}, "
-            f"dtype={raw_data.dtype}, "
-            f"size={raw_data.nbytes / 1024**2:.0f} MB"
+            "Loaded raw Band 2: shape=%s, dtype=%s, size=%.0f MB",
+            raw_data.shape,
+            raw_data.dtype,
+            raw_data.nbytes / 1024**2,
         )
 
         # Build DataArray with raw int16 and scaled coordinates
@@ -91,10 +94,10 @@ class Band2Processor(GoesProcessor):
         del raw_data
         gc.collect()
 
-        # Downsample BEFORE CF decode — key memory optimization
+        # Downsample BEFORE CF decode - key memory optimization
         # coarsen().mean() on int16 uses float64 accumulator for precision
         original_shape = raw_da.shape
-        coarsened = raw_da.coarsen(
+        coarsened = raw_da.coarsen(  # pylint: disable=no-member
             x=self.DOWNSAMPLE_FACTOR,
             y=self.DOWNSAMPLE_FACTOR,
             boundary="trim",
@@ -103,8 +106,10 @@ class Band2Processor(GoesProcessor):
         gc.collect()
 
         logger.info(
-            f"Downsampled Band 2: {original_shape} → {coarsened.shape} "
-            f"({self.DOWNSAMPLE_FACTOR}x reduction)"
+            "Downsampled Band 2: %s -> %s (%dx reduction)",
+            original_shape,
+            coarsened.shape,
+            self.DOWNSAMPLE_FACTOR,
         )
 
         # Apply CF decode (scale_factor + add_offset) on the small array
@@ -145,7 +150,7 @@ class Band2Processor(GoesProcessor):
         radiance = dataset["Rad"]
         kappa0 = float(dataset["kappa0"].values)
 
-        logger.info(f"Computing reflectance factor (kappa0={kappa0:.6f})")
+        logger.info("Computing reflectance factor (kappa0=%.6f)", kappa0)
 
         reflectance = radiance * kappa0
         del radiance
@@ -164,7 +169,7 @@ class Band2Processor(GoesProcessor):
         return reflectance
 
     @override
-    def _generate_geotiff(
+    def _generate_geotiff(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         bt_data: xr.DataArray,
         output_dir: Path,
@@ -200,7 +205,9 @@ class Band2Processor(GoesProcessor):
             dynamic_vmax = perc + 0.2
 
         logger.info(
-            f"Dynamic vmax for Band 2: percentile_95={perc:.4f}, vmax={dynamic_vmax:.4f}"
+            "Dynamic vmax for Band 2: percentile_95=%.4f, vmax=%.4f",
+            perc,
+            dynamic_vmax,
         )
 
         return super()._generate_geotiff(

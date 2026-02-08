@@ -1,5 +1,6 @@
 """RabbitMQ client for the work queue system."""
 
+import json
 import logging
 import time
 from typing import Callable, Optional
@@ -9,11 +10,9 @@ from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import Basic, BasicProperties
 
 from models.work_unit import WorkUnit
+from clients.message_queue_client import MessageQueueClient
 
 logger = logging.getLogger(__name__)
-
-
-from clients.message_queue_client import MessageQueueClient
 
 
 class RabbitMQClient(MessageQueueClient):
@@ -36,7 +35,7 @@ class RabbitMQClient(MessageQueueClient):
         - Prefetch count of 1 (fair dispatch to workers)
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         host: str,
         port: int,
@@ -82,7 +81,9 @@ class RabbitMQClient(MessageQueueClient):
         """
         for attempt in range(max_retries):
             try:
-                logger.info(f"Connecting to RabbitMQ at {self._host}:{self._port}...")
+                logger.info(
+                    "Connecting to RabbitMQ at %s:%d...", self._host, self._port
+                )
                 self._connection = pika.BlockingConnection(
                     self._get_connection_params()
                 )
@@ -92,14 +93,14 @@ class RabbitMQClient(MessageQueueClient):
                 return
             except pika.exceptions.AMQPConnectionError as e:
                 logger.warning(
-                    f"Connection attempt {attempt + 1}/{max_retries} failed: {e}"
+                    "Connection attempt %d/%d failed: %s", attempt + 1, max_retries, e
                 )
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                 else:
                     raise RuntimeError(
                         f"Failed to connect to RabbitMQ after {max_retries} attempts"
-                    )
+                    ) from e
 
     def _setup_queues(self) -> None:
         """Declare queues and exchanges for the work queue system."""
@@ -133,7 +134,7 @@ class RabbitMQClient(MessageQueueClient):
             },
         )
 
-        logger.info(f"Queues configured: {self._queue_name}, {self._dlq_name}")
+        logger.info("Queues configured: %s, %s", self._queue_name, self._dlq_name)
 
     def stop_consuming(self) -> None:
         """Signal the consume loop to stop.
@@ -177,7 +178,7 @@ class RabbitMQClient(MessageQueueClient):
             ),
         )
 
-        logger.debug(f"Published work unit: {work_unit}")
+        logger.debug("Published work unit: %s", work_unit)
 
     def publish_to_dlq(self, work_unit: WorkUnit, error: str) -> None:
         """
@@ -195,8 +196,6 @@ class RabbitMQClient(MessageQueueClient):
         data["error"] = error
         data["failed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-        import json
-
         message = json.dumps(data)
 
         self._channel.basic_publish(
@@ -209,7 +208,7 @@ class RabbitMQClient(MessageQueueClient):
             ),
         )
 
-        logger.warning(f"Sent to DLQ: {work_unit} - Error: {error}")
+        logger.warning("Sent to DLQ: %s - Error: %s", work_unit, error)
 
     def consume(
         self,
@@ -236,23 +235,23 @@ class RabbitMQClient(MessageQueueClient):
         def on_message(
             channel: BlockingChannel,
             method: Basic.Deliver,
-            properties: BasicProperties,
+            _properties: BasicProperties,
             body: bytes,
         ):
             delivery_tag = method.delivery_tag
             try:
                 work_unit = WorkUnit.from_json(body.decode("utf-8"))
-                logger.info(f"Received work unit: {work_unit}")
+                logger.info("Received work unit: %s", work_unit)
 
                 # Call the handler
                 should_ack = callback(work_unit, self, delivery_tag)
 
                 if should_ack:
                     channel.basic_ack(delivery_tag=delivery_tag)
-                    logger.debug(f"Acknowledged work unit: {work_unit}")
+                    logger.debug("Acknowledged work unit: %s", work_unit)
 
-            except Exception as e:
-                logger.exception(f"Error processing message: {e}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.exception("Error processing message: %s", e)
                 # Reject and don't requeue - let it go to DLQ
                 channel.basic_nack(delivery_tag=delivery_tag, requeue=False)
 
@@ -262,7 +261,7 @@ class RabbitMQClient(MessageQueueClient):
             auto_ack=False,
         )
 
-        logger.info(f"Started consuming from {self._queue_name}")
+        logger.info("Started consuming from %s", self._queue_name)
         self._channel.start_consuming()
 
     def ack(self, delivery_tag: int) -> None:

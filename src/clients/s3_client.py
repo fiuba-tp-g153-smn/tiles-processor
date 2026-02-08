@@ -6,13 +6,14 @@ Supports both:
 - Authenticated access for private buckets (e.g., MinIO for tile storage)
 """
 
-import aioboto3
 import asyncio
+import logging
+from pathlib import Path
+from typing import Callable
+
+import aioboto3
 from botocore import UNSIGNED
 from botocore.config import Config as BotoConfig
-import logging
-from typing import Callable, Dict, List, Optional
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class S3Client:
         )
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         bucket_name: str,
         endpoint_url: str = None,
@@ -63,7 +64,7 @@ class S3Client:
         self._secure = secure
 
     @classmethod
-    def create_with_credentials(
+    def create_with_credentials(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         cls,
         bucket_name: str,
         endpoint: str,
@@ -151,12 +152,16 @@ class S3Client:
                                 f.write(buffer)
                                 buffer.clear()
 
-                    logger.info(f"Downloaded to file: {s3_key}")
+                    logger.info("Downloaded to file: %s", s3_key)
                     return
 
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-exception-caught
                     logger.warning(
-                        f"Attempt {attempt + 1}/{retries} failed for {s3_key}: {e}"
+                        "Attempt %d/%d failed for %s: %s",
+                        attempt + 1,
+                        retries,
+                        s3_key,
+                        e,
                     )
                     if dest_path.exists():
                         dest_path.unlink()
@@ -170,7 +175,7 @@ class S3Client:
         self,
         s3_key: str,
         retries: int = 3,
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         """
         Download a single file from S3 and return its content.
 
@@ -196,7 +201,7 @@ class S3Client:
         s3_client,
         relative_file_path: str,
         retries: int = 3,
-        local_cache_dir: Optional[Path] = None,
+        local_cache_dir: Path | None = None,
     ) -> tuple:
         for attempt in range(retries):
             try:
@@ -212,32 +217,40 @@ class S3Client:
                         cache_path = local_cache_dir / file_name
                         # Write to cache asynchronously
                         await asyncio.to_thread(cache_path.write_bytes, content)
-                        logger.info(f"✓ Downloaded and cached: {relative_file_path}")
+                        logger.info("✓ Downloaded and cached: %s", relative_file_path)
                     else:
                         logger.info(
-                            f"✓ Downloaded: {relative_file_path} ({len(content)} bytes)"
+                            "✓ Downloaded: %s (%d bytes)",
+                            relative_file_path,
+                            len(content),
                         )
 
                     return relative_file_path, content
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.warning(
-                    f"⚠ Attempt {attempt + 1}/{retries} failed for {relative_file_path}: {str(e)}"
+                    "⚠ Attempt %d/%d failed for %s: %s",
+                    attempt + 1,
+                    retries,
+                    relative_file_path,
+                    str(e),
                 )
                 if attempt == retries - 1:
                     logger.error(
-                        f"✗ Error downloading {relative_file_path} after {retries} attempts. Ignoring file."
+                        "✗ Error downloading %s after %d attempts. Ignoring file.",
+                        relative_file_path,
+                        retries,
                     )
                     return relative_file_path, None
                 await asyncio.sleep(1)
 
-    async def download_folder(
+    async def download_folder(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
         folder_path: str,
         file_pattern: str = "",
         file_filter: Callable[[str], bool] = None,
-        local_cache_dir: Optional[Path] = None,
+        local_cache_dir: Path | None = None,
         skip_if: Callable[[str], bool] = None,
-    ) -> Dict[str, Optional[bytes]]:
+    ) -> dict[str, bytes | None]:
         """
         Download files from a folder.
 
@@ -251,12 +264,14 @@ class S3Client:
         file_paths = await self._get_folder_file_paths(folder_path, file_pattern)
 
         logger.info(
-            f"Found {len(file_paths)} files matching pattern '{file_pattern}' in {folder_path}"
+            "Found %d files matching pattern '%s' in %s",
+            len(file_paths),
+            file_pattern,
+            folder_path,
         )
 
         # Apply additional filter if provided
         if file_filter is not None:
-            original_count = len(file_paths)
             file_paths = [fp for fp in file_paths if file_filter(fp)]
 
         files = {}
@@ -267,7 +282,7 @@ class S3Client:
         for fp in file_paths:
             # Check if we should skip this file completely (e.g. output already exists)
             if skip_if and skip_if(fp):
-                logger.info(f"Skipping download for {fp}: check condition met")
+                logger.info("Skipping download for %s: check condition met", fp)
                 files[fp] = None
                 continue
 
@@ -279,9 +294,9 @@ class S3Client:
                         # Read from cache asynchronously
                         content = await asyncio.to_thread(cache_path.read_bytes)
                         files[fp] = content
-                        logger.info(f"✓ Loaded from cache: {fp}")
-                    except Exception as e:
-                        logger.warning(f"Error reading from cache {cache_path}: {e}")
+                        logger.info("✓ Loaded from cache: %s", fp)
+                    except Exception as e:  # pylint: disable=broad-exception-caught
+                        logger.warning("Error reading from cache %s: %s", cache_path, e)
                         files_to_download.append(fp)
                 else:
                     files_to_download.append(fp)
@@ -291,7 +306,8 @@ class S3Client:
         if not files_to_download:
             return files
 
-        # Use authenticated=True so it uses credentials if available, otherwise falls back to UNSIGNED
+        # Use authenticated=True so it uses credentials if available,
+        # otherwise falls back to UNSIGNED
         async with self._session.client(
             "s3", **self._get_client_kwargs(authenticated=True)
         ) as s3_client:
@@ -308,13 +324,28 @@ class S3Client:
                     files[file_path] = content
 
         logger.info(
-            f"Download/Cache load completed: {len(files)}/{len(file_paths)} files available"
+            "Download/Cache load completed: %d/%d files available",
+            len(files),
+            len(file_paths),
         )
         return files
 
+    async def list_files(self, folder_path: str, file_pattern: str) -> list[str]:
+        """
+        List files in an S3 folder matching a pattern.
+
+        Args:
+            folder_path: S3 folder path prefix
+            file_pattern: Substring to match in file keys
+
+        Returns:
+            List of matching S3 keys
+        """
+        return await self._get_folder_file_paths(folder_path, file_pattern)
+
     async def _get_folder_file_paths(
         self, folder_path: str, file_pattern: str
-    ) -> List[str]:
+    ) -> list[str]:
         file_paths = []
         try:
             # Use authenticated=True so it uses credentials if available
@@ -322,7 +353,9 @@ class S3Client:
                 "s3", **self._get_client_kwargs(authenticated=True)
             ) as s3_client:
                 logger.debug(
-                    f"Listing objects in bucket '{self._bucket_name}' with prefix '{folder_path}'"
+                    "Listing objects in bucket '%s' with prefix '%s'",
+                    self._bucket_name,
+                    folder_path,
                 )
 
                 # Use paginator to handle more than 1000 objects
@@ -331,7 +364,7 @@ class S3Client:
                     Bucket=self._bucket_name, Prefix=folder_path
                 ):
                     contents = page.get("Contents", [])
-                    logger.debug(f"Page returned {len(contents)} objects")
+                    logger.debug("Page returned %d objects", len(contents))
 
                     for obj in contents:
                         key = obj["Key"]
@@ -339,12 +372,14 @@ class S3Client:
                             file_paths.append(key)
 
                 logger.debug(
-                    f"Total files found with pattern '{file_pattern}': {len(file_paths)}"
+                    "Total files found with pattern '%s': %d",
+                    file_pattern,
+                    len(file_paths),
                 )
 
-        except Exception as e:
-            logger.error(f"Error getting file paths in {folder_path}: {str(e)}")
-            raise e
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Error getting file paths in %s: %s", folder_path, str(e))
+            raise
 
         return file_paths
 
@@ -364,7 +399,7 @@ class S3Client:
             Number of files uploaded
         """
         if not local_dir.exists():
-            logger.warning(f"Directory does not exist: {local_dir}")
+            logger.warning("Directory does not exist: %s", local_dir)
             return 0
 
         files_to_upload = []
@@ -375,11 +410,14 @@ class S3Client:
                 files_to_upload.append((file_path, s3_key))
 
         if not files_to_upload:
-            logger.info(f"No files to upload in {local_dir}")
+            logger.info("No files to upload in %s", local_dir)
             return 0
 
         logger.info(
-            f"Uploading {len(files_to_upload)} files to s3://{self._bucket_name}/{s3_prefix}"
+            "Uploading %d files to s3://%s/%s",
+            len(files_to_upload),
+            self._bucket_name,
+            s3_prefix,
         )
 
         async with self._session.client(
@@ -396,10 +434,12 @@ class S3Client:
 
         if failed_count > 0:
             logger.warning(
-                f"Upload completed with {failed_count} failures out of {len(results)}"
+                "Upload completed with %d failures out of %d",
+                failed_count,
+                len(results),
             )
         else:
-            logger.info(f"Successfully uploaded {success_count} files to S3")
+            logger.info("Successfully uploaded %d files to S3", success_count)
 
         return success_count
 
@@ -422,10 +462,10 @@ class S3Client:
                 Body=content,
                 ContentType=content_type,
             )
-            logger.debug(f"Uploaded: {s3_key}")
+            logger.debug("Uploaded: %s", s3_key)
             return True
-        except Exception as e:
-            logger.error(f"Failed to upload {file_path} to {s3_key}: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to upload %s to %s: %s", file_path, s3_key, e)
             return False
 
     async def delete_prefix(self, s3_prefix: str) -> int:
@@ -438,7 +478,7 @@ class S3Client:
         Returns:
             Number of objects deleted
         """
-        logger.info(f"Deleting objects under s3://{self._bucket_name}/{s3_prefix}")
+        logger.info("Deleting objects under s3://%s/%s", self._bucket_name, s3_prefix)
 
         async with self._session.client(
             "s3", **self._get_client_kwargs(authenticated=True)
@@ -453,7 +493,7 @@ class S3Client:
                     objects_to_delete.append({"Key": obj["Key"]})
 
             if not objects_to_delete:
-                logger.info(f"No objects found under {s3_prefix}")
+                logger.info("No objects found under %s", s3_prefix)
                 return 0
 
             # Delete in batches of 1000 (S3 limit)
@@ -465,10 +505,10 @@ class S3Client:
                 )
                 deleted_count += len(batch)
 
-            logger.info(f"Deleted {deleted_count} objects from S3")
+            logger.info("Deleted %d objects from S3", deleted_count)
             return deleted_count
 
-    async def list_prefixes(self, prefix: str, delimiter: str = "/") -> List[str]:
+    async def list_prefixes(self, prefix: str, delimiter: str = "/") -> list[str]:
         """
         List common prefixes (directories) under a given prefix.
 
@@ -506,14 +546,14 @@ class S3Client:
             ) as s3_client:
                 try:
                     await s3_client.head_bucket(Bucket=self._bucket_name)
-                    logger.debug(f"Bucket '{self._bucket_name}' exists")
+                    logger.debug("Bucket '%s' exists", self._bucket_name)
                     return True
-                except Exception:
-                    logger.info(f"Creating bucket '{self._bucket_name}'")
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logger.info("Creating bucket '%s'", self._bucket_name)
                     await s3_client.create_bucket(Bucket=self._bucket_name)
                     return True
-        except Exception as e:
-            logger.error(f"Failed to ensure bucket exists: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to ensure bucket exists: %s", e)
             return False
 
     @staticmethod

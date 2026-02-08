@@ -1,11 +1,3 @@
-import sys
-import time
-import logging
-from pathlib import Path
-from config import Config
-from logging_config import setup_logging
-
-
 """
 Application Health Check Script.
 
@@ -25,6 +17,13 @@ EXIT CODES:
 - 1: Unhealthy
 """
 
+import sys
+import time
+import logging
+from pathlib import Path
+from config import Config
+from logging_config import setup_logging
+
 # Maximum age of the heartbeat file in seconds
 # Workers should update this after each processed message
 # Allow 5 minutes since satellite images take time to process
@@ -36,18 +35,19 @@ EXIT_SUCCESS_CODE = 0
 
 
 def check_health():
+    """Check worker health by inspecting the heartbeat file freshness."""
     # Setup logging
     try:
         config = Config()
         setup_logging(config)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         # Fallback if config fails
         logging.basicConfig(level=logging.INFO)
 
     logger = logging.getLogger("healthcheck")
 
     if not HEALTH_FILE.exists():
-        logger.error(f"Health check failed: {HEALTH_FILE} does not exist")
+        logger.error("Health check failed: %s does not exist", HEALTH_FILE)
         sys.exit(EXIT_ERROR_CODE)
 
     # Get file modification time
@@ -57,11 +57,13 @@ def check_health():
 
     if age > MAX_DELAY_SECONDS:
         logger.error(
-            f"Health check failed: last heartbeat was {age:.1f}s ago (max {MAX_DELAY_SECONDS}s)"
+            "Health check failed: last heartbeat was %.1fs ago (max %ds)",
+            age,
+            MAX_DELAY_SECONDS,
         )
         sys.exit(EXIT_ERROR_CODE)
 
-    logger.info(f"Health check passed: last heartbeat was {age:.1f}s ago")
+    logger.info("Health check passed: last heartbeat was %.1fs ago", age)
     sys.exit(EXIT_SUCCESS_CODE)
 
 

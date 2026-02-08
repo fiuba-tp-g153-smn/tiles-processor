@@ -15,6 +15,7 @@ repos:
         entry: pylint src --ignore-patterns=".*\.json" --ignore-patterns="test_.*?py,(.)*_test\\.py"
         language: system
         types: [python]
+        exclude: ^(scripts/|tests/)
         verbose: true
 
 

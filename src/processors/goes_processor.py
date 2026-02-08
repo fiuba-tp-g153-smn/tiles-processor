@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Tuple, List
+from typing import Tuple
 
 import numpy as np
 import xarray as xr
@@ -51,11 +51,11 @@ class GoesProcessor(ImageProcessor):
         )
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
-        """
-        Execute the full processing pipeline.
-        """
+        """Execute the full processing pipeline."""
         logger.info(
-            f"[{work_unit.processor_id.upper()}] Starting processing for {work_unit.image_id}"
+            "[%s] Starting processing for %s",
+            work_unit.processor_id.upper(),
+            work_unit.image_id,
         )
 
         # Verify input
@@ -73,94 +73,100 @@ class GoesProcessor(ImageProcessor):
         bt_data = None
 
         try:
-            # 1. Georeference
-            self._check_shutdown()
-            logger.info("Step 1: Georeferencing")
-            dataset = await asyncio.to_thread(self._apply_georeferencing, netcdf_path)
-
-            # 2. Brightness Temperature
-            self._check_shutdown()
-            logger.info("Step 2: Brightness Temperature")
-            bt_data = await asyncio.to_thread(
-                self._compute_brightness_temperature, dataset
+            dataset, bt_data = await self._run_science_pipeline(
+                netcdf_path, dataset, bt_data
             )
-
-            # Clean up dataset
-            del dataset
-            dataset = None
-            gc.collect()
-
-            # 3. GeoTIFF Generation
-            self._check_shutdown()
-            logger.info("Step 3: GeoTIFF Generation")
-            band_config = work_unit.band_config
-
-            # Determine palette
-            if band_config.palette_name == "WATER_VAPOR_PALETTE":
-                color_palette = GenerateGeoTIFFFilesService.WATER_VAPOR_PALETTE
-            elif band_config.palette_name == "VISIBLE_PALETTE":
-                color_palette = GenerateGeoTIFFFilesService.VISIBLE_PALETTE
-            else:
-                color_palette = GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE
-
-            geotiff_path = await asyncio.to_thread(
-                self._generate_geotiff,
-                bt_data,
-                geotiff_dir,
-                work_unit.image_id,
-                work_unit.bounds,
-                band_config.vmin,
-                band_config.vmax,
-                band_config.product_name,
-                color_palette,
-            )
-
-            # Clean up bt_data
-            del bt_data
+            await self._generate_and_upload(bt_data, geotiff_dir, tiles_dir, work_unit)
             bt_data = None
-            gc.collect()
-
-            # 4. Tile Generation
-            self._check_shutdown()
-            logger.info("Step 4: Tile Generation")
-            tiles_output_dir = await asyncio.to_thread(
-                self._generate_tiles, geotiff_path, tiles_dir
-            )
-
-            # 5. Upload to S3
-            self._check_shutdown()
-            logger.info("Step 5: Upload to S3")
-            tileset_name = f"{geotiff_path.stem}_tiles"
-            s3_prefix = f"{band_config.s3_prefix}/{tileset_name}"
-
-            await self._minio_client.ensure_bucket_exists()
-            await self._minio_client.upload_directory(tiles_output_dir, s3_prefix)
-
-            logger.info(f"Processing complete: {s3_prefix}")
-
-            # 6. Retention Policy Cleanup
-            self._check_shutdown()
-            logger.info("Step 6: Enforcing Retention Policy")
-            await self._enforce_retention_policy(band_config.s3_prefix)
-
         except ShutdownRequested:
             logger.info(
-                f"Shutdown requested, aborting processing for {work_unit.image_id}"
+                "Shutdown requested, aborting processing for %s",
+                work_unit.image_id,
             )
             raise
         except Exception as e:
-            logger.error(f"Processing failed for {work_unit.image_id}: {e}")
+            logger.error("Processing failed for %s: %s", work_unit.image_id, e)
             raise
         finally:
-            # Cleanup intermediate files
-            if locals().get("geotiff_path") and "geotiff_path" in locals():
-                self._cleanup_file(geotiff_path)
-
-            if locals().get("tiles_output_dir") and "tiles_output_dir" in locals():
-                self._cleanup_directory(tiles_output_dir)
-
-            # Force GC
+            self._cleanup_directory(geotiff_dir)
+            self._cleanup_directory(tiles_dir)
             gc.collect()
+
+    async def _run_science_pipeline(self, netcdf_path, dataset, bt_data):
+        """Run georeferencing and brightness temperature computation."""
+        # 1. Georeference
+        self._check_shutdown()
+        logger.info("Step 1: Georeferencing")
+        dataset = await asyncio.to_thread(self._apply_georeferencing, netcdf_path)
+
+        # 2. Brightness Temperature
+        self._check_shutdown()
+        logger.info("Step 2: Brightness Temperature")
+        bt_data = await asyncio.to_thread(self._compute_brightness_temperature, dataset)
+
+        del dataset
+        gc.collect()
+        return None, bt_data
+
+    async def _generate_and_upload(self, bt_data, geotiff_dir, tiles_dir, work_unit):
+        """Generate GeoTIFF, tiles, and upload to S3."""
+        band_config = work_unit.band_config
+
+        # Determine palette
+        if band_config.palette_name == "WATER_VAPOR_PALETTE":
+            color_palette = GenerateGeoTIFFFilesService.WATER_VAPOR_PALETTE
+        elif band_config.palette_name == "VISIBLE_PALETTE":
+            color_palette = GenerateGeoTIFFFilesService.VISIBLE_PALETTE
+        else:
+            color_palette = GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE
+
+        # 3. GeoTIFF Generation
+        self._check_shutdown()
+        logger.info("Step 3: GeoTIFF Generation")
+        geotiff_path = await asyncio.to_thread(
+            self._generate_geotiff,
+            bt_data,
+            geotiff_dir,
+            work_unit.image_id,
+            work_unit.bounds,
+            band_config.vmin,
+            band_config.vmax,
+            band_config.product_name,
+            color_palette,
+        )
+
+        del bt_data
+        gc.collect()
+
+        # 4. Tile Generation
+        self._check_shutdown()
+        logger.info("Step 4: Tile Generation")
+        tiles_output_dir = await asyncio.to_thread(
+            self._generate_tiles, geotiff_path, tiles_dir
+        )
+
+        # 5. Upload to S3
+        self._check_shutdown()
+        logger.info("Step 5: Upload to S3")
+        tileset_name = f"{geotiff_path.stem}_tiles"
+        s3_prefix = f"{band_config.s3_prefix}/{tileset_name}"
+
+        await self._minio_client.ensure_bucket_exists()
+        await self._minio_client.upload_directory(tiles_output_dir, s3_prefix)
+
+        logger.info("Processing complete: %s", s3_prefix)
+
+        # 6. Retention Policy Cleanup
+        self._check_shutdown()
+        logger.info("Step 6: Enforcing Retention Policy")
+        await self._enforce_retention_policy(band_config.s3_prefix)
+
+        # Cleanup intermediate files
+        self._cleanup_file(geotiff_path)
+        self._cleanup_directory(tiles_output_dir)
+        gc.collect()
+
+        return geotiff_path
 
     async def _enforce_retention_policy(self, s3_prefix: str) -> None:
         """
@@ -177,14 +183,10 @@ class GoesProcessor(ImageProcessor):
         retention_count = 26
 
         try:
-            # List existing tilesets
-            # Note: list_prefixes returns prefixes ending with /, e.g., "band_13/tiles/xxx_tiles/"
             prefixes = await self._minio_client.list_prefixes(
                 f"{s3_prefix}/", delimiter="/"
             )
 
-            # Filter and Sort by timestamp in filename
-            # Format: OR_ABI-L1b-RadF-M6C09_G19_sYYYYJJJHHMMSS..._tiles/
             tileset_prefixes = sorted(
                 [p for p in prefixes if p.rstrip("/").endswith("_tiles")]
             )
@@ -193,55 +195,54 @@ class GoesProcessor(ImageProcessor):
 
             if total_count <= retention_count:
                 logger.debug(
-                    f"Retention policy check: {total_count} <= {retention_count}, no action needed."
+                    "Retention policy check: %d <= %d, no action needed.",
+                    total_count,
+                    retention_count,
                 )
                 return
 
-            # Identify old tilesets to delete
-            # Keep the last N (latest), delete the rest (oldest)
             to_delete = tileset_prefixes[:-retention_count]
 
-            # Safety check: never delete more than a reasonable number in one pass
-            # This prevents runaway deletion in case of bugs
             max_delete_per_pass = 10
             if len(to_delete) > max_delete_per_pass:
                 logger.warning(
-                    f"Limiting deletion to {max_delete_per_pass} tilesets "
-                    f"(wanted to delete {len(to_delete)})"
+                    "Limiting deletion to %d tilesets (wanted to delete %d)",
+                    max_delete_per_pass,
+                    len(to_delete),
                 )
                 to_delete = to_delete[:max_delete_per_pass]
 
             logger.info(
-                f"Retention policy: Deleting {len(to_delete)} old tilesets "
-                f"(total: {total_count}, keeping: {retention_count})"
+                "Retention policy: Deleting %d old tilesets "
+                "(total: %d, keeping: %d)",
+                len(to_delete),
+                total_count,
+                retention_count,
             )
 
             deleted_count = 0
             for prefix in to_delete:
                 try:
-                    # Double-check the prefix still exists before deleting
-                    # (another worker might have deleted it)
                     await self._minio_client.delete_prefix(prefix)
                     deleted_count += 1
-                    logger.info(f"Deleted old tileset: {prefix}")
-                except Exception as e:
-                    # Log but don't fail - another worker might have deleted it
-                    logger.debug(f"Could not delete tileset {prefix}: {e}")
+                    logger.info("Deleted old tileset: %s", prefix)
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    logger.debug("Could not delete tileset %s: %s", prefix, e)
 
             if deleted_count > 0:
                 logger.info(
-                    f"Retention policy: Successfully deleted {deleted_count} tilesets"
+                    "Retention policy: Successfully deleted %d tilesets",
+                    deleted_count,
                 )
 
-        except Exception as e:
-            # Log but don't fail the overall processing
-            logger.warning(f"Error enforcing retention policy (non-fatal): {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning("Error enforcing retention policy (non-fatal): %s", e)
 
     def _apply_georeferencing(self, netcdf_path: Path) -> xr.Dataset:
         """Apply GOES satellite projection transformation."""
         # Lazy imports to reduce idle memory footprint
-        from pyproj import CRS
-        import rioxarray  # noqa: F401 - registers .rio accessor
+        from pyproj import CRS  # pylint: disable=import-outside-toplevel
+        import rioxarray  # noqa: F401  pylint: disable=import-outside-toplevel,unused-import
 
         with xr.open_dataset(netcdf_path, engine="h5netcdf") as dataset:
             # Get satellite perspective height
@@ -287,7 +288,7 @@ class GoesProcessor(ImageProcessor):
 
         return brightness_temperature
 
-    def _generate_geotiff(
+    def _generate_geotiff(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
         bt_data: xr.DataArray,
         output_dir: Path,
@@ -299,9 +300,9 @@ class GoesProcessor(ImageProcessor):
         color_palette: list,
     ) -> Path:
         """Generate a colorized RGBA GeoTIFF."""
-        logger.info(f"Generating GeoTIFF for {image_id}")
-        logger.debug(f"Bounds: {bounds}")
-        logger.debug(f"Input data shape: {bt_data.shape}")
+        logger.info("Generating GeoTIFF for %s", image_id)
+        logger.debug("Bounds: %s", bounds)
+        logger.debug("Input data shape: %s", bt_data.shape)
 
         # Clean attributes
         if "grid_mapping" in bt_data.attrs:
@@ -313,11 +314,15 @@ class GoesProcessor(ImageProcessor):
             "EPSG:4326", resolution=self.REPROJECT_RESOLUTION
         )
         bt_reproj.rio.write_nodata(np.nan, inplace=True)
-        logger.debug(f"Reprojected shape: {bt_reproj.shape}")
+        logger.debug("Reprojected shape: %s", bt_reproj.shape)
 
         # Clip to bounds
         logger.debug(
-            f"Clipping to bounds: minx={bounds['minx']}, miny={bounds['miny']}, maxx={bounds['maxx']}, maxy={bounds['maxy']}"
+            "Clipping to bounds: minx=%s, miny=%s, maxx=%s, maxy=%s",
+            bounds["minx"],
+            bounds["miny"],
+            bounds["maxx"],
+            bounds["maxy"],
         )
         bt_clipped = bt_reproj.rio.clip_box(
             minx=bounds["minx"],
@@ -326,14 +331,17 @@ class GoesProcessor(ImageProcessor):
             maxy=bounds["maxy"],
         )
         logger.info(
-            f"Clipped data shape: {bt_clipped.shape} (y={bt_clipped.shape[0]}, x={bt_clipped.shape[1]})"
+            "Clipped data shape: %s (y=%d, x=%d)",
+            bt_clipped.shape,
+            bt_clipped.shape[0],
+            bt_clipped.shape[1],
         )
 
         # Warn if clipped data is very small
         if bt_clipped.shape[0] < 100 or bt_clipped.shape[1] < 100:
             logger.warning(
-                f"Clipped data is small ({bt_clipped.shape}), "
-                f"this may result in missing zoom levels"
+                "Clipped data is small (%s), this may result in missing zoom levels",
+                bt_clipped.shape,
             )
 
         del bt_reproj
@@ -434,20 +442,22 @@ class GoesProcessor(ImageProcessor):
                 str(tmp_tiles_dir),
             ]
 
-            logger.info(f"Running gdal2tiles: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            logger.info("Running gdal2tiles: %s", " ".join(cmd))
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=600, check=False
+            )
 
             if result.returncode != 0:
-                logger.error(f"gdal2tiles failed with return code {result.returncode}")
-                logger.error(f"stderr: {result.stderr}")
-                logger.error(f"stdout: {result.stdout}")
+                logger.error("gdal2tiles failed with return code %d", result.returncode)
+                logger.error("stderr: %s", result.stderr)
+                logger.error("stdout: %s", result.stdout)
                 raise RuntimeError(f"gdal2tiles failed: {result.stderr}")
 
             # Log any warnings from stdout/stderr
             if result.stderr:
-                logger.warning(f"gdal2tiles stderr: {result.stderr}")
+                logger.warning("gdal2tiles stderr: %s", result.stderr)
             if result.stdout:
-                logger.debug(f"gdal2tiles stdout: {result.stdout}")
+                logger.debug("gdal2tiles stdout: %s", result.stdout)
 
             # Validate that expected zoom levels were generated
             self._validate_tiles(tmp_tiles_dir)
@@ -456,19 +466,19 @@ class GoesProcessor(ImageProcessor):
                 shutil.rmtree(tiles_output_dir)
             tmp_tiles_dir.rename(tiles_output_dir)
 
-            logger.info(f"Tiles generated successfully: {tiles_output_dir}")
+            logger.info("Tiles generated successfully: %s", tiles_output_dir)
             return tiles_output_dir
 
-        except subprocess.TimeoutExpired:
-            logger.error(f"gdal2tiles timed out after 600 seconds")
+        except subprocess.TimeoutExpired as exc:
+            logger.error("gdal2tiles timed out after 600 seconds")
             if tmp_tiles_dir.exists():
                 shutil.rmtree(tmp_tiles_dir)
-            raise RuntimeError("gdal2tiles timed out")
+            raise RuntimeError("gdal2tiles timed out") from exc
         except subprocess.CalledProcessError as e:
-            logger.error(f"gdal2tiles failed: {e.stderr}")
+            logger.error("gdal2tiles failed: %s", e.stderr)
             if tmp_tiles_dir.exists():
                 shutil.rmtree(tmp_tiles_dir)
-            raise RuntimeError(f"gdal2tiles failed: {e.stderr}")
+            raise RuntimeError(f"gdal2tiles failed: {e.stderr}") from e
         except Exception:
             if tmp_tiles_dir.exists():
                 shutil.rmtree(tmp_tiles_dir)
@@ -492,17 +502,20 @@ class GoesProcessor(ImageProcessor):
                 if tile_count == 0:
                     missing_zooms.append(zoom)
                 else:
-                    logger.debug(f"Zoom {zoom}: {tile_count} tiles generated")
+                    logger.debug("Zoom %d: %d tiles generated", zoom, tile_count)
 
         if missing_zooms:
             logger.warning(
-                f"Missing or empty zoom levels: {missing_zooms}. "
-                f"Expected range: {min_zoom}-{max_zoom}"
+                "Missing or empty zoom levels: %s. Expected range: %d-%d",
+                missing_zooms,
+                min_zoom,
+                max_zoom,
             )
             # List what was actually generated
             generated_zooms = [
                 d.name for d in tiles_dir.iterdir() if d.is_dir() and d.name.isdigit()
             ]
             logger.warning(
-                f"Actually generated zoom directories: {sorted(generated_zooms, key=int)}"
+                "Actually generated zoom directories: %s",
+                sorted(generated_zooms, key=int),
             )

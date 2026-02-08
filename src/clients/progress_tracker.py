@@ -138,7 +138,7 @@ class ProgressTracker:
                 """,
                 (datetime.now(UTC), image_id, band_id),
             )
-        logger.debug(f"Marked as processing: {band_id}:{image_id}")
+        logger.debug("Marked as processing: %s:%s", band_id, image_id)
 
     def mark_completed(self, image_id: str, band_id: str) -> None:
         """Mark an image as completed (remove from tracking)."""
@@ -147,7 +147,7 @@ class ProgressTracker:
                 "DELETE FROM processed_images WHERE image_id = ? AND band_id = ?",
                 (image_id, band_id),
             )
-        logger.debug(f"Marked completed: {band_id}:{image_id}")
+        logger.debug("Marked completed: %s:%s", band_id, image_id)
 
     def get_in_progress_images(self, band_id: str) -> Set[str]:
         """Get all in-progress image IDs for a band."""

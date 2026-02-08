@@ -38,6 +38,15 @@ pyrefly = "^0.51.1"
 requests = "^2.32.5"
 pre-commit = "^4.5.1"
 
+[tool.pylint.main]
+init-hook = "import sys; sys.path.insert(0, 'src')"
+
+[tool.pylint."messages control"]
+disable = ["duplicate-code"]
+
+[tool.pylint.design]
+max-attributes = 30
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

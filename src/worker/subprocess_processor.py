@@ -20,6 +20,7 @@ import asyncio
 import logging
 import signal
 import sys
+import traceback
 
 from processors.base_processor import ShutdownRequested
 
@@ -34,6 +35,7 @@ def create_processor_registry():
     This function imports processors here (not at module level) to ensure
     heavy libraries are only loaded when processing actually starts.
     """
+    # pylint: disable=import-outside-toplevel
     from processors import (
         ProcessorRegistry,
         GoesProcessor,
@@ -53,9 +55,6 @@ def create_processor_registry():
     # Register Radar processor
     registry.register("radar", RadarProcessor)
 
-    # Add new processors here as they are implemented:
-    # registry.register("new_processor_id", NewProcessorClass)
-
     return registry
 
 
@@ -68,6 +67,7 @@ def run_processing(work_unit_json: str, file_path: str) -> None:
         file_path: Path to the downloaded file to process
     """
     # Import heavy modules here - they'll be unloaded when process exits
+    # pylint: disable=import-outside-toplevel
     from config import Config
     from models.work_unit import WorkUnit
     from logging_config import setup_logging
@@ -79,8 +79,8 @@ def run_processing(work_unit_json: str, file_path: str) -> None:
 
     # Parse work unit
     work_unit = WorkUnit.from_json(work_unit_json)
-    logger.info(f"[SUBPROCESS] Starting processing for {work_unit.image_id}")
-    logger.info(f"[SUBPROCESS] Processor: {work_unit.processor_id}")
+    logger.info("[SUBPROCESS] Starting processing for %s", work_unit.image_id)
+    logger.info("[SUBPROCESS] Processor: %s", work_unit.processor_id)
 
     # Create processor registry and get the appropriate processor
     registry = create_processor_registry()
@@ -88,13 +88,15 @@ def run_processing(work_unit_json: str, file_path: str) -> None:
     try:
         processor_class = registry.get(work_unit.processor_id)
     except KeyError as e:
-        logger.error(f"[SUBPROCESS] {e}")
+        logger.error("[SUBPROCESS] %s", e)
         raise
 
     # Instantiate and run the processor
     processor = processor_class(config)
     logger.info(
-        f"[SUBPROCESS] Using {processor_class.__name__} for {work_unit.processor_id}"
+        "[SUBPROCESS] Using %s for %s",
+        processor_class.__name__,
+        work_unit.processor_id,
     )
 
     # Install signal handler so SIGTERM triggers graceful shutdown
@@ -105,7 +107,7 @@ def run_processing(work_unit_json: str, file_path: str) -> None:
     # Run processing
     asyncio.run(processor.process(file_path, work_unit))
 
-    logger.info(f"[SUBPROCESS] Completed processing {work_unit.image_id}")
+    logger.info("[SUBPROCESS] Completed processing %s", work_unit.image_id)
 
 
 def main() -> int:
@@ -128,11 +130,9 @@ def main() -> int:
         logging.info("[SUBPROCESS] Shutdown requested, exiting gracefully")
         return EXIT_ERROR_CODE
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         # Log the error (will go to stderr which parent captures)
-        logging.error(f"[SUBPROCESS] Processing failed: {e}")
-        import traceback
-
+        logging.error("[SUBPROCESS] Processing failed: %s", e)
         traceback.print_exc()
         return EXIT_ERROR_CODE
 

@@ -1,5 +1,6 @@
 """Base processor class definition."""
 
+import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 import logging
@@ -49,7 +50,6 @@ class ImageProcessor(ABC):
         Raises:
             Exception: If any part of the processing fails
         """
-        pass
 
     def _ensure_dir(self, directory: Path) -> Path:
         """Ensure directory exists and return it."""
@@ -65,15 +65,13 @@ class ImageProcessor(ABC):
         try:
             if file_path.exists():
                 file_path.unlink()
-        except Exception as e:
-            logger.warning(f"Failed to cleanup file {file_path}: {e}")
+        except OSError as e:
+            logger.warning("Failed to cleanup file %s: %s", file_path, e)
 
     def _cleanup_directory(self, dir_path: Path) -> None:
         """Safe cleanup of a directory."""
-        import shutil
-
         try:
             if dir_path.exists():
                 shutil.rmtree(dir_path)
-        except Exception as e:
-            logger.warning(f"Failed to cleanup directory {dir_path}: {e}")
+        except OSError as e:
+            logger.warning("Failed to cleanup directory %s: %s", dir_path, e)

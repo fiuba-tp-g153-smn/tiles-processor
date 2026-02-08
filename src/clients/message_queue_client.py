@@ -1,7 +1,7 @@
 """Abstract base class for message queue clients."""
 
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from typing import Callable
 
 from models.work_unit import WorkUnit
 
@@ -23,12 +23,10 @@ class MessageQueueClient(ABC):
             max_retries: Maximum connection attempts
             retry_delay: Seconds between retry attempts
         """
-        pass
 
     @abstractmethod
     def close(self) -> None:
         """Close the connection to the message queue."""
-        pass
 
     @abstractmethod
     def publish(self, work_unit: WorkUnit) -> None:
@@ -38,7 +36,6 @@ class MessageQueueClient(ABC):
         Args:
             work_unit: The work unit to publish
         """
-        pass
 
     @abstractmethod
     def publish_to_dlq(self, work_unit: WorkUnit, error: str) -> None:
@@ -49,7 +46,6 @@ class MessageQueueClient(ABC):
             work_unit: The failed work unit
             error: Error message describing the failure
         """
-        pass
 
     @abstractmethod
     def stop_consuming(self) -> None:
@@ -59,7 +55,6 @@ class MessageQueueClient(ABC):
         After the current message (if any) finishes processing,
         the consume loop will exit.
         """
-        pass
 
     @abstractmethod
     def consume(
@@ -75,7 +70,6 @@ class MessageQueueClient(ABC):
                      Should return True if message should be acked, False for nack/requeue.
             prefetch_count: Number of messages to prefetch
         """
-        pass
 
     @abstractmethod
     def ack(self, delivery_tag: int) -> None:
@@ -85,7 +79,6 @@ class MessageQueueClient(ABC):
         Args:
             delivery_tag: Unique identifier for the message
         """
-        pass
 
     @abstractmethod
     def nack(self, delivery_tag: int, requeue: bool = True) -> None:
@@ -96,10 +89,9 @@ class MessageQueueClient(ABC):
             delivery_tag: Unique identifier for the message
             requeue: Whether to requeue the message
         """
-        pass
 
     @abstractmethod
-    def get_queue_size(self, queue_name: Optional[str] = None) -> int:
+    def get_queue_size(self, queue_name: str | None = None) -> int:
         """
         Get the number of messages in a queue.
 
@@ -109,10 +101,8 @@ class MessageQueueClient(ABC):
         Returns:
             Number of messages in the queue
         """
-        pass
 
     @property
     @abstractmethod
     def is_connected(self) -> bool:
         """Check if connected to the message queue."""
-        pass

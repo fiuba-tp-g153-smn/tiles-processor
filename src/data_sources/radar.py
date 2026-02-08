@@ -47,7 +47,7 @@ class RadarDataSource(DataSource):
         Returns:
             Empty list (placeholder implementation)
         """
-        logger.warning(f"[{self.source_id}] Radar discovery not implemented")
+        logger.warning("[%s] Radar discovery not implemented", self.source_id)
         return []
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:

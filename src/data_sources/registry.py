@@ -26,7 +26,7 @@ class DataSourceRegistry:
             source: The data source to register.
         """
         self._sources[source.source_id] = source
-        logger.info(f"Registered data source: {source.source_id}")
+        logger.info("Registered data source: %s", source.source_id)
 
     def get(self, source_id: str) -> DataSource:
         """

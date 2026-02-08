@@ -1,7 +1,6 @@
 """Band-specific configuration for satellite image processing."""
 
 from dataclasses import dataclass
-from typing import List
 
 
 @dataclass(frozen=True)

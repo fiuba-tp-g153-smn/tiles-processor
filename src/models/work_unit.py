@@ -4,7 +4,7 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
-from typing import Dict, Optional, Any
+from typing import Any
 
 from models.band_config import BandConfig, get_band_config
 
@@ -41,7 +41,7 @@ class WorkUnit:
     data_source_id: str
     source_uri: str
     output_prefix: str
-    bounds: Dict[str, float]
+    bounds: dict[str, float]
     processor_id: str
     band_id: str
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -74,7 +74,7 @@ class WorkUnit:
             max_retries=self.max_retries,
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize work unit to dictionary for JSON encoding."""
         return {
             "work_unit_id": self.work_unit_id,
@@ -95,7 +95,7 @@ class WorkUnit:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "WorkUnit":
+    def from_dict(cls, data: dict[str, Any]) -> "WorkUnit":
         """Deserialize work unit from dictionary."""
         return cls(
             work_unit_id=data["work_unit_id"],
@@ -117,14 +117,14 @@ class WorkUnit:
         return cls.from_dict(json.loads(json_str))
 
     @classmethod
-    def create(
+    def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         cls,
         image_id: str,
         source_uri: str,
         data_source_id: str,
         processor_id: str,
         output_prefix: str,
-        bounds: Dict[str, float],
+        bounds: dict[str, float],
         band_id: str,
     ) -> "WorkUnit":
         """

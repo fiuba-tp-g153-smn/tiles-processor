@@ -18,8 +18,8 @@ Workers run continuously, consuming work units and processing them through
 the satellite image processing pipeline.
 """
 
+import sys
 from logging import getLogger
-from sys import argv, exit
 
 from config import Config
 from logging_config import setup_logging
@@ -51,8 +51,8 @@ def run_worker(config: Config) -> int:
     try:
         start_worker(config)
         return EXIT_SUCCESS_CODE
-    except Exception as e:
-        logger.exception(f"Worker failed: {e}")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.exception("Worker failed: %s", e)
         return EXIT_ERROR_CODE
 
 
@@ -64,19 +64,19 @@ def run_producer(config: Config) -> int:
     try:
         start_producer(config)
         return EXIT_SUCCESS_CODE
-    except Exception as e:
-        logger.exception(f"Producer failed: {e}")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.exception("Producer failed: %s", e)
         return EXIT_ERROR_CODE
 
 
 def main() -> int:
     """Main entry point."""
     # Parse command line
-    if len(argv) < 2:
+    if len(sys.argv) < 2:
         print_usage()
         return EXIT_ERROR_CODE
 
-    mode = argv[1].lower()
+    mode = sys.argv[1].lower()
 
     # Setup config and logging
     config = Config()
@@ -86,21 +86,21 @@ def main() -> int:
     config.log_config()
 
     # Dispatch to appropriate mode
-    if mode == "worker":
-        return run_worker(config)
-    elif mode == "producer":
-        return run_producer(config)
-    else:
-        logger.error(f"Unknown mode: {mode}")
-        print_usage()
-        return EXIT_ERROR_CODE
+    match mode:
+        case "worker":
+            return run_worker(config)
+        case "producer":
+            return run_producer(config)
+        case _:
+            logger.error("Unknown mode: %s", mode)
+            print_usage()
+            return EXIT_ERROR_CODE
 
 
 if __name__ == "__main__":
     try:
-        exit_code = main()
-        exit(exit_code)
+        EXIT_CODE = main()
+        sys.exit(EXIT_CODE)
     except KeyboardInterrupt:
-        logger = getLogger(__name__)
-        logger.info("Application stopped by user (KeyboardInterrupt).")
-        exit(EXIT_SUCCESS_CODE)
+        getLogger(__name__).info("Application stopped by user (KeyboardInterrupt).")
+        sys.exit(EXIT_SUCCESS_CODE)

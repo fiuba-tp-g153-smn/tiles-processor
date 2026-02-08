@@ -29,7 +29,7 @@ from health_server import HealthCheckServer
 logger = getLogger(__name__)
 
 
-class ImageDiscoveryProducer:
+class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
     """
     Producer that discovers new images and publishes work units.
 
@@ -82,21 +82,27 @@ class ImageDiscoveryProducer:
         # Process each registered data source
         for data_source in self._data_source_registry.get_all():
             if not self._is_source_enabled(data_source):
-                logger.info(f"Skipping {data_source.source_id} (disabled in config)")
+                logger.info("Skipping %s (disabled in config)", data_source.source_id)
                 continue
 
-            logger.info(f"Discovering new images for {data_source.source_id}...")
+            logger.info("Discovering new images for %s...", data_source.source_id)
 
             try:
                 count = await self._discover_source(current_time, data_source, bounds)
                 total_published += count
-                logger.info(f"Published {count} work units for {data_source.source_id}")
-            except Exception as e:
+                logger.info(
+                    "Published %d work units for %s",
+                    count,
+                    data_source.source_id,
+                )
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.exception(
-                    f"Error discovering images for {data_source.source_id}: {e}"
+                    "Error discovering images for %s: %s",
+                    data_source.source_id,
+                    e,
                 )
 
-        logger.info(f"Total work units published: {total_published}")
+        logger.info("Total work units published: %d", total_published)
         return total_published
 
     def _is_source_enabled(self, data_source: DataSource) -> bool:
@@ -106,11 +112,11 @@ class ImageDiscoveryProducer:
         # Check for GOES19 band sources
         if source_id == "goes19_band_13":
             return self._config.ENABLE_BAND_13
-        elif source_id == "goes19_band_9":
+        if source_id == "goes19_band_9":
             return self._config.ENABLE_BAND_9
-        elif source_id == "goes19_band_2":
+        if source_id == "goes19_band_2":
             return self._config.ENABLE_BAND_2
-        elif source_id == "radar_nexrad":
+        if source_id == "radar_nexrad":
             return self._config.ENABLE_RADAR
 
         # Default: enabled if registered
@@ -130,13 +136,17 @@ class ImageDiscoveryProducer:
         output_prefix = f"{band_id}/tiles"
         existing_tilesets = await self._get_existing_tilesets(output_prefix)
         logger.info(
-            f"Found {len(existing_tilesets)} existing tilesets for {data_source.source_id}"
+            "Found %d existing tilesets for %s",
+            len(existing_tilesets),
+            data_source.source_id,
         )
 
         # Get in-progress images from SQLite
         in_progress = self._progress_tracker.get_in_progress_images(band_id)
         logger.info(
-            f"Found {len(in_progress)} images in progress for {data_source.source_id}"
+            "Found %d images in progress for %s",
+            len(in_progress),
+            data_source.source_id,
         )
 
         # Create discovery config
@@ -151,10 +161,14 @@ class ImageDiscoveryProducer:
         new_images = await data_source.discover_images(discovery_config)
 
         if not new_images:
-            logger.info(f"No new images found for {data_source.source_id}")
+            logger.info("No new images found for %s", data_source.source_id)
             return 0
 
-        logger.info(f"Found {len(new_images)} new images for {data_source.source_id}")
+        logger.info(
+            "Found %d new images for %s",
+            len(new_images),
+            data_source.source_id,
+        )
 
         # Publish work units for new images
         published = 0
@@ -173,7 +187,7 @@ class ImageDiscoveryProducer:
             )
             self._mq_client.publish(work_unit)
             published += 1
-            logger.debug(f"Published work unit for {image_info.image_id}")
+            logger.debug("Published work unit for %s", image_info.image_id)
 
         return published
 
@@ -191,8 +205,8 @@ class ImageDiscoveryProducer:
                     base_name = tileset_name[:-6]  # Remove "_tiles"
                     tilesets.add(base_name)
             return tilesets
-        except Exception as e:
-            logger.warning(f"Error listing MinIO tilesets: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning("Error listing MinIO tilesets: %s", e)
             return set()
 
 
@@ -201,7 +215,7 @@ def _create_data_source_registry() -> DataSourceRegistry:
     registry = DataSourceRegistry()
 
     # Register GOES19 data sources for each band
-    for band_id, band_config in BAND_CONFIGS.items():
+    for _band_id, band_config in BAND_CONFIGS.items():
         data_source = Goes19DataSource(band_config)
         registry.register(data_source)
 
@@ -269,8 +283,8 @@ def run_producer(config: Config) -> None:
         """Wrapper to run async discover_and_publish in the scheduler."""
         try:
             await producer.discover_and_publish()
-        except Exception as e:
-            logger.exception(f"Error in discovery job: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.exception("Error in discovery job: %s", e)
 
     # Add job with cron trigger (every 5 minutes by default)
     cron_schedule = ImageDiscoveryProducer.DEFAULT_CRON
@@ -299,7 +313,7 @@ def run_producer(config: Config) -> None:
         await job_wrapper()
 
         scheduler.start()
-        logger.info(f"Producer scheduler started (schedule: {cron_schedule})")
+        logger.info("Producer scheduler started (schedule: %s)", cron_schedule)
 
         # Wait for stop signal
         await stop_event.wait()

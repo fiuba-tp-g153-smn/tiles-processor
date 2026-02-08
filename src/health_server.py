@@ -1,7 +1,10 @@
+"""HTTP health check server for container liveness and readiness probes."""
+
+import json
 import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Callable, Optional
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +18,8 @@ class HealthRequestHandler(BaseHTTPRequestHandler):
         GET /ready: Readiness probe. connect checks. Returns 200 OK or 503 Service Unavailable.
     """
 
-    def do_GET(self):
+    def do_GET(self):  # pylint: disable=invalid-name
+        """Handle GET requests for health check endpoints."""
         if self.path == "/health":
             self._handle_health()
         else:
@@ -42,16 +46,14 @@ class HealthRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-type", "application/json")
             self.end_headers()
 
-            import json
-
             response = json.dumps(
                 {"status": "ok" if is_healthy else "error", "details": details}
             ).encode("utf-8")
 
             self.wfile.write(response)
 
-        except Exception as e:
-            logger.error(f"Error checking health: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Error checking health: %s", e)
             self.send_response(503)
             self.send_header("Content-type", "application/json")
             self.end_headers()
@@ -59,10 +61,10 @@ class HealthRequestHandler(BaseHTTPRequestHandler):
                 b'{"status": "error", "details": "Exception during check"}'
             )
 
-    def log_message(self, format, *args):
-        # Suppress default HTTP logging to stdout to keep logs clean
-        # or redirect to debug if needed
-        pass
+    def log_message(
+        self, fmt, *args
+    ):  # pylint: disable=arguments-differ,arguments-renamed
+        """Suppress default HTTP logging to stdout to keep logs clean."""
 
 
 class HealthServer(HTTPServer):
@@ -76,15 +78,13 @@ class HealthServer(HTTPServer):
 
 
 class HealthCheckServer:
-    """
-    Manages the health check HTTP server in a separate thread.
-    """
+    """Manages the health check HTTP server in a separate thread."""
 
-    def __init__(self, port: int = 8080, check_readiness: Optional[Callable] = None):
+    def __init__(self, port: int = 8080, check_readiness: Callable | None = None):
         self._port = port
         self._check_readiness = check_readiness
-        self._server: Optional[HealthServer] = None
-        self._thread: Optional[threading.Thread] = None
+        self._server: HealthServer | None = None
+        self._thread: threading.Thread | None = None
 
     def start(self):
         """Start the health server in a daemon thread."""
@@ -99,9 +99,9 @@ class HealthCheckServer:
             self._thread.daemon = True
             self._thread.start()
 
-            logger.info(f"Health check server started on port {self._port}")
-        except Exception as e:
-            logger.error(f"Failed to start health check server: {e}")
+            logger.info("Health check server started on port %d", self._port)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to start health check server: %s", e)
 
     def stop(self):
         """Stop the health server."""

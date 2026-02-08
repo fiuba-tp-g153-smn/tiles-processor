@@ -25,13 +25,17 @@ Physical Validity:
 
 import asyncio
 import gc
+import logging
+
 import numpy as np
 import xarray as xr
 
 # Note: Ensure you have rioxarray installed to use the rio accessor
 
+logger = logging.getLogger(__name__)
 
-class ComputeBrightnessTemperaturesService:
+
+class ComputeBrightnessTemperaturesService:  # pylint: disable=too-few-public-methods
     """
     Converts satellite radiance to brightness temperature.
 
@@ -103,9 +107,6 @@ class ComputeBrightnessTemperaturesService:
             │  freeing the event loop while numpy crunches numbers     │
             └─────────────────────────────────────────────────────────┘
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
         tasks = []
         file_names = []
 
@@ -142,7 +143,7 @@ class ComputeBrightnessTemperaturesService:
         # Report all failures together (not fail-fast behavior)
         if failed:
             for name, err in failed:
-                logger.error(f"Brightness temp computation failed for {name}: {err}")
+                logger.error("Brightness temp computation failed for %s: %s", name, err)
             raise RuntimeError(
                 f"Brightness temp computation failed for {len(failed)}/{len(tasks)} files"
             )

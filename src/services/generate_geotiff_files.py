@@ -32,8 +32,6 @@ import gc
 import logging
 import uuid
 from pathlib import Path
-from typing import Dict, List, Tuple
-
 import numpy as np
 import xarray as xr
 
@@ -44,7 +42,7 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
-class GenerateGeoTIFFFilesService:
+class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
     """
     Generates colorized RGBA GeoTIFF files from brightness temperature data.
 
@@ -611,12 +609,12 @@ class GenerateGeoTIFFFilesService:
     # Low reflectance (surface/ocean) = dark, high reflectance (clouds) = white
     VISIBLE_PALETTE = [f"#{i:02x}{i:02x}{i:02x}" for i in range(256)]
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
-        brightness_temperatures: Dict[str, xr.DataArray],
+        brightness_temperatures: dict[str, xr.DataArray],
         output_dir: Path,
         config: Config,
-        color_palette: List[str] = None,
+        color_palette: list[str] = None,
         vmin: float = 183.15,
         vmax: float = 323.15,
         product_name: str = "Cloud_Tops",
@@ -631,7 +629,7 @@ class GenerateGeoTIFFFilesService:
         self._product_name = product_name
         self._max_concurrency = max_concurrency
 
-    async def run(self) -> List[Path]:
+    async def run(self) -> list[Path]:
         """
         Async Concurrency Pattern: Semaphore + to_thread + gather.
 
@@ -649,9 +647,6 @@ class GenerateGeoTIFFFilesService:
             - asyncio.to_thread: Offloads blocking I/O and CPU work to threads
             - asyncio.gather: Coordinates all tasks, collects results/exceptions
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
         self._output_dir.mkdir(parents=True, exist_ok=True)
         tasks = []
         file_names = []
@@ -689,23 +684,25 @@ class GenerateGeoTIFFFilesService:
         # Aggregate error reporting for better debugging
         if failed:
             for name, err in failed:
-                logger.error(f"GeoTIFF generation failed for {name}: {err}")
+                logger.error("GeoTIFF generation failed for %s: %s", name, err)
             raise RuntimeError(
                 f"GeoTIFF generation failed for {len(failed)}/{len(tasks)} files"
             )
 
         return successful
 
-    def _generate_geotiff(self, file_name: str, c13_data: xr.DataArray) -> Path:
+    def _generate_geotiff(  # pylint: disable=too-many-locals
+        self, file_name: str, c13_data: xr.DataArray
+    ) -> Path:
         # Lazy import to reduce idle memory footprint (registers .rio accessor)
-        import rioxarray  # noqa: F401
+        import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
 
         # Remove grid_mapping if present
         if "grid_mapping" in c13_data.attrs:
             del c13_data.attrs["grid_mapping"]
 
         # 1. Reproject to EPSG:4326
-        # Use rioxarray's reproject method. Ensure rioxarray is installed and imported through xarray accessor
+        # Use rioxarray's reproject method (requires rioxarray import above)
         c13_reproj = c13_data.rio.reproject("EPSG:4326")
 
         # Fix nodata value before clipping (original value is too large for float32)
@@ -762,9 +759,9 @@ class GenerateGeoTIFFFilesService:
         try:
             rgb.rio.to_raster(tmp_output_path)
             tmp_output_path.rename(output_path)
-            logger.info(f"Generated GeoTIFF: {output_path}")
+            logger.info("Generated GeoTIFF: %s", output_path)
         except Exception as e:
-            logger.error(f"Failed to generate GeoTIFF for {file_name}: {e}")
+            logger.error("Failed to generate GeoTIFF for %s: %s", file_name, e)
             if tmp_output_path.exists():
                 tmp_output_path.unlink()
             raise
@@ -774,9 +771,9 @@ class GenerateGeoTIFFFilesService:
 
         return output_path
 
-    def _normalize_with_custom_palette(
+    def _normalize_with_custom_palette(  # pylint: disable=too-many-locals
         self, array: xr.DataArray, vmin: float, vmax: float
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Normalize an array and apply the custom color palette.
         Returns: R, G, B, A (uint8 arrays)

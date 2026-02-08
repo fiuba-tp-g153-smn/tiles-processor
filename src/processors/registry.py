@@ -30,7 +30,7 @@ class ProcessorRegistry:
             processor_class: The processor class to register
         """
         self._processors[processor_id] = processor_class
-        logger.info(f"Registered processor: {processor_id}")
+        logger.info("Registered processor: %s", processor_id)
 
     def get(self, processor_id: str) -> Type[ImageProcessor]:
         """
