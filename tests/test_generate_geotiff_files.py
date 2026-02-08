@@ -13,6 +13,7 @@ import pytest
 import numpy as np
 
 from services.generate_geotiff_files import GenerateGeoTIFFFilesService
+from services.processing_steps import normalize_and_colorize
 from config import Config
 
 
@@ -58,32 +59,22 @@ def config_fixture(temp_settings_file, env_vars):
         return Config(settings_path=temp_settings_file)
 
 
-class TestNormalizeWithCustomPalette:
-    """Tests for the normalization and palette application."""
+class TestNormalizeAndColorize:
+    """Tests for the shared normalize_and_colorize function."""
 
     @pytest.fixture
-    def service(self, tmp_path, config_fixture):
-        """Create a service instance for testing."""
-        return GenerateGeoTIFFFilesService(
-            brightness_temperatures={},
-            output_dir=tmp_path,
-            config=config_fixture,
-            vmin=200.0,
-            vmax=300.0,
-        )
+    def palette(self):
+        """A simple 256-color palette for testing."""
+        return GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE
 
-    def test_normalize_basic_values(self, service):
+    def test_normalize_basic_values(self, palette):
         """Test normalization of basic values."""
-        # Create a simple array
         data = np.array([[200.0, 250.0, 300.0]])
 
-        # Mock xarray DataArray
         mock_array = MagicMock()
         mock_array.values = data
 
-        r, g, b, a = service._normalize_with_custom_palette(
-            mock_array, vmin=200.0, vmax=300.0
-        )
+        r, g, b, a = normalize_and_colorize(mock_array, 200.0, 300.0, palette)
 
         # All values are valid, so alpha should be 255
         assert np.all(a == 255)
@@ -93,23 +84,21 @@ class TestNormalizeWithCustomPalette:
         assert g.shape == data.shape
         assert b.shape == data.shape
 
-    def test_normalize_handles_nan_values(self, service):
+    def test_normalize_handles_nan_values(self, palette):
         """Test that NaN values get alpha=0."""
         data = np.array([[200.0, np.nan, 300.0]])
 
         mock_array = MagicMock()
         mock_array.values = data
 
-        r, g, b, a = service._normalize_with_custom_palette(
-            mock_array, vmin=200.0, vmax=300.0
-        )
+        r, g, b, a = normalize_and_colorize(mock_array, 200.0, 300.0, palette)
 
         # NaN position should have alpha=0
         assert a[0, 0] == 255
         assert a[0, 1] == 0  # NaN position
         assert a[0, 2] == 255
 
-    def test_normalize_clips_out_of_range(self, service):
+    def test_normalize_clips_out_of_range(self, palette):
         """Test that values outside range are clipped."""
         # Values below vmin and above vmax
         data = np.array([[100.0, 250.0, 400.0]])
@@ -117,23 +106,19 @@ class TestNormalizeWithCustomPalette:
         mock_array = MagicMock()
         mock_array.values = data
 
-        r, g, b, a = service._normalize_with_custom_palette(
-            mock_array, vmin=200.0, vmax=300.0
-        )
+        r, g, b, a = normalize_and_colorize(mock_array, 200.0, 300.0, palette)
 
         # All non-NaN values should have full alpha
         assert np.all(a == 255)
 
-    def test_normalize_returns_uint8(self, service):
+    def test_normalize_returns_uint8(self, palette):
         """Test that returned arrays are uint8."""
         data = np.array([[200.0, 250.0, 300.0]])
 
         mock_array = MagicMock()
         mock_array.values = data
 
-        r, g, b, a = service._normalize_with_custom_palette(
-            mock_array, vmin=200.0, vmax=300.0
-        )
+        r, g, b, a = normalize_and_colorize(mock_array, 200.0, 300.0, palette)
 
         assert r.dtype == np.uint8
         assert g.dtype == np.uint8
@@ -270,7 +255,9 @@ class TestGenerateGeoTIFFService:
         """Test that grid_mapping attribute is removed."""
         assert "grid_mapping" in mock_xarray_data.attrs
 
-        with patch.object(service, "_normalize_with_custom_palette") as mock_norm:
+        with patch(
+            "services.generate_geotiff_files.normalize_and_colorize"
+        ) as mock_norm:
             mock_norm.return_value = (
                 np.zeros((10, 10), dtype=np.uint8),
                 np.zeros((10, 10), dtype=np.uint8),
@@ -278,9 +265,11 @@ class TestGenerateGeoTIFFService:
                 np.ones((10, 10), dtype=np.uint8) * 255,
             )
 
-            with patch("xarray.DataArray") as mock_da_class:
+            with patch(
+                "services.generate_geotiff_files.build_rgba_data_array"
+            ) as mock_build:
                 mock_rgb = MagicMock()
-                mock_da_class.return_value = mock_rgb
+                mock_build.return_value = mock_rgb
 
                 try:
                     service._generate_geotiff("test.nc", mock_xarray_data)
@@ -316,9 +305,11 @@ class TestGeoTIFFAtomicWrite:
 
         mock_data.rio.reproject.return_value = mock_reproj
 
-        with patch("xarray.DataArray") as mock_da_class:
+        with patch(
+            "services.generate_geotiff_files.build_rgba_data_array"
+        ) as mock_build:
             mock_rgb = MagicMock()
-            mock_da_class.return_value = mock_rgb
+            mock_build.return_value = mock_rgb
 
             # Track what paths are used for writing
             write_paths = []
@@ -364,9 +355,11 @@ class TestMemoryManagement:
         mock_data.rio.reproject.return_value = mock_reproj
 
         with patch("gc.collect") as mock_gc:
-            with patch("xarray.DataArray") as mock_da_class:
+            with patch(
+                "services.generate_geotiff_files.build_rgba_data_array"
+            ) as mock_build:
                 mock_rgb = MagicMock()
-                mock_da_class.return_value = mock_rgb
+                mock_build.return_value = mock_rgb
 
                 def mock_to_raster(path):
                     Path(path).touch()

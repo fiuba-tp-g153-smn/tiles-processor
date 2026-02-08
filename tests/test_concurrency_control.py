@@ -23,7 +23,7 @@ async def test_compute_brightness_temperatures_concurrency_limit():
     current_concurrent_tasks = 0
     max_observed_concurrency = 0
 
-    async def fast_mock_computation(func, dataset):
+    async def fast_mock_computation(func, name, value):
         nonlocal current_concurrent_tasks, max_observed_concurrency
         current_concurrent_tasks += 1
         max_observed_concurrency = max(
@@ -55,7 +55,7 @@ async def test_setup_goes_georreferencing_concurrency_limit():
     current_concurrent_tasks = 0
     max_observed_concurrency = 0
 
-    async def fast_mock_georeferencing(func, content):
+    async def fast_mock_georeferencing(func, name, value):
         nonlocal current_concurrent_tasks, max_observed_concurrency
         current_concurrent_tasks += 1
         max_observed_concurrency = max(
@@ -88,7 +88,7 @@ async def test_generate_geotiff_files_concurrency_limit(tmp_path):
     current_concurrent_tasks = 0
     max_observed_concurrency = 0
 
-    async def fast_mock_generation(func, file_name, dataset):
+    async def fast_mock_generation(func, name, value):
         nonlocal current_concurrent_tasks, max_observed_concurrency
         current_concurrent_tasks += 1
         max_observed_concurrency = max(
@@ -96,7 +96,7 @@ async def test_generate_geotiff_files_concurrency_limit(tmp_path):
         )
         await asyncio.sleep(0.01)
         current_concurrent_tasks -= 1
-        return tmp_path / f"{file_name}.tif"
+        return tmp_path / f"{name}.tif"
 
     service = GenerateGeoTIFFFilesService(
         mock_data,

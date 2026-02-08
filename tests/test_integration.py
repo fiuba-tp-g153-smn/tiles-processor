@@ -301,7 +301,10 @@ class TestPipelineIntegration:
             tiles_created.append(tiles_output)
             return MagicMock(returncode=0, stderr="", stdout="")
 
-        with patch("subprocess.run", side_effect=mock_subprocess_run):
+        with patch(
+            "services.processing_steps.subprocess.run",
+            side_effect=mock_subprocess_run,
+        ):
             await service.run()
 
         # Verify tiles were created for both input files

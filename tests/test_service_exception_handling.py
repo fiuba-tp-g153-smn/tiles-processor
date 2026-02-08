@@ -48,15 +48,14 @@ class TestGenerateTilesServiceExceptionHandling:
 
         service = GenerateTilesService(mock_geotiff_files, tmp_output_dir)
 
-        call_count = 0
-
-        def fail_second_file(path):
-            nonlocal call_count
-            call_count += 1
-            if "image_1" in str(path):
+        def fail_second_file(geotiff_path, output_dir, **kwargs):
+            if "image_1" in str(geotiff_path):
                 raise ValueError("Simulated gdal2tiles crash")
+            return output_dir / f"{geotiff_path.stem}_tiles"
 
-        with patch.object(service, "_generate_tiles", side_effect=fail_second_file):
+        with patch(
+            "services.generate_tiles.run_gdal2tiles", side_effect=fail_second_file
+        ):
             with pytest.raises(RuntimeError) as exc_info:
                 await service.run()
 
@@ -72,10 +71,10 @@ class TestGenerateTilesServiceExceptionHandling:
 
         service = GenerateTilesService(mock_geotiff_files, tmp_output_dir)
 
-        def always_fail(path):
-            raise RuntimeError(f"Failed for {path.name}")
+        def always_fail(geotiff_path, output_dir, **kwargs):
+            raise RuntimeError(f"Failed for {geotiff_path.name}")
 
-        with patch.object(service, "_generate_tiles", side_effect=always_fail):
+        with patch("services.generate_tiles.run_gdal2tiles", side_effect=always_fail):
             with pytest.raises(RuntimeError) as exc_info:
                 await service.run()
 
@@ -88,7 +87,10 @@ class TestGenerateTilesServiceExceptionHandling:
 
         service = GenerateTilesService(mock_geotiff_files, tmp_output_dir)
 
-        with patch.object(service, "_generate_tiles", return_value=None):
+        def succeed(geotiff_path, output_dir, **kwargs):
+            return output_dir / f"{geotiff_path.stem}_tiles"
+
+        with patch("services.generate_tiles.run_gdal2tiles", side_effect=succeed):
             # Should not raise
             await service.run()
 
@@ -125,8 +127,9 @@ class TestComputeBrightnessTemperaturesServiceExceptionHandling:
                 raise ValueError("Memory error during computation")
             return MagicMock()
 
-        with patch.object(
-            service, "_compute_brightness_temperatures", side_effect=fail_second
+        with patch(
+            "services.compute_brightness_temperatures.compute_brightness_temperature",
+            side_effect=fail_second,
         ):
             with pytest.raises(RuntimeError) as exc_info:
                 await service.run()
@@ -144,8 +147,9 @@ class TestComputeBrightnessTemperaturesServiceExceptionHandling:
         service = ComputeBrightnessTemperaturesService(mock_datasets)
 
         mock_result = MagicMock()
-        with patch.object(
-            service, "_compute_brightness_temperatures", return_value=mock_result
+        with patch(
+            "services.compute_brightness_temperatures.compute_brightness_temperature",
+            return_value=mock_result,
         ):
             result = await service.run()
 
@@ -181,7 +185,10 @@ class TestSetupGOESGeorreferencingServiceExceptionHandling:
                 raise IOError("Failed to read NetCDF data")
             return MagicMock()
 
-        with patch.object(service, "_apply_georeferencing", side_effect=fail_first):
+        with patch(
+            "services.setup_goes_georreferencing.apply_goes_georeferencing",
+            side_effect=fail_first,
+        ):
             with pytest.raises(RuntimeError) as exc_info:
                 await service.run()
 
@@ -196,7 +203,10 @@ class TestSetupGOESGeorreferencingServiceExceptionHandling:
         service = SetupGOESGeorreferencingService(mock_goes_data)
 
         mock_result = MagicMock()
-        with patch.object(service, "_apply_georeferencing", return_value=mock_result):
+        with patch(
+            "services.setup_goes_georreferencing.apply_goes_georeferencing",
+            return_value=mock_result,
+        ):
             result = await service.run()
 
         assert len(result) == 3

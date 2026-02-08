@@ -2,13 +2,13 @@ import asyncio
 import sys
 import os
 from pathlib import Path
-from unittest import mock
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import pytest
 from services.generate_tiles import GenerateTilesService
+from services.processing_steps import run_gdal2tiles
 
 
 class TestGenerateTilesService:
@@ -47,12 +47,8 @@ class TestGenerateTilesService:
         """Test that run() creates the output directory."""
         service = GenerateTilesService(mock_geotiff_files, tmp_output_dir)
 
-        with patch.object(
-            service, "_generate_tiles_with_limit", new_callable=MagicMock
-        ) as mock_gen:
-            mock_gen.return_value = asyncio.Future()
-            mock_gen.return_value.set_result(None)
-
+        with patch("services.generate_tiles.run_gdal2tiles") as mock_gdal:
+            mock_gdal.return_value = tmp_output_dir / "tiles"
             await service.run()
 
         assert tmp_output_dir.exists()
@@ -62,23 +58,24 @@ class TestGenerateTilesService:
         """Test that run() processes all GeoTIFF files."""
         service = GenerateTilesService(mock_geotiff_files, tmp_output_dir)
 
-        processed_files = []
+        processed_paths = []
 
-        async def track_processing(geotiff_path):
-            processed_files.append(geotiff_path)
+        def track_processing(geotiff_path, output_dir, **kwargs):
+            processed_paths.append(geotiff_path)
+            return output_dir / f"{geotiff_path.stem}_tiles"
 
-        with patch.object(
-            service, "_generate_tiles_with_limit", side_effect=track_processing
+        with patch(
+            "services.generate_tiles.run_gdal2tiles", side_effect=track_processing
         ):
             await service.run()
 
-        assert len(processed_files) == 3
+        assert len(processed_paths) == 3
         for f in mock_geotiff_files:
-            assert f in processed_files
+            assert f in processed_paths
 
     @pytest.mark.asyncio
     async def test_respects_max_concurrent_tiles(self, tmp_path, tmp_output_dir):
-        """Test that semaphore limits concurrent tile generation."""
+        """Test that concurrency limits are respected during tile generation."""
         # Create 5 mock files
         geotiff_files = [tmp_path / f"file_{i}.tif" for i in range(5)]
         for f in geotiff_files:
@@ -89,36 +86,50 @@ class TestGenerateTilesService:
         concurrent_count = 0
         max_concurrent = 0
 
-        original_generate = service._generate_tiles
-
-        def track_concurrent(path):
+        def track_concurrent(geotiff_path, output_dir, **kwargs):
             nonlocal concurrent_count, max_concurrent
             concurrent_count += 1
             max_concurrent = max(max_concurrent, concurrent_count)
-            # Simulate some work
             import time
 
             time.sleep(0.05)
             concurrent_count -= 1
+            return output_dir / f"{geotiff_path.stem}_tiles"
 
-        with patch.object(service, "_generate_tiles", side_effect=track_concurrent):
+        with patch(
+            "services.generate_tiles.run_gdal2tiles", side_effect=track_concurrent
+        ):
             await service.run()
 
         assert max_concurrent <= service.MAX_CONCURRENT_TILES
 
-    def test_generate_tiles_command_construction(
-        self, mock_geotiff_files, tmp_output_dir
-    ):
-        """Test that gdal2tiles command is constructed correctly."""
-        service = GenerateTilesService(mock_geotiff_files, tmp_output_dir)
-        geotiff_path = mock_geotiff_files[0]
 
-        with patch("subprocess.run") as mock_run:
+class TestRunGdal2Tiles:
+    """Tests for the shared run_gdal2tiles function."""
+
+    @pytest.fixture
+    def tmp_output_dir(self, tmp_path):
+        """Provide a temporary output directory."""
+        output_dir = tmp_path / "tiles_output"
+        output_dir.mkdir(parents=True)
+        return output_dir
+
+    @pytest.fixture
+    def mock_geotiff(self, tmp_path):
+        """Create a mock GeoTIFF file."""
+        geotiff_dir = tmp_path / "geotiffs"
+        geotiff_dir.mkdir()
+        f = geotiff_dir / "image_0.tif"
+        f.write_text("mock geotiff content")
+        return f
+
+    def test_command_construction(self, mock_geotiff, tmp_output_dir):
+        """Test that gdal2tiles command is constructed correctly."""
+        with patch("services.processing_steps.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
 
-            with patch("shutil.rmtree"):
-                with patch.object(Path, "rename"):
-                    service._generate_tiles(geotiff_path)
+            with patch("pathlib.Path.rename"):
+                run_gdal2tiles(mock_geotiff, tmp_output_dir)
 
             # Verify command structure
             call_args = mock_run.call_args
@@ -130,18 +141,14 @@ class TestGenerateTilesService:
             assert "-w" in cmd
             assert "none" in cmd
             assert "--tiledriver=WEBP" in cmd
-            assert f"--processes={service.GDAL_PROCESSES}" in cmd
-            assert str(geotiff_path) in cmd
+            assert "--processes=2" in cmd
+            assert str(mock_geotiff) in cmd
 
-    def test_generate_tiles_atomic_rename(self, mock_geotiff_files, tmp_output_dir):
+    def test_atomic_rename(self, mock_geotiff, tmp_output_dir):
         """Test atomic rename from temp to final directory."""
-        tmp_output_dir.mkdir(parents=True)
-        service = GenerateTilesService(mock_geotiff_files, tmp_output_dir)
-        geotiff_path = mock_geotiff_files[0]
-
         rename_calls = []
 
-        with patch("subprocess.run") as mock_run:
+        with patch("services.processing_steps.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             with patch.object(Path, "rename") as mock_rename:
@@ -149,49 +156,37 @@ class TestGenerateTilesService:
 
                 with patch.object(Path, "mkdir"):
                     with patch.object(Path, "exists", return_value=False):
-                        service._generate_tiles(geotiff_path)
+                        run_gdal2tiles(mock_geotiff, tmp_output_dir)
 
             # Verify rename was called with final destination
             assert len(rename_calls) == 1
-            expected_final = tmp_output_dir / f"{geotiff_path.stem}_tiles"
+            expected_final = tmp_output_dir / f"{mock_geotiff.stem}_tiles"
             assert rename_calls[0] == expected_final
 
-    def test_generate_tiles_cleanup_on_failure(
-        self, mock_geotiff_files, tmp_output_dir
-    ):
+    def test_cleanup_on_failure(self, mock_geotiff, tmp_output_dir):
         """Test that temp directory is cleaned up on failure."""
-        tmp_output_dir.mkdir(parents=True)
-        service = GenerateTilesService(mock_geotiff_files, tmp_output_dir)
-        geotiff_path = mock_geotiff_files[0]
-
-        with patch("subprocess.run") as mock_run:
+        with patch("services.processing_steps.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stderr="gdal2tiles failed")
 
-            with patch("shutil.rmtree") as mock_rmtree:
+            with patch("services.processing_steps.shutil.rmtree") as mock_rmtree:
                 with patch.object(Path, "mkdir"):
                     with patch.object(Path, "exists", return_value=True):
                         with pytest.raises(RuntimeError, match="gdal2tiles failed"):
-                            service._generate_tiles(geotiff_path)
+                            run_gdal2tiles(mock_geotiff, tmp_output_dir)
 
                 # Verify cleanup was attempted
                 mock_rmtree.assert_called()
 
-    def test_generate_tiles_overwrites_existing(
-        self, mock_geotiff_files, tmp_output_dir
-    ):
+    def test_overwrites_existing(self, mock_geotiff, tmp_output_dir):
         """Test that existing tiles directory is removed before rename."""
-        tmp_output_dir.mkdir(parents=True)
-        service = GenerateTilesService(mock_geotiff_files, tmp_output_dir)
-        geotiff_path = mock_geotiff_files[0]
-
-        with patch("subprocess.run") as mock_run:
+        with patch("services.processing_steps.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
-            with patch("shutil.rmtree") as mock_rmtree:
+            with patch("services.processing_steps.shutil.rmtree") as mock_rmtree:
                 with patch.object(Path, "mkdir"):
                     with patch.object(Path, "exists", return_value=True):
                         with patch.object(Path, "rename"):
-                            service._generate_tiles(geotiff_path)
+                            run_gdal2tiles(mock_geotiff, tmp_output_dir)
 
             # rmtree should be called to remove existing directory
             assert mock_rmtree.called
