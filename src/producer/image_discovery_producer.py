@@ -292,12 +292,14 @@ def run_producer(config: Config) -> None:
         loop.add_signal_handler(SIGINT, stop_event.set)
         loop.add_signal_handler(SIGTERM, stop_event.set)
 
-        scheduler.start()
-        logger.info(f"Producer scheduler started (schedule: {cron_schedule})")
-
-        # Run initial discovery immediately
+        # Run initial discovery BEFORE starting scheduler to prevent
+        # race condition where the cron job fires during the initial run,
+        # causing duplicate work units (both runs see empty in-progress set)
         logger.info("Running initial image discovery...")
         await job_wrapper()
+
+        scheduler.start()
+        logger.info(f"Producer scheduler started (schedule: {cron_schedule})")
 
         # Wait for stop signal
         await stop_event.wait()
