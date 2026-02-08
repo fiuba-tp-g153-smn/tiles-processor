@@ -18,9 +18,9 @@ import numpy as np
 import xarray as xr
 
 from config import Config
+from factories import create_minio_client
 from models.work_unit import WorkUnit
 from processors.base_processor import ImageProcessor, ShutdownRequested
-from clients.s3_client import S3Client
 from services.generate_geotiff_files import GenerateGeoTIFFFilesService
 
 logger = logging.getLogger(__name__)
@@ -42,13 +42,7 @@ class GoesProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._minio_client = S3Client.create_with_credentials(
-            bucket_name=config.S3_TILES_DATA_BUCKET_NAME,
-            endpoint=config.S3_TILES_DATA_ENDPOINT,
-            access_key=config.S3_TILES_DATA_RW_ACCESS_KEY,
-            secret_key=config.S3_TILES_DATA_RW_SECRET_KEY,
-            secure=config.S3_TILES_DATA_SECURE,
-        )
+        self._minio_client = create_minio_client(config)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute the full processing pipeline."""

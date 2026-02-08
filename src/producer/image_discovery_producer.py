@@ -10,19 +10,15 @@ from typing import Set
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from clients.rabbitmq_client import RabbitMQClient
 from clients.message_queue_client import MessageQueueClient
-from clients.s3_client import S3Client
 from clients.progress_tracker import ProgressTracker
 from config import Config
-from data_sources import (
-    DataSourceRegistry,
-    DataSource,
-    DiscoveryConfig,
-    Goes19DataSource,
-    RadarDataSource,
+from data_sources import DataSource, DataSourceRegistry, DiscoveryConfig
+from factories import (
+    create_data_source_registry,
+    create_minio_client,
+    create_rabbitmq_client,
 )
-from models.band_config import BAND_CONFIGS
 from models.work_unit import WorkUnit
 from health_server import HealthCheckServer
 
@@ -58,15 +54,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         self._mq_client = mq_client
         self._progress_tracker = progress_tracker
         self._data_source_registry = data_source_registry
-
-        # S3 client for MinIO (to check existing tiles)
-        self._minio_client = S3Client.create_with_credentials(
-            bucket_name=config.S3_TILES_DATA_BUCKET_NAME,
-            endpoint=config.S3_TILES_DATA_ENDPOINT,
-            access_key=config.S3_TILES_DATA_RW_ACCESS_KEY,
-            secret_key=config.S3_TILES_DATA_RW_SECRET_KEY,
-            secure=config.S3_TILES_DATA_SECURE,
-        )
+        self._minio_client = create_minio_client(config)
 
     async def discover_and_publish(self) -> int:
         """
@@ -210,21 +198,6 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             return set()
 
 
-def _create_data_source_registry() -> DataSourceRegistry:
-    """Create and populate the data source registry."""
-    registry = DataSourceRegistry()
-
-    # Register GOES19 data sources for each band
-    for _band_id, band_config in BAND_CONFIGS.items():
-        data_source = Goes19DataSource(band_config)
-        registry.register(data_source)
-
-    # Register Radar data source (placeholder)
-    registry.register(RadarDataSource())
-
-    return registry
-
-
 def run_producer(config: Config) -> None:
     """
     Entry point to run the producer with APScheduler.
@@ -234,8 +207,7 @@ def run_producer(config: Config) -> None:
     Args:
         config: Application configuration
     """
-    # Create data source registry
-    data_source_registry = _create_data_source_registry()
+    data_source_registry = create_data_source_registry()
 
     logger.info("Producer starting with APScheduler...")
 
@@ -245,17 +217,7 @@ def run_producer(config: Config) -> None:
         tracker_path, ttl=timedelta(minutes=config.JOB_TTL_MINUTES)
     )
 
-    # Create Message Queue client
-    mq_client = RabbitMQClient(
-        host=config.RABBITMQ_HOST,
-        port=config.RABBITMQ_PORT,
-        username=config.RABBITMQ_USER,
-        password=config.RABBITMQ_PASSWORD,
-        queue_name=config.RABBITMQ_QUEUE,
-        dlq_name=config.RABBITMQ_DLQ,
-        dlx_name=config.RABBITMQ_DLX,
-    )
-    mq_client.connect(max_retries=10, retry_delay=5.0)
+    mq_client = create_rabbitmq_client(config)
 
     # Start health check server
     def check_readiness() -> tuple[bool, str]:

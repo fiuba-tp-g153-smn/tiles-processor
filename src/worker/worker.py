@@ -6,12 +6,10 @@ from signal import signal, SIGINT, SIGTERM
 from pathlib import Path
 from typing import Optional
 
-from clients.rabbitmq_client import RabbitMQClient
 from clients.message_queue_client import MessageQueueClient
 from clients.progress_tracker import ProgressTracker
 from config import Config
-from data_sources import DataSourceRegistry, Goes19DataSource, RadarDataSource
-from models.band_config import BAND_CONFIGS
+from factories import create_data_source_registry, create_rabbitmq_client
 from models.work_unit import WorkUnit
 from worker.work_handler import WorkHandler
 from health_server import HealthCheckServer
@@ -169,21 +167,6 @@ class Worker:  # pylint: disable=too-few-public-methods
             return True  # Acknowledge (we've handled it via retry or DLQ)
 
 
-def _create_data_source_registry() -> DataSourceRegistry:
-    """Create and populate the data source registry."""
-    registry = DataSourceRegistry()
-
-    # Register GOES19 data sources for each band
-    for _band_id, band_config in BAND_CONFIGS.items():
-        data_source = Goes19DataSource(band_config)
-        registry.register(data_source)
-
-    # Register Radar data source (placeholder)
-    registry.register(RadarDataSource())
-
-    return registry
-
-
 def run_worker(config: Config) -> None:
     """
     Entry point to run a worker.
@@ -194,22 +177,8 @@ def run_worker(config: Config) -> None:
     Args:
         config: Application configuration
     """
-    # Create data source registry (lightweight - only for downloads)
-    data_source_registry = _create_data_source_registry()
-
-    # Create Message Queue client
-    mq_client = RabbitMQClient(
-        host=config.RABBITMQ_HOST,
-        port=config.RABBITMQ_PORT,
-        username=config.RABBITMQ_USER,
-        password=config.RABBITMQ_PASSWORD,
-        queue_name=config.RABBITMQ_QUEUE,
-        dlq_name=config.RABBITMQ_DLQ,
-        dlx_name=config.RABBITMQ_DLX,
-    )
-
-    # Connect with retry
-    mq_client.connect(max_retries=10, retry_delay=5.0)
+    data_source_registry = create_data_source_registry()
+    mq_client = create_rabbitmq_client(config)
 
     # Create progress tracker (SQLite-based)
     tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"
