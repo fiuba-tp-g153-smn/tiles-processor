@@ -23,16 +23,10 @@ Physical Validity:
     This removes sensor artifacts, space views, and calibration errors.
 """
 
-import asyncio
-import gc
-import logging
-
-import numpy as np
 import xarray as xr
 
-# Note: Ensure you have rioxarray installed to use the rio accessor
-
-logger = logging.getLogger(__name__)
+from services.concurrent_runner import run_concurrently
+from services.processing_steps import compute_brightness_temperature
 
 
 class ComputeBrightnessTemperaturesService:  # pylint: disable=too-few-public-methods
@@ -75,107 +69,10 @@ class ComputeBrightnessTemperaturesService:  # pylint: disable=too-few-public-me
         self._max_concurrency = max_concurrency
 
     async def run(self) -> dict[str, xr.DataArray]:
-        """
-        Async Concurrency Pattern: Semaphore + to_thread + gather.
-
-        This implements a common pattern for CPU-bound async processing:
-
-        1. SEMAPHORE (asyncio.Semaphore):
-           - Limits concurrent executions to max_concurrency (default: 4)
-           - Prevents memory exhaustion from processing too many arrays at once
-           - Acts as a "ticket system" - tasks wait for a permit before proceeding
-
-        2. TO_THREAD (asyncio.to_thread):
-           - Offloads CPU-bound _compute_brightness_temperatures to thread pool
-           - Prevents blocking the event loop during numpy/xarray computations
-           - Allows other coroutines to run while computation executes
-
-        3. GATHER (asyncio.gather with return_exceptions=True):
-           - Schedules all tasks concurrently (but Semaphore limits actual parallelism)
-           - return_exceptions=True collects errors instead of failing fast
-           - Enables graceful error reporting for partial failures
-
-        Execution Flow:
-            ┌─────────────────────────────────────────────────────────┐
-            │  asyncio.gather([task1, task2, task3, task4, ...])      │
-            │                                                          │
-            │  Semaphore(4) allows only 4 concurrent executions:       │
-            │    [task1, task2, task3, task4] → running                │
-            │    [task5, task6, ...] → waiting for semaphore release   │
-            │                                                          │
-            │  Each task runs to_thread(_compute_brightness_temps)     │
-            │  freeing the event loop while numpy crunches numbers     │
-            └─────────────────────────────────────────────────────────┘
-        """
-        tasks = []
-        file_names = []
-
-        # Semaphore limits concurrent processing to prevent memory exhaustion
-        semaphore = asyncio.Semaphore(self._max_concurrency)
-
-        async def bounded_computation(dataset):
-            # Acquire semaphore permit (blocks if max_concurrency reached)
-            async with semaphore:
-                # Run CPU-bound computation in thread pool to avoid blocking event loop
-                return await asyncio.to_thread(
-                    self._compute_brightness_temperatures, dataset
-                )
-
-        # Create tasks for all datasets (tasks don't start until gathered)
-        for file_name, dataset in self._georreferenced_datasets.items():
-            file_names.append(file_name)
-            tasks.append(bounded_computation(dataset))
-
-        # Execute all tasks concurrently (Semaphore controls actual parallelism)
-        # return_exceptions=True: collect errors instead of failing on first exception
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Separate successful results from failures
-        brightness_temperature_data = {}
-        failed = []
-
-        for file_name, result in zip(file_names, results):
-            if isinstance(result, Exception):
-                failed.append((file_name, result))
-            else:
-                brightness_temperature_data[file_name] = result
-
-        # Report all failures together (not fail-fast behavior)
-        if failed:
-            for name, err in failed:
-                logger.error("Brightness temp computation failed for %s: %s", name, err)
-            raise RuntimeError(
-                f"Brightness temp computation failed for {len(failed)}/{len(tasks)} files"
-            )
-
-        return brightness_temperature_data
-
-    def _compute_brightness_temperatures(self, dataset: xr.Dataset) -> xr.DataArray:
-        radiance = dataset["Rad"]
-
-        # Planck constants specific to the channel, obtained from the NetCDF file
-        fk1 = float(dataset["planck_fk1"].values)
-        fk2 = float(dataset["planck_fk2"].values)
-        bc1 = float(dataset["planck_bc1"].values)
-        bc2 = float(dataset["planck_bc2"].values)
-
-        # Avoid non-physical radiance values
-        radiance_safe = xr.where(radiance <= 0, 1e-10, radiance)
-        del radiance
-        gc.collect()
-
-        # Calculate brightness temperature using the Planck function
-        brightness_temperature = (fk2 / np.log((fk1 / radiance_safe) + 1.0) - bc1) / bc2
-        del radiance_safe
-        gc.collect()
-
-        # Filter values outside the expected physical range (150K to 350K)
-        brightness_temperature = xr.where(
-            (brightness_temperature >= 150) & (brightness_temperature <= 350),
-            brightness_temperature,
-            np.nan,
+        """Compute brightness temperatures with bounded concurrency."""
+        return await run_concurrently(
+            items=self._georreferenced_datasets,
+            worker_fn=lambda _name, ds: compute_brightness_temperature(ds),
+            max_concurrency=self._max_concurrency,
+            task_name="Brightness temp computation",
         )
-
-        brightness_temperature.rio.write_crs(dataset.rio.crs, inplace=True)
-        brightness_temperature.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
-        return brightness_temperature

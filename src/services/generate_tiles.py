@@ -26,12 +26,11 @@ File Overwrites:
     This ensures consistency and prevents stale tiles from accumulating.
 """
 
-import asyncio
 import logging
-import shutil
-import subprocess
-import uuid
 from pathlib import Path
+
+from services.concurrent_runner import run_concurrently
+from services.processing_steps import run_gdal2tiles
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +61,7 @@ class GenerateTilesService:  # pylint: disable=too-few-public-methods
         gdal2tiles.py -z 3-7 -w none --xyz --tiledriver=WEBP --processes=2 input.tif output/
 
     Concurrency:
-        Uses asyncio.Semaphore to limit concurrent tile generation, preventing
+        Uses run_concurrently to limit concurrent tile generation, preventing
         CPU/memory exhaustion when processing many images. Each gdal2tiles job
         itself uses multiple processes for internal parallelism.
 
@@ -80,107 +79,17 @@ class GenerateTilesService:  # pylint: disable=too-few-public-methods
     def __init__(self, geotiff_files: list[Path], output_dir: Path):
         self._geotiff_files = geotiff_files
         self._output_dir = output_dir
-        self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_TILES)
 
     async def run(self):
-        """
-        Async Concurrency Pattern: Semaphore + to_thread + gather.
-
-        Tile generation uses subprocess calls to gdal2tiles.py, which is both
-        CPU-intensive and spawns its own child processes (--processes=2).
-
-        Concurrency Design:
-            - MAX_CONCURRENT_TILES=2: Only 2 gdal2tiles jobs run at once
-            - GDAL_PROCESSES=2: Each gdal2tiles job uses 2 internal processes
-            - Total parallelism: 2 * 2 = 4 CPU cores utilized
-
-        Why lower concurrency than other services:
-            - gdal2tiles is already multi-process internally
-            - Each job writes many small tile files (I/O intensive)
-            - subprocess.run blocks until gdal2tiles completes
-            - Memory usage per job is moderate but tile I/O can saturate disk
-        """
+        """Generate tiles for all GeoTIFF files with bounded concurrency."""
         self._output_dir.mkdir(parents=True, exist_ok=True)
-        tasks = []
 
-        # Schedule all tile generation tasks
-        for geotiff_path in self._geotiff_files:
-            tasks.append(self._generate_tiles_with_limit(geotiff_path))
-
-        # Execute with semaphore-controlled parallelism
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Collect and report failures
-        failed = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                failed.append((self._geotiff_files[i].name, result))
-
-        if failed:
-            for name, err in failed:
-                logger.error("Tile generation failed for %s: %s", name, err)
-            raise RuntimeError(
-                f"Tile generation failed for {len(failed)}/{len(tasks)} files"
-            )
-
-    async def _generate_tiles_with_limit(self, geotiff_path: Path):
-        """
-        Semaphore-bounded task wrapper.
-
-        The semaphore (MAX_CONCURRENT_TILES=2) prevents too many gdal2tiles
-        processes from running simultaneously. Since gdal2tiles itself uses
-        multiprocessing (--processes=2), we keep the outer limit low.
-        """
-        async with self._semaphore:
-            # Run subprocess in thread pool to avoid blocking event loop
-            await asyncio.to_thread(self._generate_tiles, geotiff_path)
-
-    def _generate_tiles(self, geotiff_path: Path):
-        # 1. Define tile output directory
-        # Structure: output_dir / <geotiff_name>_tiles
-        tiles_output_dir = self._output_dir / f"{geotiff_path.stem}_tiles"
-
-        # Temporary directory for atomic operation
-        tmp_tiles_dir = self._output_dir / str(uuid.uuid4())
-        tmp_tiles_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # 2. Run gdal2tiles
-            cmd = [
-                "gdal2tiles.py",
-                "-z",
-                "3-7",
-                "-w",
-                "none",  # No web viewer needed
-                "--xyz",  # Use XYZ tile scheme (OSM/Slippy map standard) instead of TMS
-                "--tiledriver=WEBP",
-                f"--processes={self.GDAL_PROCESSES}",
-                str(geotiff_path),
-                str(tmp_tiles_dir),
-            ]
-
-            logger.info("Generating tiles for %s...", geotiff_path.name)
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600,  # 10 minute timeout
-                check=False,  # Error handled manually
-            )
-
-            if result.returncode != 0:
-                logger.error("gdal2tiles failed: %s", result.stderr)
-                raise RuntimeError(f"gdal2tiles failed for {geotiff_path.name}")
-
-            # 3. Atomically move tiles to final destination
-            if tiles_output_dir.exists():
-                shutil.rmtree(tiles_output_dir)
-
-            tmp_tiles_dir.rename(tiles_output_dir)
-            logger.info("Tiles generated successfully: %s", tiles_output_dir)
-
-        except Exception as e:
-            logger.error("Error generating tiles for %s: %s", geotiff_path.name, e)
-            if tmp_tiles_dir.exists():
-                shutil.rmtree(tmp_tiles_dir)
-            raise
+        items = {path.name: path for path in self._geotiff_files}
+        await run_concurrently(
+            items=items,
+            worker_fn=lambda _name, path: run_gdal2tiles(
+                path, self._output_dir, processes=self.GDAL_PROCESSES
+            ),
+            max_concurrency=self.MAX_CONCURRENT_TILES,
+            task_name="Tile generation",
+        )

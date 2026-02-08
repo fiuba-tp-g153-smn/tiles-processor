@@ -27,17 +27,17 @@ File Overwrites:
     GOES filenames include timestamps, so same-name = same data (idempotent).
 """
 
-import asyncio
 import gc
 import logging
 import uuid
 from pathlib import Path
+
 import numpy as np
 import xarray as xr
 
 from config import Config
-
-# Note: rioxarray is lazy-loaded in _generate_geotiff to reduce idle memory footprint
+from services.concurrent_runner import run_concurrently
+from services.processing_steps import build_rgba_data_array, normalize_and_colorize
 
 logger = logging.getLogger(__name__)
 
@@ -630,66 +630,16 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
         self._max_concurrency = max_concurrency
 
     async def run(self) -> list[Path]:
-        """
-        Async Concurrency Pattern: Semaphore + to_thread + gather.
-
-        Same pattern as ComputeBrightnessTemperaturesService, optimized for
-        CPU-bound GeoTIFF generation (reprojection, clipping, colorization).
-
-        Why this pattern works well for GeoTIFF generation:
-            - _generate_geotiff is CPU-intensive (numpy, rioxarray operations)
-            - Memory usage is significant per file (~100MB+ during reprojection)
-            - Semaphore(4) balances parallelism vs memory consumption
-            - Thread pool allows event loop to remain responsive
-
-        Key async components:
-            - bounded_generation: Wrapper that acquires semaphore before execution
-            - asyncio.to_thread: Offloads blocking I/O and CPU work to threads
-            - asyncio.gather: Coordinates all tasks, collects results/exceptions
-        """
+        """Generate GeoTIFF files with bounded concurrency."""
         self._output_dir.mkdir(parents=True, exist_ok=True)
-        tasks = []
-        file_names = []
 
-        # Limit concurrent GeoTIFF generation to control memory usage
-        semaphore = asyncio.Semaphore(self._max_concurrency)
-
-        async def bounded_generation(file_name, dataset):
-            # Semaphore ensures only max_concurrency tasks run simultaneously
-            async with semaphore:
-                # Thread pool execution prevents event loop blocking during
-                # heavy numpy/rioxarray operations (reproject, clip, colorize)
-                return await asyncio.to_thread(
-                    self._generate_geotiff, file_name, dataset
-                )
-
-        # Schedule all tasks (semaphore controls actual concurrency)
-        for file_name, dataset in self._brightness_temperatures.items():
-            file_names.append(file_name)
-            tasks.append(bounded_generation(file_name, dataset))
-
-        # Run all tasks, collecting exceptions rather than failing fast
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Partition results into successes and failures
-        successful = []
-        failed = []
-
-        for file_name, result in zip(file_names, results):
-            if isinstance(result, Exception):
-                failed.append((file_name, result))
-            else:
-                successful.append(result)
-
-        # Aggregate error reporting for better debugging
-        if failed:
-            for name, err in failed:
-                logger.error("GeoTIFF generation failed for %s: %s", name, err)
-            raise RuntimeError(
-                f"GeoTIFF generation failed for {len(failed)}/{len(tasks)} files"
-            )
-
-        return successful
+        results = await run_concurrently(
+            items=self._brightness_temperatures,
+            worker_fn=self._generate_geotiff,
+            max_concurrency=self._max_concurrency,
+            task_name="GeoTIFF generation",
+        )
+        return list(results.values())
 
     def _generate_geotiff(  # pylint: disable=too-many-locals
         self, file_name: str, c13_data: xr.DataArray
@@ -727,27 +677,17 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
 
         # 3. Normalize and apply custom palette (Cloud Tops logic)
         # vmin=183.15, vmax=323.15 from legacy code
-        r, g, b, a = self._normalize_with_custom_palette(
-            c13_clipped, vmin=self._vmin, vmax=self._vmax
+        r, g, b, a = normalize_and_colorize(
+            c13_clipped, self._vmin, self._vmax, self._color_palette
         )
 
         # Free memory
         del c13_clipped
         gc.collect()
 
-        # 3. Create RGBA DataArray
-        rgb = xr.DataArray(
-            np.stack([r, g, b, a]),
-            dims=["band", "y", "x"],
-            coords={"band": [1, 2, 3, 4], "x": coords_x, "y": coords_y},
-            name=self._product_name,
-        )
-
-        # Free memory
+        # 4. Create RGBA DataArray
+        rgb = build_rgba_data_array(r, g, b, a, coords_x, coords_y, self._product_name)
         del r, g, b, a
-        # 4. Set CRS and spatial dims
-        rgb.rio.write_crs("EPSG:4326", inplace=True)
-        rgb.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
 
         # 5. Save to GeoTIFF
         # Construct output path, ensuring .tif extension
@@ -770,50 +710,3 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
         gc.collect()
 
         return output_path
-
-    def _normalize_with_custom_palette(  # pylint: disable=too-many-locals
-        self, array: xr.DataArray, vmin: float, vmax: float
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Normalize an array and apply the custom color palette.
-        Returns: R, G, B, A (uint8 arrays)
-        """
-        arr = np.asarray(
-            array.values if hasattr(array, "values") else array, dtype=np.float32
-        )
-
-        nan_mask = np.isnan(arr)
-
-        # Create alpha channel: 0 where NaN, 255 otherwise
-        alpha = np.where(nan_mask, 0, 255).astype(np.uint8)
-
-        normalized = (arr - vmin) / (vmax - vmin)
-        normalized = np.clip(normalized, 0, 1)
-        normalized = np.nan_to_num(normalized, nan=0.0)
-        del arr
-
-        indices = (normalized * 255).astype(np.uint8)
-        del normalized
-
-        rgb_palette = np.zeros((256, 3), dtype=np.uint8)
-        for i, hex_color in enumerate(self._color_palette):
-            hex_color = hex_color.lstrip("#")
-            rgb_palette[i, 0] = int(hex_color[0:2], 16)
-            rgb_palette[i, 1] = int(hex_color[2:4], 16)
-            rgb_palette[i, 2] = int(hex_color[4:6], 16)
-
-        colored = rgb_palette[indices]
-        del indices
-
-        # We don't strictly need to set colored[nan_mask] to a specific color
-        # because alpha will be 0, but keeping it black/white is fine.
-        colored[nan_mask] = rgb_palette[0]
-        del nan_mask
-        gc.collect()
-
-        # Extract channels
-        red = colored[..., 0]
-        green = colored[..., 1]
-        blue = colored[..., 2]
-
-        return red, green, blue, alpha

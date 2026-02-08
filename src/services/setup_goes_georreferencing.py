@@ -12,16 +12,10 @@ GOES Geostationary Projection:
     3. Writes the CRS to the dataset for rioxarray compatibility
 """
 
-import asyncio
-import io
-import logging
-
-from pyproj import CRS
 import xarray as xr
 
-logger = logging.getLogger(__name__)
-
-# Note: Ensure you have rioxarray installed to use the rio accessor
+from services.concurrent_runner import run_concurrently
+from services.processing_steps import apply_goes_georeferencing
 
 
 class SetupGOESGeorreferencingService:  # pylint: disable=too-few-public-methods
@@ -56,60 +50,10 @@ class SetupGOESGeorreferencingService:  # pylint: disable=too-few-public-methods
         self._max_concurrency = max_concurrency
 
     async def run(self) -> dict[str, xr.Dataset]:
-        """
-        Async Concurrency Pattern: Semaphore + to_thread + gather.
-
-        This pattern enables controlled parallelism for CPU-bound georeferencing tasks:
-        1. Semaphore limits concurrent executions (default: 4) to prevent memory exhaustion.
-        2. asyncio.to_thread runs blocking netCDF/numpy operations in a separate thread.
-        3. asyncio.gather coordinates all tasks and collects results.
-
-        This approach ensures the event loop remains responsive while processing heavy
-        satellite data files, without overwhelming system resources.
-        """
-        tasks = []
-        file_names = []
-
-        # Semaphore limits concurrent georeferencing to prevent memory exhaustion
-        semaphore = asyncio.Semaphore(self._max_concurrency)
-
-        async def bounded_georeferencing(content: bytes):
-            # Acquire semaphore permit (blocks if max_concurrency reached)
-            async with semaphore:
-                # Offload CPU-bound georeferencing to thread pool
-                return await asyncio.to_thread(self._apply_georeferencing, content)
-
-        for file_name, content in self._goes_data.items():
-            file_names.append(file_name)
-            tasks.append(bounded_georeferencing(content))
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        georeferenced_data = {}
-        failed = []
-
-        for file_name, result in zip(file_names, results):
-            if isinstance(result, Exception):
-                failed.append((file_name, result))
-            else:
-                georeferenced_data[file_name] = result
-
-        if failed:
-            for name, err in failed:
-                logger.error("Georeferencing failed for %s: %s", name, err)
-            raise RuntimeError(
-                f"Georeferencing failed for {len(failed)}/{len(tasks)} files"
-            )
-
-        return georeferenced_data
-
-    def _apply_georeferencing(self, content: bytes) -> xr.Dataset:
-        with xr.open_dataset(io.BytesIO(content), engine="h5netcdf") as dataset:
-            sat_h = dataset["goes_imager_projection"].perspective_point_height
-            dataset = dataset.assign_coords(
-                x=dataset["x"].values * sat_h, y=dataset["y"].values * sat_h
-            )
-            crs = CRS.from_cf(dataset["goes_imager_projection"].attrs)
-            dataset.rio.write_crs(crs.to_string(), inplace=True)
-            # Load the dataset into memory before returning
-            return dataset.load()
+        """Georeference all datasets with bounded concurrency."""
+        return await run_concurrently(
+            items=self._goes_data,
+            worker_fn=lambda _name, content: apply_goes_georeferencing(content),
+            max_concurrency=self._max_concurrency,
+            task_name="Georeferencing",
+        )
