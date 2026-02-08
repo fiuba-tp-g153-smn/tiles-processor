@@ -3,14 +3,14 @@ Band 2 processor with downsampling for high-resolution visible imagery.
 
 Band 2 (0.64 µm Red Visible) has 500m resolution vs 2km for Band 13/9,
 resulting in ~16x more pixels and ~7x larger files (~200MB vs ~30MB).
+Full Disk grid is 21696x21696 pixels (~470M pixels, ~3.7 GB as float64).
 
-This processor downsamples the data by 4x BEFORE reprojection to:
-  1. Reduce memory from ~2GB to ~125MB during reprojection
-  2. Reduce CPU time from ~30s to ~3s for GeoTIFF generation
-  3. Produce output at comparable resolution to Band 13/9 tiles
+This processor reads raw int16 data and downsamples by 4x BEFORE CF
+decoding (scale_factor/add_offset) to keep peak memory under ~1.2 GB
+instead of ~5 GB.
 
 Processing differences from GoesProcessor:
-  - Downsamples 4x before reprojection (500m → 2km effective resolution)
+  - Reads raw int16 and downsamples 4x before CF decode (500m → 2km)
   - Computes reflectance factor instead of brightness temperature
   - Uses grayscale VISIBLE_PALETTE
   - Uses 1 GDAL process for tile generation (less CPU pressure)
@@ -43,56 +43,85 @@ class Band2Processor(GoesProcessor):
     # Fewer GDAL processes for tile generation to reduce CPU pressure
     GDAL_PROCESSES = 1
 
-    # ~0.02° ≈ 2.2km at the equator, matches Band 13/9 native resolution
-    # and prevents output grid explosion during geostationary → lat/lon reprojection
-    REPROJECT_RESOLUTION = 0.02
-
     def _apply_georeferencing(self, netcdf_path: Path) -> xr.Dataset:
         """
         Apply GOES projection with 4x downsampling before CRS assignment.
 
-        Extracts raw data, scales coordinates, coarsens the radiance array
-        by DOWNSAMPLE_FACTOR, then assigns the CRS. This reduces the data
-        from ~10000x10000 to ~2500x2500 pixels BEFORE the expensive
-        reprojection step in _generate_geotiff.
+        Reads raw int16 Rad data (~940 MB) instead of CF-decoded float64
+        (~3.76 GB), coarsens to 5424x5424, then applies scale_factor and
+        add_offset on the small array. Peak memory: ~1.2 GB vs ~5 GB.
         """
         from pyproj import CRS
         import rioxarray  # noqa: F401 - registers .rio accessor
 
+        # First open: extract metadata and coordinates (CF-decoded, all tiny)
         with xr.open_dataset(netcdf_path, engine="h5netcdf") as dataset:
-            # Extract metadata before any transformation
             sat_h = dataset["goes_imager_projection"].perspective_point_height
             crs = CRS.from_cf(dataset["goes_imager_projection"].attrs)
             kappa0_val = float(dataset["kappa0"].values)
 
-            # Scale coordinates from radians to meters
             x_scaled = dataset["x"].values * sat_h
             y_scaled = dataset["y"].values * sat_h
 
-            # Extract radiance into memory
-            rad_data = dataset["Rad"].values
+            # Capture Rad encoding params (no data loaded yet)
+            rad_encoding = dataset["Rad"].encoding
+            scale_factor = np.float32(rad_encoding.get("scale_factor", 1.0))
+            add_offset = np.float32(rad_encoding.get("add_offset", 0.0))
 
-        # Build DataArray with scaled coordinates (outside context manager)
-        rad_da = xr.DataArray(
-            rad_data,
+        # Second open: read raw int16 Rad (~940 MB vs ~3.76 GB decoded)
+        with xr.open_dataset(
+            netcdf_path, engine="h5netcdf", mask_and_scale=False
+        ) as raw_ds:
+            raw_data = raw_ds["Rad"].values
+
+        logger.info(
+            f"Loaded raw Band 2: shape={raw_data.shape}, "
+            f"dtype={raw_data.dtype}, "
+            f"size={raw_data.nbytes / 1024**2:.0f} MB"
+        )
+
+        # Build DataArray with raw int16 and scaled coordinates
+        raw_da = xr.DataArray(
+            raw_data,
             dims=["y", "x"],
             coords={"y": y_scaled, "x": x_scaled},
             name="Rad",
         )
-        del rad_data
+        del raw_data
         gc.collect()
 
-        # Downsample BEFORE reprojection — this is the key optimization
-        original_shape = rad_da.shape
-        rad_da = rad_da.coarsen(
+        # Downsample BEFORE CF decode — key memory optimization
+        # coarsen().mean() on int16 uses float64 accumulator for precision
+        original_shape = raw_da.shape
+        coarsened = raw_da.coarsen(
             x=self.DOWNSAMPLE_FACTOR,
             y=self.DOWNSAMPLE_FACTOR,
             boundary="trim",
         ).mean()
+        del raw_da
+        gc.collect()
+
         logger.info(
-            f"Downsampled Band 2: {original_shape} → {rad_da.shape} "
+            f"Downsampled Band 2: {original_shape} → {coarsened.shape} "
             f"({self.DOWNSAMPLE_FACTOR}x reduction)"
         )
+
+        # Apply CF decode (scale_factor + add_offset) on the small array
+        rad_values = coarsened.values.astype(np.float32)
+        rad_values *= scale_factor
+        rad_values += add_offset
+
+        rad_da = xr.DataArray(
+            rad_values,
+            dims=["y", "x"],
+            coords={
+                "y": coarsened.coords["y"].values,
+                "x": coarsened.coords["x"].values,
+            },
+            name="Rad",
+        )
+        del coarsened, rad_values
+        gc.collect()
 
         # Build output dataset with kappa0 for reflectance computation
         ds = rad_da.to_dataset(name="Rad")
