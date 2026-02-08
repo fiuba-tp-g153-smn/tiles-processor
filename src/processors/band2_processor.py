@@ -1,21 +1,21 @@
 """
 Band 2 processor with downsampling for high-resolution visible imagery.
 
-Band 2 (0.64 µm Red Visible) has 500m resolution vs 2km for Band 13/9,
-resulting in ~16x more pixels and ~7x larger files (~200MB vs ~30MB).
-Full Disk grid is 21696x21696 pixels (~470M pixels, ~3.7 GB as float64).
-
-This processor reads raw int16 data and downsamples by 4x BEFORE CF
-decoding (scale_factor/add_offset) to keep peak memory under ~1.2 GB
-instead of ~5 GB.
+Band 2 (0.64 µm Red Visible) has 500m resolution vs 2km for Band 13/9.
+Full Disk grid is 21696x21696 (~470M pixels). CF-decoding this to float64
+would consume ~3.7 GB, so this processor loads raw int16 and
+downsamples 4x with coarsen().mean() BEFORE applying scale_factor/add_offset
+on the small 5424x5424 result.
 
 Processing differences from GoesProcessor:
-  - Reads raw int16 and downsamples 4x before CF decode (500m → 2km)
+  - Loads raw int16 (mask_and_scale=False), downsamples, then CF-decodes
   - Computes reflectance factor instead of brightness temperature
+  - Dynamic vmax from 95th percentile (SMN recommendation)
   - Uses grayscale VISIBLE_PALETTE
   - Uses 1 GDAL process for tile generation (less CPU pressure)
 """
 
+from typing import override
 import gc
 import logging
 from pathlib import Path
@@ -43,13 +43,14 @@ class Band2Processor(GoesProcessor):
     # Fewer GDAL processes for tile generation to reduce CPU pressure
     GDAL_PROCESSES = 1
 
+    @override
     def _apply_georeferencing(self, netcdf_path: Path) -> xr.Dataset:
         """
         Apply GOES projection with 4x downsampling before CRS assignment.
 
-        Reads raw int16 Rad data (~940 MB) instead of CF-decoded float64
-        (~3.76 GB), coarsens to 5424x5424, then applies scale_factor and
-        add_offset on the small array. Peak memory: ~1.2 GB vs ~5 GB.
+        Reads raw int16 Rad data instead of CF-decoded float64
+        coarsens to 5424x5424, then applies scale_factor and
+        add_offset on the small array.
         """
         from pyproj import CRS
         import rioxarray  # noqa: F401 - registers .rio accessor
@@ -68,7 +69,7 @@ class Band2Processor(GoesProcessor):
             scale_factor = np.float32(rad_encoding.get("scale_factor", 1.0))
             add_offset = np.float32(rad_encoding.get("add_offset", 0.0))
 
-        # Second open: read raw int16 Rad (~940 MB vs ~3.76 GB decoded)
+        # Second open: read raw int16 Rad
         with xr.open_dataset(
             netcdf_path, engine="h5netcdf", mask_and_scale=False
         ) as raw_ds:
@@ -130,6 +131,7 @@ class Band2Processor(GoesProcessor):
 
         return ds
 
+    @override
     def _compute_brightness_temperature(self, dataset: xr.Dataset) -> xr.DataArray:
         """
         Compute reflectance factor for visible Band 2.
@@ -161,6 +163,7 @@ class Band2Processor(GoesProcessor):
 
         return reflectance
 
+    @override
     def _generate_geotiff(
         self,
         bt_data: xr.DataArray,
