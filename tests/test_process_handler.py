@@ -38,47 +38,36 @@ class TestGoesProcessor:
         with patch("processors.goes_processor.create_minio_client"):
             processor = GoesProcessor(mock_config)
 
-            # Mock the processing_steps functions called via asyncio.to_thread
-            mock_dataset = MagicMock()
-            mock_bt_data = MagicMock()
+            # Mock all the internal steps (instance methods for polymorphism)
+            processor._apply_georeferencing = MagicMock()
+            processor._compute_brightness_temperature = MagicMock()
+            processor._generate_geotiff = MagicMock(return_value=Path("/tmp/out.tif"))
+            processor._generate_tiles = MagicMock(return_value=Path("/tmp/tiles"))
+            processor._minio_client.upload_directory = AsyncMock()
+            processor._minio_client.ensure_bucket_exists = AsyncMock()
+            processor._enforce_retention_policy = AsyncMock()
+            processor._cleanup_file = MagicMock()
+            processor._cleanup_directory = MagicMock()
 
-            with patch(
-                "processors.goes_processor.apply_goes_georeferencing",
-                return_value=mock_dataset,
-            ) as mock_georef, patch(
-                "processors.goes_processor.compute_brightness_temperature",
-                return_value=mock_bt_data,
-            ) as mock_bt:
-                # Mock the remaining instance methods
-                processor._generate_geotiff = MagicMock(
-                    return_value=Path("/tmp/out.tif")
-                )
-                processor._generate_tiles = MagicMock(return_value=Path("/tmp/tiles"))
-                processor._minio_client.upload_directory = AsyncMock()
-                processor._minio_client.ensure_bucket_exists = AsyncMock()
-                processor._enforce_retention_policy = AsyncMock()
-                processor._cleanup_file = MagicMock()
-                processor._cleanup_directory = MagicMock()
+            # Create work unit using new format
+            work_unit = WorkUnit.create(
+                image_id="img1.nc",
+                source_uri="s3://noaa-goes19/path/to/img1.nc",
+                data_source_id="goes19_band_13",
+                processor_id="goes_band_13",
+                output_prefix="band_13/tiles",
+                bounds={"minx": 0, "miny": 0, "maxx": 10, "maxy": 10},
+                band_id="band_13",
+            )
 
-                # Create work unit using new format
-                work_unit = WorkUnit.create(
-                    image_id="img1.nc",
-                    source_uri="s3://noaa-goes19/path/to/img1.nc",
-                    data_source_id="goes19_band_13",
-                    processor_id="goes_band_13",
-                    output_prefix="band_13/tiles",
-                    bounds={"minx": 0, "miny": 0, "maxx": 10, "maxy": 10},
-                    band_id="band_13",
-                )
+            # Mock existence of input file
+            with patch("pathlib.Path.exists", return_value=True):
+                await processor.process("/tmp/img1.nc", work_unit)
 
-                # Mock existence of input file
-                with patch("pathlib.Path.exists", return_value=True):
-                    await processor.process("/tmp/img1.nc", work_unit)
-
-                # Verify order of operations
-                mock_georef.assert_called_once()
-                mock_bt.assert_called_once()
-                processor._generate_geotiff.assert_called_once()
-                processor._generate_tiles.assert_called_once()
-                processor._minio_client.upload_directory.assert_awaited_once()
-                processor._enforce_retention_policy.assert_awaited_once()
+            # Verify order of operations
+            processor._apply_georeferencing.assert_called_once()
+            processor._compute_brightness_temperature.assert_called_once()
+            processor._generate_geotiff.assert_called_once()
+            processor._generate_tiles.assert_called_once()
+            processor._minio_client.upload_directory.assert_awaited_once()
+            processor._enforce_retention_policy.assert_awaited_once()

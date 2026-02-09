@@ -93,14 +93,18 @@ class GoesProcessor(ImageProcessor):
     async def _run_science_pipeline(self, netcdf_path, dataset, bt_data):
         """Run georeferencing and brightness temperature computation."""
         # 1. Georeference
+        # NOTE: Uses self._apply_georeferencing (not the module function)
+        # because Band2Processor overrides it with memory-optimized loading.
         self._check_shutdown()
         logger.info("Step 1: Georeferencing")
-        dataset = await asyncio.to_thread(apply_goes_georeferencing, netcdf_path)
+        dataset = await asyncio.to_thread(self._apply_georeferencing, netcdf_path)
 
         # 2. Brightness Temperature
+        # NOTE: Uses self._compute_brightness_temperature (not the module function)
+        # because Band2Processor overrides it with reflectance computation.
         self._check_shutdown()
         logger.info("Step 2: Brightness Temperature")
-        bt_data = await asyncio.to_thread(compute_brightness_temperature, dataset)
+        bt_data = await asyncio.to_thread(self._compute_brightness_temperature, dataset)
 
         del dataset
         gc.collect()
@@ -235,6 +239,20 @@ class GoesProcessor(ImageProcessor):
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning("Error enforcing retention policy (non-fatal): %s", e)
+
+    def _apply_georeferencing(self, netcdf_path: Path) -> xr.Dataset:
+        """Apply GOES satellite projection transformation.
+
+        Subclasses (e.g. Band2Processor) override this for custom loading.
+        """
+        return apply_goes_georeferencing(netcdf_path)
+
+    def _compute_brightness_temperature(self, dataset: xr.Dataset) -> xr.DataArray:
+        """Convert radiance to brightness temperature using Planck function.
+
+        Subclasses (e.g. Band2Processor) override this for reflectance.
+        """
+        return compute_brightness_temperature(dataset)
 
     def _generate_geotiff(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
