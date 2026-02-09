@@ -61,10 +61,12 @@ class GoesProcessor(ImageProcessor):
         if not netcdf_path.exists():
             raise FileNotFoundError(f"NetCDF file not found: {netcdf_path}")
 
-        # Setup directories
+        # Setup per-image work directory to isolate concurrent workers
         band_dir = self._get_band_dir(work_unit)
-        geotiff_dir = self._ensure_dir(band_dir / "geotiff")
-        tiles_dir = self._ensure_dir(band_dir / "tiles")
+        image_stem = Path(work_unit.image_id).stem
+        work_dir = self._ensure_dir(band_dir / image_stem)
+        geotiff_dir = self._ensure_dir(work_dir / "geotiff")
+        tiles_dir = self._ensure_dir(work_dir / "tiles")
 
         # variables to hold data in memory
         dataset = None
@@ -86,8 +88,7 @@ class GoesProcessor(ImageProcessor):
             logger.error("Processing failed for %s: %s", work_unit.image_id, e)
             raise
         finally:
-            self._cleanup_directory(geotiff_dir)
-            self._cleanup_directory(tiles_dir)
+            self._cleanup_directory(work_dir)
             gc.collect()
 
     async def _run_science_pipeline(self, netcdf_path, dataset, bt_data):

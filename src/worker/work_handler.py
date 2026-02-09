@@ -1,5 +1,6 @@
 """Unified work handler for processing work units (download + process)."""
 
+import shutil
 import subprocess
 import sys
 from collections import deque
@@ -60,8 +61,10 @@ class WorkHandler:
         # Get data source for download
         data_source = self._data_source_registry.get(work_unit.data_source_id)
 
-        # Setup directories
-        raw_dir = self._ensure_dir(self._base_dir / work_unit.band_id / "raw")
+        # Setup per-image work directory to isolate concurrent workers
+        image_stem = Path(work_unit.image_id).stem
+        work_dir = self._ensure_dir(self._base_dir / work_unit.band_id / image_stem)
+        raw_dir = self._ensure_dir(work_dir / "raw")
         local_path = raw_dir / work_unit.image_id
 
         try:
@@ -97,8 +100,8 @@ class WorkHandler:
             )
 
         finally:
-            # Cleanup downloaded file
-            self._cleanup_file(local_path)
+            # Cleanup entire per-image work directory (raw + any subprocess leftovers)
+            self._cleanup_directory(work_dir)
 
     def abort(self) -> None:
         """Terminate the current subprocess if one is running."""
@@ -217,11 +220,11 @@ class WorkHandler:
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
-    def _cleanup_file(self, file_path: Path) -> None:
-        """Safe cleanup of a single file."""
+    def _cleanup_directory(self, dir_path: Path) -> None:
+        """Safe cleanup of a directory tree."""
         try:
-            if file_path.exists():
-                file_path.unlink()
-                logger.debug("Cleaned up: %s", file_path)
+            if dir_path.exists():
+                shutil.rmtree(dir_path)
+                logger.debug("Cleaned up directory: %s", dir_path)
         except OSError as e:
-            logger.warning("Failed to cleanup file %s: %s", file_path, e)
+            logger.warning("Failed to cleanup directory %s: %s", dir_path, e)
