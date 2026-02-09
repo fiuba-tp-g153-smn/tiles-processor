@@ -57,7 +57,7 @@ class TestGoesProcessor:
                 processor_id="goes_band_13",
                 output_prefix="band_13/tiles",
                 bounds={"minx": 0, "miny": 0, "maxx": 10, "maxy": 10},
-                band_id="band_13",
+                product_id="band_13",
             )
 
             # Mock existence of input file

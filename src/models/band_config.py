@@ -1,28 +1,28 @@
-"""Band-specific configuration for satellite image processing."""
+"""Product-specific configuration for image processing."""
 
 from dataclasses import dataclass
 from typing import List
 
 
 @dataclass(frozen=True)
-class BandConfig:
+class ProductConfig:
     """
-    Configuration for a specific satellite band processing.
+    Configuration for a specific product processing.
 
-    This contains all band-specific parameters needed to process
-    satellite imagery through the pipeline.
+    This contains all product-specific parameters needed to process
+    imagery through the pipeline (satellite bands, weather model outputs, etc.).
 
     Attributes:
-        band_id: Identifier for the band (e.g., "band_13", "band_9")
-        file_pattern: Pattern to match files in NOAA S3 (e.g., "C13_G19")
-        vmin: Minimum temperature for normalization (Kelvin)
-        vmax: Maximum temperature for normalization (Kelvin)
+        product_id: Identifier for the product (e.g., "band_13", "band_9", "ecmwf_total_precipitation")
+        file_pattern: Pattern to match files in source (e.g., "C13_G19" for NOAA S3)
+        vmin: Minimum value for normalization
+        vmax: Maximum value for normalization
         palette_name: Name of the color palette to use
         s3_prefix: S3 key prefix for storing tiles
         product_name: Name for the output product metadata
     """
 
-    band_id: str
+    product_id: str
     file_pattern: str
     vmin: float
     vmax: float
@@ -33,7 +33,7 @@ class BandConfig:
     def to_dict(self) -> dict:
         """Serialize to dictionary for JSON encoding."""
         return {
-            "band_id": self.band_id,
+            "product_id": self.product_id,
             "file_pattern": self.file_pattern,
             "vmin": self.vmin,
             "vmax": self.vmax,
@@ -43,10 +43,10 @@ class BandConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "BandConfig":
+    def from_dict(cls, data: dict) -> "ProductConfig":
         """Deserialize from dictionary."""
         return cls(
-            band_id=data["band_id"],
+            product_id=data["product_id"],
             file_pattern=data["file_pattern"],
             vmin=data["vmin"],
             vmax=data["vmax"],
@@ -56,9 +56,9 @@ class BandConfig:
         )
 
 
-# Pre-defined band configurations
-BAND_13_CONFIG = BandConfig(
-    band_id="band_13",
+# Pre-defined product configurations
+BAND_13_CONFIG = ProductConfig(
+    product_id="band_13",
     file_pattern="C13_G19",
     vmin=183.15,  # -90°C in Kelvin
     vmax=323.15,  # +50°C in Kelvin
@@ -67,8 +67,8 @@ BAND_13_CONFIG = BandConfig(
     product_name="Cloud_Tops",
 )
 
-BAND_9_CONFIG = BandConfig(
-    band_id="band_9",
+BAND_9_CONFIG = ProductConfig(
+    product_id="band_9",
     file_pattern="C09_G19",
     vmin=161.0,  # -112.15°C in Kelvin
     vmax=330.0,  # +56.85°C in Kelvin
@@ -77,17 +77,36 @@ BAND_9_CONFIG = BandConfig(
     product_name="Water_Vapor",
 )
 
-# Registry for looking up band configs by ID
+ECMWF_TOTAL_PRECIPITATION_CONFIG = ProductConfig(
+    product_id="ecmwf_total_precipitation",
+    file_pattern="",  # Not used for ECMWF (no file pattern filtering needed)
+    vmin=0.0,  # 0 mm
+    vmax=200.0,  # 200 mm (extreme precipitation)
+    palette_name="PRECIPITATION_PALETTE",
+    s3_prefix="models/ecmwf/total_precipitation",
+    product_name="Total_Precipitation_ECMWF",
+)
+
+# Registry for looking up product configs by ID
+# Keep BAND_CONFIGS name for backwards compatibility
 BAND_CONFIGS = {
     "band_13": BAND_13_CONFIG,
     "band_9": BAND_9_CONFIG,
+    "ecmwf_total_precipitation": ECMWF_TOTAL_PRECIPITATION_CONFIG,
 }
 
+# Alias for clarity
+PRODUCT_CONFIGS = BAND_CONFIGS
 
-def get_band_config(band_id: str) -> BandConfig:
-    """Get band configuration by ID."""
-    if band_id not in BAND_CONFIGS:
+
+def get_product_config(product_id: str) -> ProductConfig:
+    """Get product configuration by ID."""
+    if product_id not in PRODUCT_CONFIGS:
         raise ValueError(
-            f"Unknown band_id '{band_id}'. Valid: {list(BAND_CONFIGS.keys())}"
+            f"Unknown product_id '{product_id}'. Valid: {list(PRODUCT_CONFIGS.keys())}"
         )
-    return BAND_CONFIGS[band_id]
+    return PRODUCT_CONFIGS[product_id]
+
+
+# Backwards compatibility alias
+get_band_config = get_product_config

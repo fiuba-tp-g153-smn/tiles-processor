@@ -50,6 +50,7 @@ class Config:
         self.ENABLE_BAND_13: bool = settings["features"].get("enable_band_13", True)
         self.ENABLE_BAND_9: bool = settings["features"].get("enable_band_9", True)
         self.ENABLE_RADAR: bool = settings["features"].get("enable_radar", True)
+        self.ENABLE_ECMWF_PRECIPITATION: bool = settings["features"].get("enable_ecmwf_precipitation", False)
 
         # Job Configuration
         self.JOB_TTL_MINUTES: int = int(self._get_required_env("JOB_TTL_MINUTES"))

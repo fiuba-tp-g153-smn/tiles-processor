@@ -7,7 +7,7 @@ from typing import Set, List
 
 from clients.s3_client import S3Client
 from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
-from models.band_config import BandConfig
+from models.band_config import ProductConfig
 
 logger = logging.getLogger(__name__)
 
@@ -30,31 +30,31 @@ class Goes19DataSource(DataSource):
     TARGET_IMAGES = 26  # 4+ hours at 10-min intervals
     MAX_HOURS_BACK = 5
 
-    def __init__(self, band_config: BandConfig):
+    def __init__(self, product_config: ProductConfig):
         """
         Initialize GOES-19 data source for a specific band.
 
         Args:
-            band_config: Band configuration (determines file pattern, output prefix, etc.)
+            product_config: Product configuration (determines file pattern, output prefix, etc.)
         """
-        self._band_config = band_config
+        self._product_config = product_config
         self._s3_client = S3Client(GOES19_BUCKET_NAME, max_concurrent_downloads=6)
         self._l1b_products_path = "ABI-L1b-RadF"
 
     @property
     def source_id(self) -> str:
         """Unique identifier for this data source."""
-        return f"goes19_{self._band_config.band_id}"
+        return f"goes19_{self._product_config.product_id}"
 
     @property
     def processor_id(self) -> str:
         """The processor ID to use for images from this source."""
-        return f"goes_{self._band_config.band_id}"
+        return f"goes_{self._product_config.product_id}"
 
     @property
-    def band_config(self) -> BandConfig:
-        """Get the band configuration."""
-        return self._band_config
+    def product_config(self) -> ProductConfig:
+        """Get the product configuration."""
+        return self._product_config
 
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
         """
@@ -94,7 +94,7 @@ class Goes19DataSource(DataSource):
                     source_uri=s3_key,
                     data_source_id=self.source_id,
                     processor_id=self.processor_id,
-                    output_prefix=self._band_config.s3_prefix,
+                    output_prefix=self._product_config.s3_prefix,
                 )
             )
 
@@ -115,7 +115,7 @@ class Goes19DataSource(DataSource):
 
             try:
                 files = await self._s3_client._get_folder_file_paths(
-                    directory_path, file_pattern=self._band_config.file_pattern
+                    directory_path, file_pattern=self._product_config.file_pattern
                 )
                 all_candidates.extend(files)
             except Exception as e:

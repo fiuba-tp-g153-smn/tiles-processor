@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from typing import Dict, Optional, Any
 
-from models.band_config import BandConfig, get_band_config
+from models.band_config import ProductConfig, get_product_config
 
 
 @dataclass
@@ -30,7 +30,7 @@ class WorkUnit:
         output_prefix: S3 prefix for output tiles
         bounds: Geographic bounding box for clipping
         processor_id: ID of the processor to use (e.g., "goes_band_13")
-        band_id: Band being processed (for backwards compatibility and config lookup)
+        product_id: Product being processed (e.g., "band_13", "ecmwf_total_precipitation")
         created_at: Timestamp when work unit was created
         retry_count: Number of times this work unit has been retried
         max_retries: Maximum retry attempts before sending to DLQ
@@ -43,15 +43,21 @@ class WorkUnit:
     output_prefix: str
     bounds: Dict[str, float]
     processor_id: str
-    band_id: str
+    product_id: str
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     retry_count: int = 0
     max_retries: int = 3
 
     @property
-    def band_config(self) -> BandConfig:
-        """Get the band configuration for this work unit."""
-        return get_band_config(self.band_id)
+    def product_config(self) -> ProductConfig:
+        """Get the product configuration for this work unit."""
+        return get_product_config(self.product_id)
+
+    # Backwards compatibility alias
+    @property
+    def band_config(self) -> ProductConfig:
+        """Deprecated: Use product_config instead."""
+        return self.product_config
 
     @property
     def can_retry(self) -> bool:
@@ -68,7 +74,7 @@ class WorkUnit:
             output_prefix=self.output_prefix,
             bounds=self.bounds.copy(),
             processor_id=self.processor_id,
-            band_id=self.band_id,
+            product_id=self.product_id,
             created_at=self.created_at,
             retry_count=self.retry_count + 1,
             max_retries=self.max_retries,
@@ -84,7 +90,7 @@ class WorkUnit:
             "output_prefix": self.output_prefix,
             "bounds": self.bounds,
             "processor_id": self.processor_id,
-            "band_id": self.band_id,
+            "product_id": self.product_id,
             "created_at": self.created_at,
             "retry_count": self.retry_count,
             "max_retries": self.max_retries,
@@ -105,7 +111,7 @@ class WorkUnit:
             output_prefix=data["output_prefix"],
             bounds=data["bounds"],
             processor_id=data["processor_id"],
-            band_id=data["band_id"],
+            product_id=data["product_id"],
             created_at=data.get("created_at", datetime.now(UTC).isoformat()),
             retry_count=data.get("retry_count", 0),
             max_retries=data.get("max_retries", 3),
@@ -125,7 +131,7 @@ class WorkUnit:
         processor_id: str,
         output_prefix: str,
         bounds: Dict[str, float],
-        band_id: str,
+        product_id: str,
     ) -> "WorkUnit":
         """
         Factory method to create a new work unit.
@@ -137,7 +143,7 @@ class WorkUnit:
             processor_id: ID of the processor to use
             output_prefix: S3 prefix for output tiles
             bounds: Geographic bounding box
-            band_id: Band identifier for config lookup
+            product_id: Product identifier for config lookup
         """
         return cls(
             work_unit_id=str(uuid.uuid4()),
@@ -147,7 +153,7 @@ class WorkUnit:
             output_prefix=output_prefix,
             bounds=bounds,
             processor_id=processor_id,
-            band_id=band_id,
+            product_id=product_id,
         )
 
     def __str__(self) -> str:

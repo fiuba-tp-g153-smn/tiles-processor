@@ -60,7 +60,7 @@ class WorkHandler:
         data_source = self._data_source_registry.get(work_unit.data_source_id)
 
         # Setup directories
-        raw_dir = self._ensure_dir(self._base_dir / work_unit.band_id / "raw")
+        raw_dir = self._ensure_dir(self._base_dir / work_unit.product_id / "raw")
         local_path = raw_dir / work_unit.image_id
 
         try:
@@ -80,7 +80,7 @@ class WorkHandler:
             process_time = perf_counter() - process_start
 
             # Step 3: Mark as completed in SQLite
-            self._progress_tracker.mark_completed(work_unit.image_id, work_unit.band_id)
+            self._progress_tracker.mark_completed(work_unit.image_id, work_unit.product_id)
 
             # Log timing summary
             total_time = perf_counter() - total_start

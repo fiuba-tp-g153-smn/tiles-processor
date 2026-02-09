@@ -46,35 +46,38 @@ logger = logging.getLogger(__name__)
 
 class GenerateGeoTIFFFilesService:
     """
-    Generates colorized RGBA GeoTIFF files from brightness temperature data.
+    Generates colorized RGBA GeoTIFF files from geospatial data.
 
-    This service takes brightness temperature DataArrays and creates web-ready
-    GeoTIFF files with custom color palettes for visualization.
+    This service takes DataArrays and creates web-ready GeoTIFF files
+    with custom color palettes for visualization.
 
     Processing pipeline:
         1. Remove grid_mapping attribute (can cause issues with rioxarray)
-        2. Reproject to EPSG:4326 (WGS84 lat/lon)
+        2. Reproject to EPSG:4326 (WGS84 lat/lon) - optional, skip if already in EPSG:4326
         3. Clip to configured bounds (from config.get_bounds())
-        4. Normalize temperatures to [vmin, vmax] → [0, 255]
+        4. Normalize values to [vmin, vmax] → [0, 255]
         5. Apply color palette via index lookup
         6. Create alpha channel (255=opaque, 0=transparent for NaN)
         7. Stack into RGBA DataArray
         8. Write to GeoTIFF with atomic rename
 
     Args:
-        brightness_temperatures: Dict mapping filenames to temperature DataArrays
+        brightness_temperatures: Dict mapping filenames to data DataArrays
         output_dir: Directory for output GeoTIFF files
+        config: Config object with bounds and other settings
         color_palette: List of 256 hex color strings (default: CLOUD_TOPS_PALETTE)
-        vmin: Minimum temperature for normalization (default: 183.15K = -90°C)
-        vmax: Maximum temperature for normalization (default: 323.15K = +50°C)
+        vmin: Minimum value for normalization (default: 183.15K = -90°C)
+        vmax: Maximum value for normalization (default: 323.15K = +50°C)
         product_name: Name for the output DataArray (default: "Cloud_Tops")
+        max_concurrency: Number of concurrent GeoTIFF generation tasks (default: 4)
+        skip_reprojection: If True, skip reprojection step (data already in EPSG:4326)
 
     Returns:
         List of Path objects pointing to generated GeoTIFF files
 
     Memory Management:
         Explicit gc.collect() and del statements are used throughout to
-        manage memory when processing large satellite imagery arrays.
+        manage memory when processing large imagery arrays.
         This is critical for processing multiple images without memory exhaustion.
     """
 
@@ -347,6 +350,51 @@ class GenerateGeoTIFFFilesService:
         "#000000",
     ]
 
+    # Palette for Total Precipitation - 0 to 200mm
+    # Gradient: White (no rain) → Light Blue → Blue → Dark Blue → Purple → Magenta
+    # Non-linear steps: smaller increments for light rain, larger for heavy rain
+    # PRECIPITATION_PALETTE = [
+    #     # 0-10mm: White to light cyan (indices 0-127, ~50% of palette)
+    #     "#ffffff", "#feffff", "#feffff", "#fdffff", "#fdffff", "#fcfeff", "#fcfeff", "#fbfeff",
+    #     "#fbfeff", "#fafefe", "#fafefe", "#f9fefe", "#f9fefe", "#f8fefe", "#f8fefe", "#f7fdfe",
+    #     "#f7fdfe", "#f6fdfe", "#f6fdfe", "#f5fdfe", "#f5fdfe", "#f4fdfe", "#f4fdfe", "#f3fcfe",
+    #     "#f3fcfe", "#f2fcfe", "#f2fcfe", "#f1fcfe", "#f1fcfe", "#f0fcfe", "#f0fcfe", "#effbfe",
+    #     "#effbfe", "#eefbfe", "#eefbfe", "#edfbfe", "#edfbfe", "#ecfbfe", "#ecfbfe", "#ebfafe",
+    #     "#ebfafe", "#eafafe", "#eafafe", "#e9fafe", "#e9fafe", "#e8fafe", "#e8fafe", "#e7f9fe",
+    #     "#e7f9fe", "#e6f9fe", "#e6f9fe", "#e5f9fe", "#e5f9fe", "#e4f9fe", "#e4f9fe", "#e3f8fe",
+    #     "#e3f8fe", "#e2f8fe", "#e2f8fe", "#e1f8fe", "#e1f8fe", "#e0f8fd", "#e0f8fd", "#dff7fd",
+    #     "#dff7fd", "#def7fd", "#def7fd", "#ddf7fd", "#ddf7fd", "#dcf7fd", "#dcf7fd", "#dbf6fd",
+    #     "#dbf6fd", "#daf6fd", "#daf6fd", "#d9f6fd", "#d9f6fd", "#d8f6fd", "#d8f6fd", "#d7f5fd",
+    #     "#d7f5fd", "#d6f5fd", "#d6f5fd", "#d5f5fd", "#d5f5fd", "#d4f5fd", "#d4f5fd", "#d3f4fd",
+    #     "#d3f4fd", "#d2f4fd", "#d2f4fd", "#d1f4fd", "#d1f4fd", "#d0f4fd", "#d0f4fd", "#cff3fd",
+    #     "#cff3fd", "#cef3fd", "#cef3fd", "#cdf3fd", "#cdf3fd", "#ccf3fd", "#ccf3fd", "#cbf2fc",
+    #     "#cbf2fc", "#caf2fc", "#caf2fc", "#c9f2fc", "#c9f2fc", "#c8f2fc", "#c8f2fc", "#c7f1fc",
+    #     "#c7f1fc", "#c6f1fc", "#c6f1fc", "#c5f1fc", "#c5f1fc", "#c4f1fc", "#c4f1fc", "#c3f0fc",
+    #     "#c3f0fc", "#c2f0fc", "#c2f0fc", "#c1f0fc", "#c1f0fc", "#c0f0fc", "#c0f0fc", "#bfeffc",
+    #     # 10-30mm: Cyan to blue (indices 128-191, ~25% of palette)
+    #     "#a0d8f0", "#98d4ee", "#90d0ec", "#88ccea", "#80c8e8", "#78c4e6", "#70c0e4", "#68bce2",
+    #     "#60b8e0", "#58b4de", "#50b0dc", "#48acda", "#40a8d8", "#38a4d6", "#30a0d4", "#289cd2",
+    #     "#2098d0", "#1894ce", "#1090cc", "#088cca", "#0088c8", "#0084c6", "#0080c4", "#007cc2",
+    #     "#0078c0", "#0074be", "#0070bc", "#006cba", "#0068b8", "#0064b6", "#0060b4", "#005cb2",
+    #     "#0058b0", "#0054ae", "#0050ac", "#004caa", "#0048a8", "#0044a6", "#0040a4", "#003ca2",
+    #     "#0038a0", "#00349e", "#00309c", "#002c9a", "#002898", "#002496", "#002094", "#001c92",
+    #     "#001890", "#00148e", "#00108c", "#000c8a", "#000888", "#000486", "#000084", "#000080",
+    #     "#00007c", "#000078", "#000074", "#000070", "#00006c", "#000068", "#000064", "#000060",
+    #     # 30-50mm: Dark blue to indigo (indices 192-223, ~12.5% of palette)
+    #     "#00005c", "#00005a", "#000058", "#040056", "#080054", "#0c0052", "#100050", "#14004e",
+    #     "#18004c", "#1c004a", "#200048", "#240046", "#280044", "#2c0042", "#300040", "#34003e",
+    #     "#38003c", "#3c003a", "#400038", "#440036", "#480034", "#4c0032", "#500030", "#54002e",
+    #     "#58002c", "#5c002a", "#600028", "#640026", "#680024", "#6c0022", "#700020", "#74001e",
+    #     # 50-100mm: Indigo to purple (indices 224-239, ~6.25% of palette)
+    #     "#78001c", "#7c001a", "#800018", "#840418", "#880818", "#8c0c18", "#901018", "#941418",
+    #     "#981818", "#9c1c28", "#a02038", "#a42448", "#a82858", "#ac2c68", "#b03078", "#b43488",
+    #     # 100-200mm: Purple to magenta (indices 240-255, ~6.25% of palette)
+    #     "#b83898", "#bc3ca8", "#c040b8", "#c444c8", "#c848d8", "#cc4ce8", "#d050f8", "#d454ff",
+    #     "#d858ff", "#dc5cff", "#e060ff", "#e464ff", "#e868ff", "#ec6cff", "#f070ff", "#f474ff",
+    # ]
+
+    PRECIPITATION_PALETTE = ['#EFDBB7', '#ECDCB6', '#EADEB6', '#E7DFB5', '#E5E0B5', '#E2E1B4', '#E0E3B4', '#DDE4B3', '#DBE5B3', '#D8E7B2', '#D6E8B1', '#D3E9B1', '#D1EBB0', '#CEECB0', '#CCEDAF', '#C9EEAF', '#C7F0AE', '#C4F1AD', '#C2F2AD', '#BFF4AC', '#BDF5AC', '#BAF6AB', '#B8F7AB', '#B5F9AA', '#B3F9A8', '#B0F9A6', '#ADF8A3', '#ABF8A1', '#A8F89E', '#A5F89C', '#A3F89A', '#A0F797', '#9DF795', '#9BF792', '#98F790', '#95F68D', '#93F68B', '#90F689', '#8DF686', '#8BF684', '#88F581', '#85F57F', '#83F57D', '#80F57A', '#7DF578', '#7BF475', '#78F473', '#79F476', '#7BF47C', '#7EF381', '#81F387', '#83F38D', '#86F393', '#89F399', '#8BF29E', '#8EF2A4', '#91F2AA', '#93F2B0', '#96F1B6', '#99F1BC', '#9BF1C1', '#9EF1C7', '#A1F1CD', '#A3F0D3', '#A6F0D9', '#A9F0DF', '#ACF0E4', '#AEF0EA', '#B1EFF0', '#B4EFF6', '#B4EEF9', '#B1ECF9', '#AEE9F9', '#ACE7F9', '#A9E5F9', '#A6E3F9', '#A4E0F9', '#A1DEF9', '#9EDCF9', '#9CD9F9', '#99D7F9', '#96D5F9', '#94D3F9', '#91D0F9', '#8ECEF9', '#8CCCF9', '#89C9F9', '#86C7F9', '#84C5F9', '#81C3F9', '#7EC0F9', '#7CBEF9', '#79BCF9', '#76BAF9', '#74B8F9', '#71B6F9', '#6FB5F8', '#6CB3F8', '#6AB2F8', '#67B0F8', '#65AFF7', '#62ADF7', '#60ACF7', '#5DAAF7', '#5BA8F7', '#58A7F6', '#56A5F6', '#53A4F6', '#51A2F6', '#4EA1F5', '#4C9FF5', '#499EF5', '#479CF5', '#449BF5', '#4299F4', '#3F97F4', '#3D96F4', '#3C94F4', '#3A92F3', '#3991F3', '#388FF3', '#368DF2', '#358BF2', '#3489F2', '#3288F2', '#3186F1', '#3084F1', '#2E82F1', '#2D81F0', '#2B7FF0', '#2A7DF0', '#297BEF', '#277AEF', '#2678EF', '#2576EF', '#2374EE', '#2272EE', '#2171EE', '#1F6FED', '#1E6DED', '#2772E8', '#3177E3', '#3A7CDE', '#4482D9', '#4E87D4', '#578CCF', '#6192CA', '#6B97C5', '#749CC0', '#7EA2BB', '#88A7B5', '#92ACB0', '#9BB1AB', '#A5B7A6', '#AFBCA1', '#B8C19C', '#C2C797', '#CCCC92', '#D6D18D', '#DFD788', '#E9DC83', '#F3E17D', '#FCE778', '#FFE673', '#FFE36E', '#FFE069', '#FFDC64', '#FFD95F', '#FFD65A', '#FFD354', '#FFD04F', '#FFCD4A', '#FFCA45', '#FFC740', '#FFC43B', '#FFC036', '#FFBD31', '#FFBA2B', '#FFB726', '#FFB421', '#FFB11C', '#FFAE17', '#FFAB12', '#FFA80D', '#FFA507', '#FFA102', '#FF9C00', '#FF9500', '#FF8E00', '#FF8800', '#FF8100', '#FF7A00', '#FF7300', '#FF6C00', '#FF6500', '#FF5E00', '#FF5700', '#FF5000', '#FF4900', '#FF4300', '#FF3C00', '#FF3500', '#FF2E00', '#FF2700', '#FF2000', '#FF1900', '#FF1200', '#FF0B00', '#FF0400', '#FE0101', '#FA0202', '#F60303', '#F20505', '#EE0606', '#EA0808', '#E60909', '#E20A0A', '#DE0C0C', '#DA0D0D', '#D60F0F', '#D21010', '#CE1212', '#CA1313', '#C61414', '#C21616', '#BE1717', '#BA1919', '#B61A1A', '#B21C1C', '#AE1D1D', '#AA1E1E', '#A62020', '#A42123', '#A81F2C', '#AC1E36', '#B01C3F', '#B41B49', '#B81A53', '#BC185C', '#C01766', '#C3156F', '#C71479', '#CB1383', '#CF118C', '#D31096', '#D70E9F', '#DB0DA9', '#DF0BB2', '#E30ABC', '#E709C6', '#EB07CF', '#EF06D9', '#F304E2', '#F703EC', '#FB01F5', '#FF00FF']
+
     # Palette for Band 13 - Cloud Tops
     CLOUD_TOPS_PALETTE = [
         "#ffffff",
@@ -617,6 +665,7 @@ class GenerateGeoTIFFFilesService:
         vmax: float = 323.15,
         product_name: str = "Cloud_Tops",
         max_concurrency: int = 4,
+        skip_reprojection: bool = False,
     ):
         self._brightness_temperatures = brightness_temperatures
         self._output_dir = output_dir
@@ -626,6 +675,7 @@ class GenerateGeoTIFFFilesService:
         self._vmax = vmax
         self._product_name = product_name
         self._max_concurrency = max_concurrency
+        self._skip_reprojection = skip_reprojection
 
     async def run(self) -> List[Path]:
         """
@@ -692,7 +742,19 @@ class GenerateGeoTIFFFilesService:
 
         return successful
 
-    def _generate_geotiff(self, file_name: str, c13_data: xr.DataArray) -> Path:
+    def _generate_geotiff(
+        self, file_name: str, c13_data: xr.DataArray
+    ) -> Path:
+        """
+        Generate a colorized RGBA GeoTIFF from data.
+
+        Args:
+            file_name: Name for the output file
+            c13_data: Input data array
+
+        Returns:
+            Path to generated GeoTIFF
+        """
         # Lazy import to reduce idle memory footprint (registers .rio accessor)
         import rioxarray  # noqa: F401
 
@@ -700,9 +762,18 @@ class GenerateGeoTIFFFilesService:
         if "grid_mapping" in c13_data.attrs:
             del c13_data.attrs["grid_mapping"]
 
-        # 1. Reproject to EPSG:4326
-        # Use rioxarray's reproject method. Ensure rioxarray is installed and imported through xarray accessor
-        c13_reproj = c13_data.rio.reproject("EPSG:4326")
+        # 1. Reproject to EPSG:4326 (if needed)
+        if self._skip_reprojection:
+            # Data is already in EPSG:4326, just ensure CRS is set
+            if c13_data.rio.crs is None:
+                c13_reproj = c13_data.rio.write_crs("EPSG:4326")
+            else:
+                c13_reproj = c13_data
+            logger.debug("Skipped reprojection (data already in EPSG:4326)")
+        else:
+            # Use rioxarray's reproject method
+            c13_reproj = c13_data.rio.reproject("EPSG:4326")
+            logger.debug("Reprojected to EPSG:4326")
 
         # Fix nodata value before clipping (original value is too large for float32)
         c13_reproj = c13_reproj.rio.write_nodata(np.nan, inplace=False)
@@ -716,9 +787,10 @@ class GenerateGeoTIFFFilesService:
             maxy=bounds["maxy"],
         )
 
-        # Free memory from full reprojection
-        del c13_reproj
-        gc.collect()
+        # Free memory from full reprojection (only if we actually reprojected)
+        if not self._skip_reprojection:
+            del c13_reproj
+            gc.collect()
 
         # Get coordinates for later use
         coords_x = c13_clipped["x"]

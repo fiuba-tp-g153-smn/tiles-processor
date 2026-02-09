@@ -22,7 +22,7 @@ class ProgressTracker:
     Uses SQLite for atomic operations and concurrency safety.
     Tracks:
     - image_id: The image being processed
-    - band_id: Which band is being processed
+    - product_id: Which product is being processed (stored as band_id for backwards compatibility)
     - status: Current status (IN_PROGRESS, COMPLETED)
     - created_at: Timestamp when processing started
     - updated_at: Timestamp of last update
@@ -85,7 +85,7 @@ class ProgressTracker:
             # Index for cleanup queries
             conn.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_created_at 
+                CREATE INDEX IF NOT EXISTS idx_created_at
                 ON processed_images(created_at)
             """
             )
@@ -120,7 +120,7 @@ class ProgressTracker:
         with self._get_connection() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO processed_images 
+                INSERT OR REPLACE INTO processed_images
                 (image_id, band_id, status, created_at, updated_at)
                 VALUES (?, ?, 'IN_PROGRESS', ?, ?)
                 """,
@@ -132,7 +132,7 @@ class ProgressTracker:
         with self._get_connection() as conn:
             conn.execute(
                 """
-                UPDATE processed_images 
+                UPDATE processed_images
                 SET status = 'PROCESSING', updated_at = ?
                 WHERE image_id = ? AND band_id = ?
                 """,

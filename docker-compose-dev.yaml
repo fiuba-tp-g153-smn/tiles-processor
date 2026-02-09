@@ -74,7 +74,7 @@ services:
       - ./scripts/init_minio.sh:/setup.sh
       - ./scripts/keepalive.sh:/keepalive.sh
     entrypoint: /bin/sh
-    command: -c "chmod +x /keepalive.sh && /keepalive.sh /setup.sh"
+    command: -c "chmod +x /keepalive.sh /setup.sh && /keepalive.sh /setup.sh"
     restart: on-failure
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}

@@ -33,6 +33,7 @@ def create_processor_registry():
         GoesProcessor,
         RadarProcessor,
     )
+    from processors.ecmwf_precipitation_processor import EcmwfPrecipitationProcessor
 
     registry = ProcessorRegistry()
 
@@ -42,6 +43,9 @@ def create_processor_registry():
 
     # Register Radar processor
     registry.register("radar", RadarProcessor)
+
+    # Register ECMWF processors
+    registry.register("ecmwf_ecmwf_total_precipitation", EcmwfPrecipitationProcessor)
 
     # Add new processors here as they are implemented:
     # registry.register("new_processor_id", NewProcessorClass)

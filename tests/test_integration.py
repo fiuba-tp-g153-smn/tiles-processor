@@ -23,7 +23,7 @@ import logging
 from worker.worker import Worker
 from worker.work_handler import WorkHandler
 from models.work_unit import WorkUnit
-from models.band_config import BandConfig
+from models.band_config import ProductConfig
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class TestWorkerIntegration:
                 processor_id="goes_band_13",
                 output_prefix="band_13/tiles",
                 bounds=config.get_bounds(),
-                band_id="band_13",
+                product_id="band_13",
             )
 
             # Process the message
@@ -152,7 +152,7 @@ class TestWorkerIntegration:
                 processor_id="goes_band_13",
                 output_prefix="band_13/tiles",
                 bounds=config.get_bounds(),
-                band_id="band_13",
+                product_id="band_13",
             )
 
             # Process
@@ -191,7 +191,7 @@ class TestWorkerIntegration:
                 processor_id="goes_band_13",
                 output_prefix="band_13/tiles",
                 bounds=config.get_bounds(),
-                band_id="band_13",
+                product_id="band_13",
             )
             work_unit.retry_count = 3
             work_unit.max_retries = 3

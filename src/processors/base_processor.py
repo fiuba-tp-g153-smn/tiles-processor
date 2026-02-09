@@ -45,8 +45,8 @@ class ImageProcessor(ABC):
         return directory
 
     def _get_band_dir(self, work_unit: WorkUnit) -> Path:
-        """Get base directory for this work unit's band data."""
-        return self._base_dir / work_unit.band_id
+        """Get base directory for this work unit's product data."""
+        return self._base_dir / work_unit.product_id
 
     def _cleanup_file(self, file_path: Path) -> None:
         """Safe cleanup of a single file."""

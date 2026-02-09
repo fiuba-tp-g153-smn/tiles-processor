@@ -162,17 +162,36 @@ class Worker:
             return True  # Acknowledge (we've handled it via retry or DLQ)
 
 
-def _create_data_source_registry() -> DataSourceRegistry:
+def _create_data_source_registry(config: Config) -> DataSourceRegistry:
     """Create and populate the data source registry."""
+    from data_sources.ecmwf import EcmwfDataSource
+    from models.band_config import ECMWF_TOTAL_PRECIPITATION_CONFIG
+
     registry = DataSourceRegistry()
 
-    # Register GOES19 data sources for each band
-    for band_id, band_config in BAND_CONFIGS.items():
-        data_source = Goes19DataSource(band_config)
+    # Register GOES19 data sources for enabled products
+    for product_id, product_config in BAND_CONFIGS.items():
+        # Skip ECMWF products (handled separately below)
+        if product_id.startswith("ecmwf_"):
+            continue
+
+        # Check feature flags for GOES products
+        if product_id == "band_13" and not config.ENABLE_BAND_13:
+            continue
+        if product_id == "band_9" and not config.ENABLE_BAND_9:
+            continue
+
+        data_source = Goes19DataSource(product_config)
         registry.register(data_source)
 
-    # Register Radar data source (placeholder)
-    registry.register(RadarDataSource())
+    # Register ECMWF data source if enabled
+    if config.ENABLE_ECMWF_PRECIPITATION:
+        ecmwf_source = EcmwfDataSource(ECMWF_TOTAL_PRECIPITATION_CONFIG)
+        registry.register(ecmwf_source)
+
+    # Register Radar data source if enabled
+    if config.ENABLE_RADAR:
+        registry.register(RadarDataSource())
 
     return registry
 
@@ -188,7 +207,7 @@ def run_worker(config: Config) -> None:
         config: Application configuration
     """
     # Create data source registry (lightweight - only for downloads)
-    data_source_registry = _create_data_source_registry()
+    data_source_registry = _create_data_source_registry(config)
 
     # Create Message Queue client
     mq_client = RabbitMQClient(

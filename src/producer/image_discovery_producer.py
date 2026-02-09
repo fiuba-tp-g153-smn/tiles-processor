@@ -110,6 +110,8 @@ class ImageDiscoveryProducer:
             return self._config.ENABLE_BAND_9
         elif source_id == "radar_nexrad":
             return self._config.ENABLE_RADAR
+        elif source_id == "ecmwf_total_precipitation":
+            return self._config.ENABLE_ECMWF_PRECIPITATION
 
         # Default: enabled if registered
         return True
@@ -121,20 +123,36 @@ class ImageDiscoveryProducer:
         bounds: dict,
     ) -> int:
         """Discover and publish work units for a single data source."""
-        # Get band_id from source_id (e.g., "goes19_band_13" -> "band_13")
-        band_id = data_source.source_id.replace("goes19_", "")
+        # Get product_id from data source
+        # For GOES: "goes19_band_13" -> "band_13" (remove prefix)
+        # For ECMWF: "ecmwf_total_precipitation" -> "ecmwf_total_precipitation" (no change)
+        # For Radar: "radar_nexrad" -> "radar_nexrad" (no change)
+        source_id = data_source.source_id
+        if source_id.startswith("goes19_"):
+            product_id = source_id.replace("goes19_", "")
+        else:
+            # For ECMWF, Radar, etc: source_id IS the product_id
+            product_id = source_id
 
         # Get existing tilesets in MinIO
-        output_prefix = f"{band_id}/tiles"
+        # Use product_config.s3_prefix if available, otherwise fall back to pattern
+        if hasattr(data_source, 'product_config'):
+            output_prefix = data_source.product_config.s3_prefix
+        else:
+            output_prefix = f"{product_id}/tiles"
+
         existing_tilesets = await self._get_existing_tilesets(output_prefix)
         logger.info(
-            f"Found {len(existing_tilesets)} existing tilesets for {data_source.source_id}"
+            f"[{product_id}] Found {len(existing_tilesets)} existing tilesets: "
+            f"{sorted(existing_tilesets) if existing_tilesets else '[]'}"
         )
 
         # Get in-progress images from SQLite
-        in_progress = self._progress_tracker.get_in_progress_images(band_id)
+        logger.info(f"Querying progress tracker with product_id='{product_id}'")
+        in_progress = self._progress_tracker.get_in_progress_images(product_id)
         logger.info(
-            f"Found {len(in_progress)} images in progress for {data_source.source_id}"
+            f"[{product_id}] Found {len(in_progress)} images in progress: "
+            f"{sorted(in_progress) if in_progress else '[]'}"
         )
 
         # Create discovery config
@@ -158,7 +176,11 @@ class ImageDiscoveryProducer:
         published = 0
         for image_info in new_images:
             # Mark as in-progress in SQLite BEFORE publishing to queue
-            self._progress_tracker.mark_in_progress(image_info.image_id, band_id)
+            logger.info(
+                f"Marking IN_PROGRESS: image_id='{image_info.image_id}', "
+                f"product_id='{product_id}'"
+            )
+            self._progress_tracker.mark_in_progress(image_info.image_id, product_id)
 
             work_unit = WorkUnit.create(
                 image_id=image_info.image_id,
@@ -167,7 +189,7 @@ class ImageDiscoveryProducer:
                 processor_id=image_info.processor_id,
                 output_prefix=image_info.output_prefix,
                 bounds=bounds,
-                band_id=band_id,
+                product_id=product_id,
             )
             self._mq_client.publish(work_unit)
             published += 1
@@ -194,17 +216,36 @@ class ImageDiscoveryProducer:
             return set()
 
 
-def _create_data_source_registry() -> DataSourceRegistry:
+def _create_data_source_registry(config: Config) -> DataSourceRegistry:
     """Create and populate the data source registry."""
+    from data_sources.ecmwf import EcmwfDataSource
+    from models.band_config import ECMWF_TOTAL_PRECIPITATION_CONFIG
+
     registry = DataSourceRegistry()
 
-    # Register GOES19 data sources for each band
-    for band_id, band_config in BAND_CONFIGS.items():
-        data_source = Goes19DataSource(band_config)
+    # Register GOES19 data sources for enabled products
+    for product_id, product_config in BAND_CONFIGS.items():
+        # Skip ECMWF products (handled separately below)
+        if product_id.startswith("ecmwf_"):
+            continue
+
+        # Check feature flags for GOES products
+        if product_id == "band_13" and not config.ENABLE_BAND_13:
+            continue
+        if product_id == "band_9" and not config.ENABLE_BAND_9:
+            continue
+
+        data_source = Goes19DataSource(product_config)
         registry.register(data_source)
 
-    # Register Radar data source (placeholder)
-    registry.register(RadarDataSource())
+    # Register ECMWF data source if enabled
+    if config.ENABLE_ECMWF_PRECIPITATION:
+        ecmwf_source = EcmwfDataSource(ECMWF_TOTAL_PRECIPITATION_CONFIG)
+        registry.register(ecmwf_source)
+
+    # Register Radar data source if enabled
+    if config.ENABLE_RADAR:
+        registry.register(RadarDataSource())
 
     return registry
 
@@ -219,7 +260,7 @@ def run_producer(config: Config) -> None:
         config: Application configuration
     """
     # Create data source registry
-    data_source_registry = _create_data_source_registry()
+    data_source_registry = _create_data_source_registry(config)
 
     logger.info("Producer starting with APScheduler...")
 
