@@ -47,18 +47,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      # Cache Configuration
-      MINIO_CACHE_DRIVES: "/cache"
-      MINIO_CACHE_ENABLE: "true"
-      CACHE_DISK: "10000"  # in MB
-      MINIO_CACHE_QUOTA: "70"
-      MINIO_CACHE_AFTER: "0"
-      MINIO_CACHE_WATERMARK_LOW: "80"
-      MINIO_CACHE_WATERMARK_HIGH: "95"
-      MINIO_CACHE_EXPIRY: "1"
     volumes:
       - ./data_minio:/data
-      - minio_dev_cache:/cache
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 30s
@@ -111,7 +101,6 @@ services:
       context: .
       dockerfile: Dockerfile
     command: python3 src/main.py producer
-    stop_grace_period: 15s
     volumes:
       - ./data:${DATA_DIR}
       - ./settings.json:/app/settings.json:ro
@@ -155,7 +144,6 @@ services:
       context: .
       dockerfile: Dockerfile
     command: python3 src/main.py worker
-    stop_grace_period: 15s
     volumes:
       - ./data:${DATA_DIR}
       - ./settings.json:/app/settings.json:ro
@@ -199,7 +187,6 @@ services:
       context: .
       dockerfile: Dockerfile
     command: python3 src/main.py worker
-    stop_grace_period: 15s
     volumes:
       - ./data:${DATA_DIR}
       - ./settings.json:/app/settings.json:ro
@@ -231,5 +218,4 @@ services:
       start_interval: 1s
 
 volumes:
-  minio_dev_cache:
   rabbitmq_dev_data:

@@ -63,24 +63,22 @@ if [ "$DEV_MODE" = true ]; then
     MINIO_CONTAINER_NAME="tiles-processor-dev-minio"
     MINIO_SETUP_CONTAINER_NAME="tiles-processor-dev-minio-setup"
     RABBITMQ_VOLUME="rabbitmq_dev_data"
-    MINIO_CACHE_VOLUME="minio_dev_cache"
     MINIO_DATA_VOLUME="./data_minio:/data"
     APP_DATA_VOLUME="./data:\${DATA_DIR}"
     RABBITMQ_RETRIES="10"
-    MINIO_RETRIES="6"
-    MINIO_SETUP_RETRIES="15"
+    MINIO_RETRIES="10"
+    MINIO_SETUP_RETRIES="10"
     APP_RETRIES="3"
 else
     MODE_LABEL="prod"
     MINIO_CONTAINER_NAME="tiles-processor-minio"
     MINIO_SETUP_CONTAINER_NAME="tiles-processor-minio-setup"
     RABBITMQ_VOLUME="rabbitmq_data"
-    MINIO_CACHE_VOLUME="minio_cache"
     MINIO_DATA_VOLUME="minio_data:/data"
     APP_DATA_VOLUME="tiles_data:/app/data"
-    RABBITMQ_RETRIES="20"
-    MINIO_RETRIES="20"
-    MINIO_SETUP_RETRIES="20"
+    RABBITMQ_RETRIES="10"
+    MINIO_RETRIES="10"
+    MINIO_SETUP_RETRIES="10"
     APP_RETRIES="20"
 fi
 
@@ -121,9 +119,11 @@ services:
       - ${RABBITMQ_VOLUME}:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 5s
+      interval: 30s
       timeout: 10s
       retries: ${RABBITMQ_RETRIES}
+      start_period: 15s
+      start_interval: 1s
 
   # MinIO S3-compatible object storage
   minio:
@@ -136,23 +136,15 @@ services:
     environment:
       MINIO_ROOT_USER: \${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: \${MINIO_ROOT_PASSWORD}
-      # Cache Configuration
-      MINIO_CACHE_DRIVES: "/cache"
-      MINIO_CACHE_ENABLE: "true"
-      CACHE_DISK: "10000"  # in MB
-      MINIO_CACHE_QUOTA: "70"
-      MINIO_CACHE_AFTER: "0"
-      MINIO_CACHE_WATERMARK_LOW: "80"
-      MINIO_CACHE_WATERMARK_HIGH: "95"
-      MINIO_CACHE_EXPIRY: "1"
     volumes:
       - ${MINIO_DATA_VOLUME}
-      - ${MINIO_CACHE_VOLUME}:/cache
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
-      interval: 1s
-      timeout: 5s
+      interval: 30s
+      timeout: 10s
       retries: ${MINIO_RETRIES}
+      start_period: 15s
+      start_interval: 1s
 
   # MinIO setup service (creates buckets and users)
   minio-setup:
@@ -178,9 +170,11 @@ services:
       S3_TILES_DATA_DATA_SERVICE_PASSWORD: \${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/setup_done"]
-      interval: 1s
-      timeout: 1s
+      interval: 30s
+      timeout: 10s
       retries: ${MINIO_SETUP_RETRIES}
+      start_period: 15s
+      start_interval: 1s
 
   # Producer - discovers new images and publishes work units
   # Runs continuously with APScheduler (every 5 minutes)
@@ -196,7 +190,6 @@ services:
       context: .
       dockerfile: Dockerfile
     command: python3 src/main.py producer
-    stop_grace_period: 15s
     volumes:
       - ${APP_DATA_VOLUME}
       - ./settings.json:/app/settings.json:ro
@@ -220,10 +213,12 @@ services:
       - CPL_VSIL_CURL_CACHE_SIZE=\${CPL_VSIL_CURL_CACHE_SIZE}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 3s
-      timeout: 8s
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 10s
       retries: ${APP_RETRIES}
+      start_period: 15s
+      start_interval: 1s
 
 HEADER
 
@@ -243,7 +238,6 @@ for i in $(seq 1 "$NUM_WORKERS"); do
       context: .
       dockerfile: Dockerfile
     command: python3 src/main.py worker
-    stop_grace_period: 15s
     volumes:
       - ${APP_DATA_VOLUME}
       - ./settings.json:/app/settings.json:ro
@@ -267,10 +261,12 @@ for i in $(seq 1 "$NUM_WORKERS"); do
       - CPL_VSIL_CURL_CACHE_SIZE=\${CPL_VSIL_CURL_CACHE_SIZE}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 3s
-      timeout: 8s
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 10s
       retries: ${APP_RETRIES}
+      start_period: 15s
+      start_interval: 1s
 
 WORKER
 done
@@ -279,7 +275,6 @@ done
 if [ "$DEV_MODE" = true ]; then
     cat >> "$OUTPUT_FILE" << VOLUMES
 volumes:
-  ${MINIO_CACHE_VOLUME}:
   ${RABBITMQ_VOLUME}:
 VOLUMES
 else
@@ -287,7 +282,6 @@ else
 volumes:
   tiles_data:
   minio_data:
-  ${MINIO_CACHE_VOLUME}:
   ${RABBITMQ_VOLUME}:
 VOLUMES
 fi
