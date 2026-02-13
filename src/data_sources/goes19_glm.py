@@ -73,7 +73,23 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
 
         # Sort by window start time (descending) and take latest N windows
         windows.sort(key=lambda x: x[0], reverse=True)
-        target_windows = windows[: self.TARGET_WINDOWS]
+        candidate_windows = windows[: self.TARGET_WINDOWS]
+
+        # Filter out incomplete windows (must have full duration elapsed)
+        target_windows = [
+            (window_start, window_files)
+            for window_start, window_files in candidate_windows
+            if window_start + timedelta(minutes=self.WINDOW_DURATION_MINUTES)
+            <= config.current_time.replace(tzinfo=None)
+        ]
+
+        logger.debug(
+            "[%s] Filtered %d/%d windows (excluded %d incomplete windows)",
+            self.source_id,
+            len(target_windows),
+            len(candidate_windows),
+            len(candidate_windows) - len(target_windows),
+        )
 
         # Filter already processed
         new_images = []
