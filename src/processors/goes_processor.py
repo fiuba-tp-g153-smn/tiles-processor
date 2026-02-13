@@ -149,6 +149,7 @@ class GoesProcessor(ImageProcessor):
         )
 
         # 5. Upload to S3
+        # pylint: disable=duplicate-code
         self._check_shutdown()
         logger.info("Step 5: Upload to S3")
         tileset_name = f"{geotiff_path.stem}_tiles"
@@ -163,6 +164,7 @@ class GoesProcessor(ImageProcessor):
         self._cleanup_file(geotiff_path)
         self._cleanup_directory(tiles_output_dir)
         gc.collect()
+        # pylint: enable=duplicate-code
 
         return geotiff_path
 

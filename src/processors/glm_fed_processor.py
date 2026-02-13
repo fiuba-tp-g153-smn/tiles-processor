@@ -158,6 +158,7 @@ class GlmFedProcessor(ImageProcessor):
         )
 
         # 4. Upload to MinIO
+        # pylint: disable=duplicate-code
         self._check_shutdown()
         logger.info("Step 4: Upload to MinIO")
         tileset_name = f"{geotiff_path.stem}_tiles"
@@ -172,5 +173,6 @@ class GlmFedProcessor(ImageProcessor):
         self._cleanup_file(geotiff_path)
         self._cleanup_directory(tiles_output_dir)
         gc.collect()
+        # pylint: enable=duplicate-code
 
         logger.info("[GLM-FED] Processing complete for %s", work_unit.image_id)
