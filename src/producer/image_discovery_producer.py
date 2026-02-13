@@ -97,15 +97,17 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         """Check if a data source is enabled in the config."""
         source_id = data_source.source_id
 
-        # Check for GOES19 band sources
-        if source_id == "goes19_band_13":
+        # Check for GOES19 ABI band sources
+        if source_id == "goes19_abi_band_13":
             return self._config.ENABLE_BAND_13
-        if source_id == "goes19_band_9":
+        if source_id == "goes19_abi_band_9":
             return self._config.ENABLE_BAND_9
-        if source_id == "goes19_band_2":
+        if source_id == "goes19_abi_band_2":
             return self._config.ENABLE_BAND_2
+        # Check for GOES19 GLM sources
         if source_id == "goes19_glm_fed":
             return self._config.ENABLE_GLM_FED
+        # Check for radar sources
         if source_id == "radar_nexrad":
             return self._config.ENABLE_RADAR
 
@@ -119,8 +121,8 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         bounds: dict,
     ) -> int:
         """Discover and publish work units for a single data source."""
-        # Get band_id from source_id (e.g., "goes19_band_13" -> "band_13")
-        band_id = data_source.source_id.replace("goes19_", "")
+        # Get band_id directly from band config
+        band_id = data_source.band_config.band_id
 
         # Get existing tilesets in MinIO
         output_prefix = f"{band_id}/tiles"

@@ -54,7 +54,7 @@ class FakeDataSource(DataSource):
 
     @property
     def source_id(self) -> str:
-        return f"goes19_{self._band_config.band_id}"
+        return f"goes19_abi_{self._band_config.band_id}"
 
     @property
     def processor_id(self) -> str:
@@ -84,7 +84,7 @@ def _make_images(band_config: BandConfig, count: int) -> list[ImageInfo]:
             ImageInfo(
                 image_id=filename,
                 source_uri=f"ABI-L1b-RadF/2025/038/12/{filename}",
-                data_source_id=f"goes19_{band_config.band_id}",
+                data_source_id=f"goes19_abi_{band_config.band_id}",
                 processor_id=f"goes_{band_config.band_id}",
                 output_prefix=band_config.s3_prefix,
             )
@@ -204,7 +204,7 @@ class TestDuplicatePrevention:
         new_image = ImageInfo(
             image_id="OR_ABI-L1b-RadF-M6C02_G19_s2025038NEW0.nc",
             source_uri="ABI-L1b-RadF/2025/038/12/OR_ABI-L1b-RadF-M6C02_G19_s2025038NEW0.nc",
-            data_source_id="goes19_band_2",
+            data_source_id="goes19_abi_band_2",
             processor_id="goes_band_2",
             output_prefix=band_config.s3_prefix,
         )

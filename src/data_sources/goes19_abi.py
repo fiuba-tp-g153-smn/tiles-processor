@@ -1,4 +1,4 @@
-"""GOES-19 satellite data source implementation."""
+"""GOES-19 ABI (Advanced Baseline Imager) satellite data source implementation."""
 
 import logging
 from datetime import timedelta
@@ -15,14 +15,14 @@ logger = logging.getLogger(__name__)
 GOES19_BUCKET_NAME = "noaa-goes19"
 
 
-class Goes19DataSource(DataSource):
+class Goes19AbiDataSource(DataSource):
     """
-    Data source for GOES-19 satellite imagery from NOAA's public S3 bucket.
+    Data source for GOES-19 ABI satellite imagery from NOAA's public S3 bucket.
 
     This data source:
     - Discovers images from the ABI-L1b-RadF product path
     - Downloads NetCDF files from the unsigned public bucket
-    - Supports different bands (band_13, band_9, etc.)
+    - Supports different bands (band_13, band_9, band_2, etc.)
     """
 
     # Discovery parameters
@@ -43,7 +43,7 @@ class Goes19DataSource(DataSource):
     @property
     def source_id(self) -> str:
         """Unique identifier for this data source."""
-        return f"goes19_{self._band_config.band_id}"
+        return f"goes19_abi_{self._band_config.band_id}"
 
     @property
     def processor_id(self) -> str:

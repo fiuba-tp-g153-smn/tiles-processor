@@ -5,9 +5,9 @@ from clients.s3_client import S3Client
 from config import Config
 from data_sources import (
     DataSourceRegistry,
-    Goes19DataSource,
+    Goes19AbiDataSource,
+    Goes19GlmDataSource,
     RadarDataSource,
-    Glm19DataSource,
 )
 from models.band_config import BAND_CONFIGS
 
@@ -19,10 +19,10 @@ def create_data_source_registry() -> DataSourceRegistry:
     for _band_id, band_config in BAND_CONFIGS.items():
         if band_config.band_id.startswith("glm_"):
             # Register GLM sources (lightning products)
-            registry.register(Glm19DataSource(band_config))
+            registry.register(Goes19GlmDataSource(band_config))
         else:
             # Register ABI sources (band 13, 9, 2, etc.)
-            registry.register(Goes19DataSource(band_config))
+            registry.register(Goes19AbiDataSource(band_config))
 
     registry.register(RadarDataSource())
     return registry

@@ -2,8 +2,8 @@
 
 from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
 from data_sources.registry import DataSourceRegistry
-from data_sources.goes19 import Goes19DataSource
-from data_sources.glm19 import Glm19DataSource
+from data_sources.goes19_abi import Goes19AbiDataSource
+from data_sources.goes19_glm import Goes19GlmDataSource
 from data_sources.radar import RadarDataSource
 
 __all__ = [
@@ -11,7 +11,7 @@ __all__ = [
     "ImageInfo",
     "DiscoveryConfig",
     "DataSourceRegistry",
-    "Goes19DataSource",
-    "Glm19DataSource",
+    "Goes19AbiDataSource",
+    "Goes19GlmDataSource",
     "RadarDataSource",
 ]

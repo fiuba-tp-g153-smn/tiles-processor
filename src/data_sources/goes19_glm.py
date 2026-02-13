@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 GOES19_BUCKET_NAME = "noaa-goes19"
 
 
-class Glm19DataSource(DataSource):
+class Goes19GlmDataSource(DataSource):
     """
     Data source for GOES-19 GLM lightning data from NOAA's public S3 bucket.
 

@@ -107,7 +107,7 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
-                data_source_id="goes19_band_13",
+                data_source_id="goes19_abi_band_13",
                 processor_id="goes_band_13",
                 output_prefix="band_13/tiles",
                 bounds=config.get_bounds(),
@@ -148,7 +148,7 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
-                data_source_id="goes19_band_13",
+                data_source_id="goes19_abi_band_13",
                 processor_id="goes_band_13",
                 output_prefix="band_13/tiles",
                 bounds=config.get_bounds(),
@@ -187,7 +187,7 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
-                data_source_id="goes19_band_13",
+                data_source_id="goes19_abi_band_13",
                 processor_id="goes_band_13",
                 output_prefix="band_13/tiles",
                 bounds=config.get_bounds(),

@@ -53,7 +53,7 @@ class TestGoesProcessor:
             work_unit = WorkUnit.create(
                 image_id="img1.nc",
                 source_uri="s3://noaa-goes19/path/to/img1.nc",
-                data_source_id="goes19_band_13",
+                data_source_id="goes19_abi_band_13",
                 processor_id="goes_band_13",
                 output_prefix="band_13/tiles",
                 bounds={"minx": 0, "miny": 0, "maxx": 10, "maxy": 10},
