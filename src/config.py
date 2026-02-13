@@ -58,6 +58,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.ENABLE_BAND_13: bool = settings["features"].get("enable_band_13", True)
         self.ENABLE_BAND_9: bool = settings["features"].get("enable_band_9", True)
         self.ENABLE_BAND_2: bool = settings["features"].get("enable_band_2", False)
+        self.ENABLE_GLM_FED: bool = settings["features"].get("enable_glm_fed", False)
         self.ENABLE_RADAR: bool = settings["features"].get("enable_radar", True)
 
         # Job Configuration
@@ -112,6 +113,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("ENABLE_BAND_13: %s", self.ENABLE_BAND_13)
         logger.info("ENABLE_BAND_9: %s", self.ENABLE_BAND_9)
         logger.info("ENABLE_BAND_2: %s", self.ENABLE_BAND_2)
+        logger.info("ENABLE_GLM_FED: %s", self.ENABLE_GLM_FED)
         logger.info("ENABLE_RADAR: %s", self.ENABLE_RADAR)
         logger.info("DATA_DIR: %s", self.DATA_DIR)
         logger.info("TMP_DIR: %s", self.TMP_DIR)

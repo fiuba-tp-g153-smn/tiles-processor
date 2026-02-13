@@ -1,0 +1,254 @@
+"""GOES-19 GLM (Geostationary Lightning Mapper) data source implementation."""
+
+import asyncio
+import json
+import logging
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from clients.s3_client import S3Client
+from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
+from models.band_config import BandConfig
+
+logger = logging.getLogger(__name__)
+
+GOES19_BUCKET_NAME = "noaa-goes19"
+
+
+class Glm19DataSource(DataSource):
+    """
+    Data source for GOES-19 GLM lightning data from NOAA's public S3 bucket.
+
+    GLM-L2-LCFA files contain events, groups, and flashes at ~20 second intervals.
+    For a 10-minute FED product, we need to aggregate ~30 files.
+
+    Discovery Strategy:
+    - Instead of discovering individual files, we discover "time windows"
+    - Each window = 10 minutes of data (e.g., 12:00-12:10)
+    - Window ID = start timestamp (e.g., "GLM_FED_s20260212120000")
+    - We'll download all L2-LCFA files within that window during processing
+    """
+
+    TARGET_WINDOWS = 26  # 4+ hours of 10-min windows
+    MAX_HOURS_BACK = 5
+    WINDOW_DURATION_MINUTES = 10
+    MAX_CONCURRENT_DOWNLOADS = 10  # Parallel downloads per window
+
+    def __init__(self, band_config: BandConfig):
+        """
+        Initialize GLM data source.
+
+        Args:
+            band_config: Band configuration for GLM product
+        """
+        self._band_config = band_config
+        self._s3_client = S3Client(GOES19_BUCKET_NAME, max_concurrent_downloads=8)
+        self._glm_products_path = "GLM-L2-LCFA"
+
+    @property
+    def source_id(self) -> str:
+        """Unique identifier for this data source."""
+        return "goes19_glm_fed"
+
+    @property
+    def processor_id(self) -> str:
+        """The processor ID to use for images from this source."""
+        return "glm_fed"
+
+    @property
+    def band_config(self) -> BandConfig:
+        """Get the band configuration."""
+        return self._band_config
+
+    async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
+        """
+        Discover new GLM time windows that need processing.
+
+        Returns ImageInfo for each 10-minute window, where:
+        - image_id = synthetic ID like "GLM_FED_s20260212120000"
+        - source_uri = JSON with window_start and list of file S3 keys
+        """
+        # Collect all available L2-LCFA files from lookback window
+        all_files = await self._collect_candidates(config.current_time)
+
+        # Group files into 10-minute windows
+        windows = self._group_into_windows(all_files)
+
+        # Sort by window start time (descending) and take latest N windows
+        windows.sort(key=lambda x: x[0], reverse=True)
+        target_windows = windows[: self.TARGET_WINDOWS]
+
+        # Filter already processed
+        new_images = []
+        for window_start, window_files in target_windows:
+            window_id = self._create_window_id(window_start)
+
+            # Skip if already processed or in progress
+            if (
+                window_id in config.existing_tilesets
+                or window_id in config.in_progress_images
+            ):
+                continue
+
+            # Store window metadata + file list in source_uri (JSON-encoded)
+            source_uri = json.dumps(
+                {"window_start": window_start.isoformat(), "files": window_files}
+            )
+
+            new_images.append(
+                ImageInfo(
+                    image_id=window_id,
+                    source_uri=source_uri,
+                    data_source_id=self.source_id,
+                    processor_id=self.processor_id,
+                    output_prefix=self._band_config.s3_prefix,
+                )
+            )
+
+        logger.info(
+            "[%s] Found %d new windows (from %d total windows)",
+            self.source_id,
+            len(new_images),
+            len(target_windows),
+        )
+        return new_images
+
+    def _group_into_windows(self, files: list[str]) -> list[tuple[datetime, list[str]]]:
+        """
+        Group L2-LCFA files into 10-minute windows based on timestamps.
+
+        GLM filenames follow pattern:
+        OR_GLM-L2-LCFA_G19_s20260212120000_e20260212120200_c20260212120228.nc
+                             ^start         ^end
+
+        Args:
+            files: List of S3 keys for GLM-L2-LCFA files
+
+        Returns:
+            List of (window_start_time, [file1, file2, ...]) tuples
+        """
+        from collections import defaultdict
+
+        windows = defaultdict(list)
+
+        for file_key in files:
+            filename = file_key.split("/")[-1]
+
+            # Extract start time from filename (position after "_s")
+            if "_s" not in filename:
+                logger.warning("Skipping malformed GLM filename: %s", filename)
+                continue
+
+            try:
+                # Extract timestamp: s20260212120000 → 2026-02-12 12:00:00
+                start_str = filename.split("_s")[1].split("_")[0]
+                year = int(start_str[0:4])
+                day_of_year = int(start_str[4:7])
+                hour = int(start_str[7:9])
+                minute = int(start_str[9:11])
+                second = int(start_str[11:13])
+
+                # Convert day-of-year to datetime
+                file_time = datetime(year, 1, 1) + timedelta(
+                    days=day_of_year - 1, hours=hour, minutes=minute, seconds=second
+                )
+
+                # Round down to nearest 10-minute boundary
+                window_minute = (
+                    file_time.minute // self.WINDOW_DURATION_MINUTES
+                ) * self.WINDOW_DURATION_MINUTES
+                window_start = file_time.replace(
+                    minute=window_minute, second=0, microsecond=0
+                )
+
+                windows[window_start].append(file_key)
+
+            except (ValueError, IndexError) as e:
+                logger.warning("Failed to parse GLM filename %s: %s", filename, e)
+                continue
+
+        # Convert to sorted list of tuples
+        return [(window_start, files) for window_start, files in windows.items()]
+
+    def _create_window_id(self, window_start: datetime) -> str:
+        """Create a unique ID for a time window."""
+        # Format: GLM_FED_s20260212120000
+        return f"GLM_FED_{window_start.strftime('s%Y%j%H%M%S')}"
+
+    async def _collect_candidates(self, current_time: datetime) -> list[str]:
+        """
+        Collect all GLM-L2-LCFA files from the lookback window.
+
+        GLM files are organized by:
+        GLM-L2-LCFA/YYYY/JJJ/HH/OR_GLM-L2-LCFA_G19_*.nc
+        """
+        all_candidates = []
+        hours_back = 0
+
+        while hours_back <= self.MAX_HOURS_BACK:
+            search_time = current_time - timedelta(hours=hours_back)
+            directory_path = self._build_directory_path(search_time)
+
+            try:
+                files = await self._s3_client.list_files(
+                    directory_path, file_pattern="OR_GLM-L2-LCFA"
+                )
+                all_candidates.extend(files)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.warning("Error listing GLM files for %s: %s", directory_path, e)
+
+            hours_back += 1
+
+        logger.info(
+            "[%s] Collected %d GLM files from S3", self.source_id, len(all_candidates)
+        )
+        return all_candidates
+
+    def _build_directory_path(self, time: datetime) -> str:
+        """Build the S3 directory path for GLM files at a given time."""
+        return f"{self._glm_products_path}/{time.strftime('%Y/%j/%H')}"
+
+    async def download(self, source_uri: str, dest_path: Path) -> Path:
+        """
+        Download all L2-LCFA files for a time window in parallel.
+
+        Args:
+            source_uri: JSON string with {"window_start": ..., "files": [...]}
+            dest_path: Directory to save all files (treated as directory, not single file)
+
+        Returns:
+            Path to the directory containing downloaded files
+        """
+        window_data = json.loads(source_uri)
+        files = window_data["files"]
+        window_start = window_data["window_start"]
+
+        # Ensure dest_path is a directory
+        dest_path.mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            "[%s] Downloading %d GLM files for window %s (max concurrency: %d)",
+            self.source_id,
+            len(files),
+            window_start,
+            self.MAX_CONCURRENT_DOWNLOADS,
+        )
+
+        # Download files in parallel with semaphore-based concurrency control
+        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_DOWNLOADS)
+
+        async def download_one(s3_key: str) -> None:
+            """Download a single file with semaphore control."""
+            async with semaphore:
+                filename = s3_key.split("/")[-1]
+                file_dest = dest_path / filename
+                await self._s3_client.download_to_file(s3_key, file_dest)
+
+        # Create tasks for all files and run them concurrently
+        tasks = [download_one(s3_key) for s3_key in files]
+        await asyncio.gather(*tasks)
+
+        logger.info(
+            "[%s] Downloaded %d files to %s", self.source_id, len(files), dest_path
+        )
+        return dest_path

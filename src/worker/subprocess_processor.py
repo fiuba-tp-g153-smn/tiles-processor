@@ -40,6 +40,7 @@ def create_processor_registry():
         ProcessorRegistry,
         GoesProcessor,
         Band2Processor,
+        GlmFedProcessor,
         RadarProcessor,
     )
 
@@ -51,6 +52,9 @@ def create_processor_registry():
 
     # Register Band 2 processor (downsampled visible imagery)
     registry.register("goes_band_2", Band2Processor)
+
+    # Register GLM processor (lightning products)
+    registry.register("glm_fed", GlmFedProcessor)
 
     # Register Radar processor
     registry.register("radar", RadarProcessor)

@@ -104,6 +104,8 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             return self._config.ENABLE_BAND_9
         if source_id == "goes19_band_2":
             return self._config.ENABLE_BAND_2
+        if source_id == "goes19_glm_fed":
+            return self._config.ENABLE_GLM_FED
         if source_id == "radar_nexrad":
             return self._config.ENABLE_RADAR
 

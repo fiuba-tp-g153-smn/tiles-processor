@@ -86,11 +86,22 @@ BAND_2_CONFIG = BandConfig(
     product_name="Visible",
 )
 
+GLM_FED_CONFIG = BandConfig(
+    band_id="glm_fed",
+    file_pattern="GLM-L2-LCFA",
+    vmin=0.0,  # Flash count min
+    vmax=100.0,  # Flash count max (adjust after seeing real data)
+    palette_name="LIGHTNING_PALETTE",
+    s3_prefix="glm_fed/tiles",
+    product_name="GLM_Flash_Extent_Density",
+)
+
 # Registry for looking up band configs by ID
 BAND_CONFIGS = {
     "band_13": BAND_13_CONFIG,
     "band_9": BAND_9_CONFIG,
     "band_2": BAND_2_CONFIG,
+    "glm_fed": GLM_FED_CONFIG,
 }
 
 

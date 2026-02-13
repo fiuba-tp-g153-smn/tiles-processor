@@ -3,7 +3,12 @@
 from clients.rabbitmq_client import RabbitMQClient
 from clients.s3_client import S3Client
 from config import Config
-from data_sources import DataSourceRegistry, Goes19DataSource, RadarDataSource
+from data_sources import (
+    DataSourceRegistry,
+    Goes19DataSource,
+    RadarDataSource,
+    Glm19DataSource,
+)
 from models.band_config import BAND_CONFIGS
 
 
@@ -12,7 +17,12 @@ def create_data_source_registry() -> DataSourceRegistry:
     registry = DataSourceRegistry()
 
     for _band_id, band_config in BAND_CONFIGS.items():
-        registry.register(Goes19DataSource(band_config))
+        if band_config.band_id.startswith("glm_"):
+            # Register GLM sources (lightning products)
+            registry.register(Glm19DataSource(band_config))
+        else:
+            # Register ABI sources (band 13, 9, 2, etc.)
+            registry.register(Goes19DataSource(band_config))
 
     registry.register(RadarDataSource())
     return registry
