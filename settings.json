@@ -3,8 +3,8 @@
   "tile_retention_days": 1,
   "features": {
     "enable_band_13": true,
-    "enable_band_9": false,
-    "enable_band_2": false,
+    "enable_band_9": true,
+    "enable_band_2": true,
     "enable_glm_fed": true,
     "enable_radar": false
   },
