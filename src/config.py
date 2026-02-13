@@ -53,6 +53,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
 
         # Settings from JSON
         self.TIMEZONE: str = settings["timezone"]
+        self.TILE_RETENTION_DAYS: int = settings.get("tile_retention_days", 1)
 
         # Feature Toggles (from JSON)
         self.ENABLE_BAND_13: bool = settings["features"].get("enable_band_13", True)

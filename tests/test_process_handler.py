@@ -45,7 +45,6 @@ class TestGoesProcessor:
             processor._generate_tiles = MagicMock(return_value=Path("/tmp/tiles"))
             processor._minio_client.upload_directory = AsyncMock()
             processor._minio_client.ensure_bucket_exists = AsyncMock()
-            processor._retention_service.enforce_retention = AsyncMock()
             processor._cleanup_file = MagicMock()
             processor._cleanup_directory = MagicMock()
 
@@ -70,4 +69,3 @@ class TestGoesProcessor:
             processor._generate_geotiff.assert_called_once()
             processor._generate_tiles.assert_called_once()
             processor._minio_client.upload_directory.assert_awaited_once()
-            processor._retention_service.enforce_retention.assert_awaited_once()

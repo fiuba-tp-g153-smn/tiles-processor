@@ -1,5 +1,6 @@
 {
   "timezone": "America/Argentina/Buenos_Aires",
+  "tile_retention_days": 1,
   "features": {
     "enable_band_13": true,
     "enable_band_9": false,

@@ -17,7 +17,6 @@ from services.processing_steps import (
     normalize_and_colorize,
     run_gdal2tiles,
 )
-from services.retention_policy_service import RetentionPolicyService
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,6 @@ class GlmFedProcessor(ImageProcessor):
     def __init__(self, config: Config):
         super().__init__(config)
         self._minio_client = create_minio_client(config)
-        self._retention_service = RetentionPolicyService(self._minio_client)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute the GLM FED processing pipeline."""
@@ -160,9 +158,6 @@ class GlmFedProcessor(ImageProcessor):
         )
 
         # 4. Upload to MinIO
-        # pylint: disable=duplicate-code
-        # Note: This upload + retention pattern is intentionally duplicated across processors.
-        # Extracting it would require complex base class changes for minimal benefit (~10 lines).
         self._check_shutdown()
         logger.info("Step 4: Upload to MinIO")
         tileset_name = f"{geotiff_path.stem}_tiles"
@@ -172,12 +167,6 @@ class GlmFedProcessor(ImageProcessor):
         await self._minio_client.upload_directory(tiles_output_dir, s3_prefix)
 
         logger.info("Processing complete: %s", s3_prefix)
-
-        # 5. Retention Policy Cleanup
-        self._check_shutdown()
-        logger.info("Step 5: Enforcing Retention Policy")
-        await self._retention_service.enforce_retention(band_config.s3_prefix)
-        # pylint: enable=duplicate-code
 
         # Cleanup intermediate files
         self._cleanup_file(geotiff_path)
