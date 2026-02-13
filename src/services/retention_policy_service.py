@@ -7,7 +7,7 @@ from clients.s3_client import S3Client
 logger = logging.getLogger(__name__)
 
 
-class RetentionPolicyService:
+class RetentionPolicyService:  # pylint: disable=too-few-public-methods
     """
     Service for managing tileset retention policies in MinIO.
 

@@ -160,6 +160,9 @@ class GlmFedProcessor(ImageProcessor):
         )
 
         # 4. Upload to MinIO
+        # pylint: disable=duplicate-code
+        # Note: This upload + retention pattern is intentionally duplicated across processors.
+        # Extracting it would require complex base class changes for minimal benefit (~10 lines).
         self._check_shutdown()
         logger.info("Step 4: Upload to MinIO")
         tileset_name = f"{geotiff_path.stem}_tiles"
@@ -174,6 +177,7 @@ class GlmFedProcessor(ImageProcessor):
         self._check_shutdown()
         logger.info("Step 5: Enforcing Retention Policy")
         await self._retention_service.enforce_retention(band_config.s3_prefix)
+        # pylint: enable=duplicate-code
 
         # Cleanup intermediate files
         self._cleanup_file(geotiff_path)

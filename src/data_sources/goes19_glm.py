@@ -7,16 +7,14 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from clients.s3_client import S3Client
-from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
+from data_sources.base import ImageInfo, DiscoveryConfig
+from data_sources.goes19_base import Goes19BaseDataSource
 from models.band_config import BandConfig
 
 logger = logging.getLogger(__name__)
 
-GOES19_BUCKET_NAME = "noaa-goes19"
 
-
-class Goes19GlmDataSource(DataSource):
+class Goes19GlmDataSource(Goes19BaseDataSource):
     """
     Data source for GOES-19 GLM lightning data from NOAA's public S3 bucket.
 
@@ -31,7 +29,6 @@ class Goes19GlmDataSource(DataSource):
     """
 
     TARGET_WINDOWS = 26  # 4+ hours of 10-min windows
-    MAX_HOURS_BACK = 5
     WINDOW_DURATION_MINUTES = 10
     MAX_CONCURRENT_DOWNLOADS = 10  # Parallel downloads per window
 
@@ -42,9 +39,11 @@ class Goes19GlmDataSource(DataSource):
         Args:
             band_config: Band configuration for GLM product
         """
-        self._band_config = band_config
-        self._s3_client = S3Client(GOES19_BUCKET_NAME, max_concurrent_downloads=8)
-        self._glm_products_path = "GLM-L2-LCFA"
+        super().__init__(
+            band_config=band_config,
+            product_path="GLM-L2-LCFA",
+            max_concurrent_downloads=8,
+        )
 
     @property
     def source_id(self) -> str:
@@ -56,11 +55,6 @@ class Goes19GlmDataSource(DataSource):
         """The processor ID to use for images from this source."""
         return "glm_fed"
 
-    @property
-    def band_config(self) -> BandConfig:
-        """Get the band configuration."""
-        return self._band_config
-
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
         """
         Discover new GLM time windows that need processing.
@@ -70,7 +64,9 @@ class Goes19GlmDataSource(DataSource):
         - source_uri = JSON with window_start and list of file S3 keys
         """
         # Collect all available L2-LCFA files from lookback window
-        all_files = await self._collect_candidates(config.current_time)
+        all_files = await self._collect_candidates_from_hourly_paths(
+            config.current_time, "OR_GLM-L2-LCFA"
+        )
 
         # Group files into 10-minute windows
         windows = self._group_into_windows(all_files)
@@ -175,39 +171,6 @@ class Goes19GlmDataSource(DataSource):
         """Create a unique ID for a time window."""
         # Format: GLM_FED_s20260212120000
         return f"GLM_FED_{window_start.strftime('s%Y%j%H%M%S')}"
-
-    async def _collect_candidates(self, current_time: datetime) -> list[str]:
-        """
-        Collect all GLM-L2-LCFA files from the lookback window.
-
-        GLM files are organized by:
-        GLM-L2-LCFA/YYYY/JJJ/HH/OR_GLM-L2-LCFA_G19_*.nc
-        """
-        all_candidates = []
-        hours_back = 0
-
-        while hours_back <= self.MAX_HOURS_BACK:
-            search_time = current_time - timedelta(hours=hours_back)
-            directory_path = self._build_directory_path(search_time)
-
-            try:
-                files = await self._s3_client.list_files(
-                    directory_path, file_pattern="OR_GLM-L2-LCFA"
-                )
-                all_candidates.extend(files)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                logger.warning("Error listing GLM files for %s: %s", directory_path, e)
-
-            hours_back += 1
-
-        logger.info(
-            "[%s] Collected %d GLM files from S3", self.source_id, len(all_candidates)
-        )
-        return all_candidates
-
-    def _build_directory_path(self, time: datetime) -> str:
-        """Build the S3 directory path for GLM files at a given time."""
-        return f"{self._glm_products_path}/{time.strftime('%Y/%j/%H')}"
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         """

@@ -151,6 +151,9 @@ class GoesProcessor(ImageProcessor):
         )
 
         # 5. Upload to S3
+        # pylint: disable=duplicate-code
+        # Note: This upload + retention pattern is intentionally duplicated across processors.
+        # Extracting it would require complex base class changes for minimal benefit (~10 lines).
         self._check_shutdown()
         logger.info("Step 5: Upload to S3")
         tileset_name = f"{geotiff_path.stem}_tiles"
@@ -165,6 +168,7 @@ class GoesProcessor(ImageProcessor):
         self._check_shutdown()
         logger.info("Step 6: Enforcing Retention Policy")
         await self._retention_service.enforce_retention(band_config.s3_prefix)
+        # pylint: enable=duplicate-code
 
         # Cleanup intermediate files
         self._cleanup_file(geotiff_path)
