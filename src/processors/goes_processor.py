@@ -26,6 +26,7 @@ from services.processing_steps import (
     normalize_and_colorize,
     run_gdal2tiles,
 )
+from services.retention_policy_service import RetentionPolicyService
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class GoesProcessor(ImageProcessor):
     def __init__(self, config: Config):
         super().__init__(config)
         self._minio_client = create_minio_client(config)
+        self._retention_service = RetentionPolicyService(self._minio_client)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute the full processing pipeline."""
@@ -162,7 +164,7 @@ class GoesProcessor(ImageProcessor):
         # 6. Retention Policy Cleanup
         self._check_shutdown()
         logger.info("Step 6: Enforcing Retention Policy")
-        await self._enforce_retention_policy(band_config.s3_prefix)
+        await self._retention_service.enforce_retention(band_config.s3_prefix)
 
         # Cleanup intermediate files
         self._cleanup_file(geotiff_path)
@@ -170,76 +172,6 @@ class GoesProcessor(ImageProcessor):
         gc.collect()
 
         return geotiff_path
-
-    async def _enforce_retention_policy(self, s3_prefix: str) -> None:
-        """
-        Enforce retention policy: keep only the latest N tilesets.
-
-        This is designed to be safe for concurrent execution by multiple workers:
-        - Uses defensive listing and sorting
-        - Handles deletion failures gracefully
-        - Does not fail the overall processing if cleanup fails
-
-        Args:
-            s3_prefix: The S3 prefix for the band (e.g., "band_13/tiles")
-        """
-        retention_count = 26
-
-        try:
-            prefixes = await self._minio_client.list_prefixes(
-                f"{s3_prefix}/", delimiter="/"
-            )
-
-            tileset_prefixes = sorted(
-                [p for p in prefixes if p.rstrip("/").endswith("_tiles")]
-            )
-
-            total_count = len(tileset_prefixes)
-
-            if total_count <= retention_count:
-                logger.debug(
-                    "Retention policy check: %d <= %d, no action needed.",
-                    total_count,
-                    retention_count,
-                )
-                return
-
-            to_delete = tileset_prefixes[:-retention_count]
-
-            max_delete_per_pass = 10
-            if len(to_delete) > max_delete_per_pass:
-                logger.warning(
-                    "Limiting deletion to %d tilesets (wanted to delete %d)",
-                    max_delete_per_pass,
-                    len(to_delete),
-                )
-                to_delete = to_delete[:max_delete_per_pass]
-
-            logger.info(
-                "Retention policy: Deleting %d old tilesets "
-                "(total: %d, keeping: %d)",
-                len(to_delete),
-                total_count,
-                retention_count,
-            )
-
-            deleted_count = 0
-            for prefix in to_delete:
-                try:
-                    await self._minio_client.delete_prefix(prefix)
-                    deleted_count += 1
-                    logger.info("Deleted old tileset: %s", prefix)
-                except Exception as e:  # pylint: disable=broad-exception-caught
-                    logger.debug("Could not delete tileset %s: %s", prefix, e)
-
-            if deleted_count > 0:
-                logger.info(
-                    "Retention policy: Successfully deleted %d tilesets",
-                    deleted_count,
-                )
-
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.warning("Error enforcing retention policy (non-fatal): %s", e)
 
     def _apply_georeferencing(self, netcdf_path: Path) -> xr.Dataset:
         """Apply GOES satellite projection transformation.

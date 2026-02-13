@@ -60,6 +60,10 @@ class FakeDataSource(DataSource):
     def processor_id(self) -> str:
         return f"goes_{self._band_config.band_id}"
 
+    @property
+    def band_config(self) -> BandConfig:
+        return self._band_config
+
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
         new = []
         for img in self._images:
