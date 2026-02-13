@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -113,7 +114,9 @@ class Goes19GlmDataSource(DataSource):
         )
         return new_images
 
-    def _group_into_windows(self, files: list[str]) -> list[tuple[datetime, list[str]]]:
+    def _group_into_windows(  # pylint: disable=too-many-locals
+        self, files: list[str]
+    ) -> list[tuple[datetime, list[str]]]:
         """
         Group L2-LCFA files into 10-minute windows based on timestamps.
 
@@ -127,8 +130,6 @@ class Goes19GlmDataSource(DataSource):
         Returns:
             List of (window_start_time, [file1, file2, ...]) tuples
         """
-        from collections import defaultdict
-
         windows = defaultdict(list)
 
         for file_key in files:
@@ -168,7 +169,7 @@ class Goes19GlmDataSource(DataSource):
                 continue
 
         # Convert to sorted list of tuples
-        return [(window_start, files) for window_start, files in windows.items()]
+        return list(windows.items())
 
     def _create_window_id(self, window_start: datetime) -> str:
         """Create a unique ID for a time window."""

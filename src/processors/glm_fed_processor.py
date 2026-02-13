@@ -6,8 +6,6 @@ import logging
 import uuid
 from pathlib import Path
 
-import numpy as np
-
 from config import Config
 from factories import create_minio_client
 from models.work_unit import WorkUnit
@@ -98,7 +96,9 @@ class GlmFedProcessor(ImageProcessor):
             self._cleanup_directory(work_dir)
             gc.collect()
 
-    async def _generate_and_upload(self, fed_data, geotiff_dir, tiles_dir, work_unit):
+    async def _generate_and_upload(  # pylint: disable=too-many-locals
+        self, fed_data, geotiff_dir, tiles_dir, work_unit
+    ):
         """Generate GeoTIFF, tiles, and upload to S3."""
         band_config = work_unit.band_config
         color_palette = GenerateGeoTIFFFilesService.LIGHTNING_PALETTE

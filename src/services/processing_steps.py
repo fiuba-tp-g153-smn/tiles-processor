@@ -82,7 +82,7 @@ def compute_brightness_temperature(dataset: xr.Dataset) -> xr.DataArray:
     return brightness_temperature
 
 
-def compute_flash_extent_density(
+def compute_flash_extent_density(  # pylint: disable=too-many-locals
     glm_file_paths: list[Path], grid_bounds: dict, grid_resolution: float = 0.02
 ) -> xr.DataArray:
     """
