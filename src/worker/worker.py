@@ -9,7 +9,11 @@ from typing import Optional
 from clients.message_queue_client import MessageQueueClient
 from clients.progress_tracker import ProgressTracker
 from config import Config
-from factories import create_data_source_registry, create_rabbitmq_client
+from factories import (
+    create_data_source_registry,
+    create_rabbitmq_client,
+    create_minio_client,
+)
 from models.work_unit import WorkUnit
 from worker.work_handler import WorkHandler
 from health_server import HealthCheckServer
@@ -179,6 +183,23 @@ def run_worker(config: Config) -> None:
     """
     data_source_registry = create_data_source_registry()
     mq_client = create_rabbitmq_client(config)
+
+    # Configure MinIO lifecycle policy for automatic tile expiration
+    minio_client = create_minio_client(config)
+    loop = new_event_loop()
+    set_event_loop(loop)
+    try:
+        # Ensure bucket exists and configure lifecycle
+        loop.run_until_complete(minio_client.ensure_bucket_exists())
+        loop.run_until_complete(
+            minio_client.configure_lifecycle_policy(config.TILE_RETENTION_DAYS)
+        )
+        logger.info(
+            "MinIO lifecycle configured: tiles will expire after %d days",
+            config.TILE_RETENTION_DAYS,
+        )
+    finally:
+        loop.close()
 
     # Create progress tracker (SQLite-based)
     tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"

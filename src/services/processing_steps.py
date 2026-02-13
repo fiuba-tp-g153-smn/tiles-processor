@@ -82,6 +82,98 @@ def compute_brightness_temperature(dataset: xr.Dataset) -> xr.DataArray:
     return brightness_temperature
 
 
+def compute_flash_extent_density(  # pylint: disable=too-many-locals
+    glm_file_paths: list[Path], grid_bounds: dict, grid_resolution: float = 0.02
+) -> xr.DataArray:
+    """
+    Compute Flash Extent Density from GLM-L2-LCFA files.
+
+    Bins flash locations from multiple GLM files into a regular lat/lon grid
+    to create a density map showing flash counts per cell over a time window.
+
+    Args:
+        glm_file_paths: List of GLM-L2-LCFA NetCDF files (typically ~30 files for 10-min window)
+        grid_bounds: Geographic bounds dict with keys: minx, maxx, miny, maxy (degrees)
+        grid_resolution: Grid cell size in degrees (default 0.02° ≈ 2km at equator)
+
+    Returns:
+        xr.DataArray with flash counts per grid cell, georeferenced to EPSG:4326.
+        Cells with zero flashes are set to NaN for transparency in visualization.
+
+    Memory Profile:
+        - Each GLM file: ~2-5 MB
+        - 30 files: ~150 MB raw data
+        - Output grid (e.g., 3000×1500): ~36 MB float64
+        - Peak memory: ~200 MB (well within limits)
+    """
+    import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
+
+    # 1. Read all flash locations from all files
+    all_flash_lats = []
+    all_flash_lons = []
+
+    for file_path in glm_file_paths:
+        with xr.open_dataset(file_path, engine="h5netcdf") as ds:
+            # Extract flash lat/lon (GLM stores as scaled int16, xarray auto-decodes)
+            flash_lat = ds["flash_lat"].values
+            flash_lon = ds["flash_lon"].values
+            all_flash_lats.append(flash_lat)
+            all_flash_lons.append(flash_lon)
+
+    # Flatten all arrays into single list
+    all_flash_lats = np.concatenate(all_flash_lats)
+    all_flash_lons = np.concatenate(all_flash_lons)
+
+    logger.info(
+        "Loaded %d flashes from %d GLM files", len(all_flash_lats), len(glm_file_paths)
+    )
+
+    # 2. Create grid bins
+    lon_bins = np.arange(
+        grid_bounds["minx"], grid_bounds["maxx"] + grid_resolution, grid_resolution
+    )
+    lat_bins = np.arange(
+        grid_bounds["miny"], grid_bounds["maxy"] + grid_resolution, grid_resolution
+    )
+
+    # 3. Bin flashes into grid cells (2D histogram)
+    # Note: histogram2d expects (x, y) order but returns (y, x) shaped array
+    flash_counts, _, _ = np.histogram2d(
+        all_flash_lats, all_flash_lons, bins=[lat_bins, lon_bins]
+    )
+
+    # Free memory
+    del all_flash_lats, all_flash_lons
+    gc.collect()
+
+    # 4. Create xarray DataArray with proper coordinates
+    lon_centers = (lon_bins[:-1] + lon_bins[1:]) / 2
+    lat_centers = (lat_bins[:-1] + lat_bins[1:]) / 2
+
+    fed_array = xr.DataArray(
+        flash_counts,
+        dims=["y", "x"],
+        coords={"x": lon_centers, "y": lat_centers},
+        name="Flash_Extent_Density",
+    )
+
+    # 5. Set CRS and spatial dims
+    fed_array.rio.write_crs("EPSG:4326", inplace=True)
+    fed_array.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+
+    # 6. Replace zeros with NaN for transparency (avoid clutter on map)
+    fed_array = xr.where(fed_array > 0, fed_array, np.nan)
+
+    logger.info(
+        "Computed FED grid: %d x %d cells, max flash count: %.0f",
+        len(lat_centers),
+        len(lon_centers),
+        float(np.nanmax(fed_array.values)),
+    )
+
+    return fed_array
+
+
 def normalize_and_colorize(
     array: xr.DataArray,
     vmin: float,

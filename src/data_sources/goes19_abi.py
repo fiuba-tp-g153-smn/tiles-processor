@@ -1,59 +1,50 @@
-"""GOES-19 satellite data source implementation."""
+"""GOES-19 ABI (Advanced Baseline Imager) satellite data source implementation."""
 
 import logging
-from datetime import timedelta
 from pathlib import Path
 
-from clients.s3_client import S3Client
-from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
+from data_sources.base import ImageInfo, DiscoveryConfig
+from data_sources.goes19_base import Goes19BaseDataSource
 from models.band_config import BandConfig
 
 logger = logging.getLogger(__name__)
 
 
-# NOAA public bucket for GOES-19 data
-GOES19_BUCKET_NAME = "noaa-goes19"
-
-
-class Goes19DataSource(DataSource):
+class Goes19AbiDataSource(Goes19BaseDataSource):
     """
-    Data source for GOES-19 satellite imagery from NOAA's public S3 bucket.
+    Data source for GOES-19 ABI satellite imagery from NOAA's public S3 bucket.
 
     This data source:
     - Discovers images from the ABI-L1b-RadF product path
     - Downloads NetCDF files from the unsigned public bucket
-    - Supports different bands (band_13, band_9, etc.)
+    - Supports different bands (band_13, band_9, band_2, etc.)
     """
 
     # Discovery parameters
     TARGET_IMAGES = 26  # 4+ hours at 10-min intervals
-    MAX_HOURS_BACK = 5
 
     def __init__(self, band_config: BandConfig):
         """
-        Initialize GOES-19 data source for a specific band.
+        Initialize GOES-19 ABI data source for a specific band.
 
         Args:
             band_config: Band configuration (determines file pattern, output prefix, etc.)
         """
-        self._band_config = band_config
-        self._s3_client = S3Client(GOES19_BUCKET_NAME, max_concurrent_downloads=6)
-        self._l1b_products_path = "ABI-L1b-RadF"
+        super().__init__(
+            band_config=band_config,
+            product_path="ABI-L1b-RadF",
+            max_concurrent_downloads=6,
+        )
 
     @property
     def source_id(self) -> str:
         """Unique identifier for this data source."""
-        return f"goes19_{self._band_config.band_id}"
+        return f"goes19_abi_{self._band_config.band_id}"
 
     @property
     def processor_id(self) -> str:
         """The processor ID to use for images from this source."""
         return f"goes_{self._band_config.band_id}"
-
-    @property
-    def band_config(self) -> BandConfig:
-        """Get the band configuration."""
-        return self._band_config
 
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
         """
@@ -65,7 +56,9 @@ class Goes19DataSource(DataSource):
         3. Take the top TARGET_IMAGES
         4. Filter out any that are already processed or in progress
         """
-        all_candidates = await self._collect_candidates(config.current_time)
+        all_candidates = await self._collect_candidates_from_hourly_paths(
+            config.current_time, self._band_config.file_pattern
+        )
 
         # Sort by timestamp (descending) - filenames are sortable
         all_candidates.sort(reverse=True)
@@ -104,31 +97,6 @@ class Goes19DataSource(DataSource):
             len(target_candidates),
         )
         return new_images
-
-    async def _collect_candidates(self, current_time) -> list[str]:
-        """Collect all candidate files from the lookback window."""
-        all_candidates = []
-        hours_back = 0
-
-        while hours_back <= self.MAX_HOURS_BACK:
-            search_time = current_time - timedelta(hours=hours_back)
-            directory_path = self._build_directory_path(search_time)
-
-            try:
-                files = await self._s3_client.list_files(
-                    directory_path, file_pattern=self._band_config.file_pattern
-                )
-                all_candidates.extend(files)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                logger.warning("Error listing NOAA S3 for %s: %s", directory_path, e)
-
-            hours_back += 1
-
-        return all_candidates
-
-    def _build_directory_path(self, time) -> str:
-        """Build the S3 directory path for a given time."""
-        return f"{self._l1b_products_path}/{time.strftime('%Y/%j/%H')}"
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         """

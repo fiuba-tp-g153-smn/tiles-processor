@@ -556,6 +556,57 @@ class S3Client:
             logger.error("Failed to ensure bucket exists: %s", e)
             return False
 
+    async def configure_lifecycle_policy(self, retention_days: int) -> bool:
+        """
+        Configure MinIO lifecycle policy to automatically expire old tiles.
+
+        MinIO will automatically delete objects older than the specified retention
+        period. This eliminates the need for application-level retention management.
+
+        Args:
+            retention_days: Number of days to retain tiles before expiration
+
+        Returns:
+            True if lifecycle policy was configured successfully
+
+        Note:
+            MinIO lifecycle policies are checked periodically (typically every 24 hours),
+            so objects may not be deleted exactly at the expiration time.
+        """
+        try:
+            async with self._session.client(
+                "s3", **self._get_client_kwargs(authenticated=True)
+            ) as s3_client:
+                lifecycle_config = {
+                    "Rules": [
+                        {
+                            "ID": "ExpireOldTiles",
+                            "Status": "Enabled",
+                            "Expiration": {"Days": retention_days},
+                            "Filter": {"Prefix": ""},
+                        }
+                    ]
+                }
+
+                await s3_client.put_bucket_lifecycle_configuration(
+                    Bucket=self._bucket_name, LifecycleConfiguration=lifecycle_config
+                )
+
+                logger.info(
+                    "Configured lifecycle policy for bucket '%s': expire after %d days",
+                    self._bucket_name,
+                    retention_days,
+                )
+                return True
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error(
+                "Failed to configure lifecycle policy for bucket '%s': %s",
+                self._bucket_name,
+                e,
+            )
+            return False
+
     @staticmethod
     def _get_content_type(file_path: Path) -> str:
         """Get MIME type for a file based on extension."""

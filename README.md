@@ -9,9 +9,11 @@ This project is a Python-based scheduler application designed to process GOES-19
 - **Satellite Data Processing**: Automatically downloads and processes GOES-19 satellite imagery.
   - **Band 13 (Clean IR Window)**: Processes Channel 13 (10.33 µm) for Cloud Top monitoring.
   - **Band 9 (Mid-Level Water Vapor)**: Processes Channel 9 (6.93 µm) for Water Vapor analysis.
+  - **Band 2 (Visible Red)**: Processes Channel 2 (0.64 µm) for high-resolution visible imagery.
+  - **GLM Flash Extent Density (FED)**: Processes Geostationary Lightning Mapper data to create 10-minute lightning activity maps.
 - **Job Management**:
   - **Queuing System**: Jobs are triggered by CRON schedules but are added to a processing queue. A background worker processes jobs sequentially to prevent resource overload.
-  - **Feature Toggles**: Specific job types (Band 13, Band 9) can be enabled or disabled via configuration.
+  - **Feature Toggles**: Individual products (Band 13, Band 9, Band 2, GLM FED, Radar) can be enabled or disabled via `settings.json`.
   - **Smart Execution**:
     - **Immediate First Run**: New deployments trigger a separate one-off execution immediately, then follow the recurring schedule.
     - **Persistence**: Job state is saved to SQLite, ensuring the schedule survives application restarts.
@@ -54,23 +56,98 @@ The system uses a robust queue-based architecture powered by **RabbitMQ** to man
 
 ### Band Specifications
 
-| Aspect        | Band 13 (Cloud Tops)               | Band 9 (Water Vapor)         |
-| ------------- | ---------------------------------- | ---------------------------- |
-| Wavelength    | 10.33 µm (Clean IR Window)         | 6.93 µm (Mid-Level WV)       |
-| Purpose       | Cloud top temperature              | Atmospheric moisture         |
-| Color Palette | Gray → Red                         | Maroon → Blue (SMN style)    |
-| Temp Range    | 183.15K - 323.15K (-90°C to +50°C) | 220K - 260K (-53°C to -13°C) |
-| Output Dir    | `.tmp/band_13/`                    | `.tmp/band_9/`               |
+| Aspect        | Band 13 (Cloud Tops)               | Band 9 (Water Vapor)         | GLM FED (Lightning)                    |
+| ------------- | ---------------------------------- | ---------------------------- | -------------------------------------- |
+| Wavelength    | 10.33 µm (Clean IR Window)         | 6.93 µm (Mid-Level WV)       | N/A (Lightning detection)              |
+| Purpose       | Cloud top temperature              | Atmospheric moisture         | Lightning activity density             |
+| Color Palette | Gray → Red                         | Maroon → Blue (SMN style)    | Yellow → Orange → Red → White          |
+| Data Range    | 183.15K - 323.15K (-90°C to +50°C) | 220K - 260K (-53°C to -13°C) | 0-100+ flashes per 2km cell per 10 min |
+| Temporal Res. | ~10 min (single snapshot)          | ~10 min (single snapshot)    | 10 min (aggregated window)             |
+| Input Files   | 1 NetCDF per product               | 1 NetCDF per product         | ~30 NetCDF files per product           |
+| Spatial Res.  | ~2 km (after resampling)           | ~10 km (after resampling)    | ~2 km (0.02° grid)                     |
+| Output Dir    | `.tmp/band_13/`                    | `.tmp/band_9/`               | `.tmp/glm_fed/`                        |
+
+### GLM Flash Extent Density (FED) Processing
+
+The GLM FED processor creates lightning activity maps by aggregating flash events over 10-minute time windows.
+
+#### How 20-Second GLM Files Become 10-Minute Products
+
+**1. Raw Data Source**
+
+- GOES-19 GLM publishes Level 2 Lightning Cluster-Filter Algorithm (L2-LCFA) files every ~20 seconds
+- Each file contains individual flash events with coordinates (lat/lon), energy, area, etc.
+- Covers full disk (entire hemisphere visible from satellite)
+
+**2. Time Window Discovery**
+The data source groups files into 10-minute windows:
+
+```
+12:00:00 - 12:10:00  →  30 files  →  GLM_FED_s20260431200000
+12:10:00 - 12:20:00  →  30 files  →  GLM_FED_s20260431201000
+```
+
+**Process:**
+
+- Parse timestamps from filenames: `OR_GLM-L2-LCFA_G19_s20260431200400_...nc` → 12:00:40
+- Round to 10-minute boundary: 12:00:40 → 12:00:00 window
+- Group all files in same window together
+
+**3. Flash Aggregation Pipeline**
+
+For each 10-minute window:
+
+1. **Download**: All ~30 L2-LCFA files (600 seconds ÷ 20 seconds/file)
+2. **Extract**: Read `flash_lat` and `flash_lon` from all files
+   - Example: File 1 has 520 flashes, File 2 has 487 flashes, ... → Total: ~15,000 flashes
+3. **Bin**: Create 2D histogram in 0.02° grid cells
+   ```python
+   flash_counts[cell] = number of flashes in that 2km × 2km area
+   ```
+4. **Colorize**: Apply yellow→orange→red palette based on flash density
+5. **Generate**: Single GeoTIFF representing entire 10-minute period
+6. **Tile**: Create XYZ tiles (zoom 3-7) using gdal2tiles
+
+**Result**: One tileset per 10-minute window showing cumulative lightning activity
+
+#### Visual Example
+
+```
+Time Window: 12:00:00 - 12:10:00
+────────────────────────────────────────────────────────────────
+Individual Files (20s each):
+  12:00:00-12:00:20  520 flashes  ┐
+  12:00:20-12:00:40  487 flashes  │
+  12:00:40-12:01:00  512 flashes  │
+  ...                ...          ├─► Aggregate into single grid
+  12:09:20-12:09:40  498 flashes  │   Count flashes per 2km cell
+  12:09:40-12:10:00  512 flashes  ┘   Apply density colormap
+
+Output: GLM_FED_s20260431200000_tiles/
+        Single tileset showing 10-minute flash density
+```
+
+#### Color Scheme
+
+- **Transparent/Faint Yellow**: 0-5 flashes (minimal activity)
+- **Bright Yellow**: 5-30 flashes (moderate activity)
+- **Orange**: 30-60 flashes (high activity)
+- **Red**: 60-100 flashes (very high activity)
+- **White**: 100+ flashes (extreme activity - rare)
 
 ### Recommended Execution Frequency
 
-GOES-19 publishes Full Disk images **every 10 minutes**. Each job downloads 24 images (4 hours of data).
+**ABI Bands (13, 9, 2):** GOES-19 publishes Full Disk images **every 10 minutes**. The producer discovers the latest 26 images (4+ hours of data).
 
-| Schedule                       | CRON           | Rationale                                     |
-| ------------------------------ | -------------- | --------------------------------------------- |
-| **Every 30 min** (recommended) | `*/30 * * * *` | Good balance - fresh data, reasonable load    |
-| Every 10 min                   | `*/10 * * * *` | Real-time updates, but high resource usage    |
-| Every hour                     | `0 * * * *`    | Lower resource usage, 1-hour delay acceptable |
+**GLM FED:** GLM files are published every ~20 seconds. The producer groups them into 10-minute windows and discovers the latest 26 windows (4+ hours of data).
+
+| Schedule                      | CRON           | Rationale                                |
+| ----------------------------- | -------------- | ---------------------------------------- |
+| **Every 5 min** (recommended) | `*/5 * * * *`  | Near real-time updates, default schedule |
+| Every 10 min                  | `*/10 * * * *` | Matches satellite cadence, moderate load |
+| Every 30 min                  | `*/30 * * * *` | Lower resource usage, acceptable delay   |
+
+**Note:** The producer runs on a single schedule for all enabled products. Individual products can be toggled on/off via `settings.json`.
 
 ### File Management & Retention
 
@@ -101,11 +178,31 @@ tiles-data/                              # Bucket name (configurable)
 ├── band_13/
 │   └── tiles/
 │       └── {tileset_id}_tiles/          # One directory per processed image
-│           └── {z}/{x}/{y}.webp         # XYZ tile structure
-└── band_9/
+│           └── {z}/{x}/{y}.webp         # XYZ tile structure (z=3-7)
+├── band_9/
+│   └── tiles/
+│       └── {tileset_id}_tiles/
+│           └── {z}/{x}/{y}.webp
+├── band_2/
+│   └── tiles/
+│       └── {tileset_id}_tiles/
+│           └── {z}/{x}/{y}.webp
+└── glm_fed/
     └── tiles/
-        └── {tileset_id}_tiles/
-            └── {z}/{x}/{y}.webp
+        └── GLM_FED_s{YYYYJJJHHMMSS}_tiles/  # 10-minute window tilesets
+            └── {z}/{x}/{y}.webp              # Example: GLM_FED_s20260431200000_tiles
+```
+
+**Tileset Naming:**
+
+- **ABI Bands**: Based on source filename (e.g., `OR_ABI-L1b-RadF-M6C13_G19_s20260440350212_..._tiles`)
+- **GLM FED**: Based on window start time (e.g., `GLM_FED_s20260431200000_tiles` = 2026, day 43, 12:00:00 UTC)
+
+**MinIO Internal Storage:**
+Each `.webp` tile is stored as a directory containing an `xl.meta` file (MinIO's erasure-coded format). When accessed via S3 API, these appear as normal objects at paths like:
+
+```
+s3://tiles-data/glm_fed/tiles/GLM_FED_s20260431200000_tiles/7/35/69.webp
 ```
 
 ### MinIO Service
@@ -196,6 +293,45 @@ docker run --rm -it python:3-alpine sh -c "python -c 'import secrets; print(\"Ge
 | `S3_TILES_DATA_SECURE`      | Use HTTPS for S3 connection (`true`/`false`).           | `false`      |
 | `S3_TILES_DATA_PORT`        | Host port for MinIO S3 API (if using Docker).           | `9000`       |
 | `MINIO_CONSOLE_PORT`        | Host port for MinIO Web Console (if using Docker).      | `9001`       |
+
+## Settings Configuration (settings.json)
+
+Feature toggles and geographic bounds are configured in `settings.json`:
+
+```json
+{
+  "timezone": "America/Argentina/Buenos_Aires",
+  "features": {
+    "enable_band_13": true,
+    "enable_band_9": true,
+    "enable_band_2": true,
+    "enable_glm_fed": true,
+    "enable_radar": false
+  },
+  "bounds": {
+    "minx": -90.0,
+    "miny": -60.0,
+    "maxx": -30.0,
+    "maxy": -15.0
+  }
+}
+```
+
+**Feature Toggles:**
+
+- `enable_band_13`: Enable/disable Band 13 (Cloud Tops) processing
+- `enable_band_9`: Enable/disable Band 9 (Water Vapor) processing
+- `enable_band_2`: Enable/disable Band 2 (Visible) processing
+- `enable_glm_fed`: Enable/disable GLM Flash Extent Density processing
+- `enable_radar`: Enable/disable Radar processing (experimental)
+
+**Geographic Bounds:**
+Configure the region of interest (EPSG:4326 coordinates):
+
+- `minx`: West longitude (e.g., -90.0 = 90°W)
+- `miny`: South latitude (e.g., -60.0 = 60°S)
+- `maxx`: East longitude (e.g., -30.0 = 30°W)
+- `maxy`: North latitude (e.g., -15.0 = 15°S)
 
 ## Radar Processing
 
