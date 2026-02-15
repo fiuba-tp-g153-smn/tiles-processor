@@ -71,7 +71,7 @@ class WorkHandler:
             # Step 1: Download (lightweight, stays in main process)
             download_start = perf_counter()
             logger.info("[HANDLER] Downloading %s", work_unit.image_id)
-            await data_source.download(work_unit.source_uri, local_path)
+            local_path = await data_source.download(work_unit.source_uri, local_path)
             download_time = perf_counter() - download_start
 
             # Step 2: Process in subprocess (heavy libraries isolated)

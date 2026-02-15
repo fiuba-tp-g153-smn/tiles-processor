@@ -181,7 +181,7 @@ def run_worker(config: Config) -> None:
     Args:
         config: Application configuration
     """
-    data_source_registry = create_data_source_registry()
+    data_source_registry = create_data_source_registry(config)
     mq_client = create_rabbitmq_client(config)
 
     # Configure MinIO lifecycle policy for automatic tile expiration

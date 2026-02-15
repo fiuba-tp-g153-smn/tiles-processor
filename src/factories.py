@@ -1,5 +1,7 @@
 """Factory functions for constructing shared infrastructure objects from config."""
 
+from pathlib import Path
+
 from clients.rabbitmq_client import RabbitMQClient
 from clients.s3_client import S3Client
 from config import Config
@@ -10,9 +12,10 @@ from data_sources import (
     RadarDataSource,
 )
 from models.band_config import BAND_CONFIGS
+from models.radar_config import RADAR_PRODUCT_CONFIGS
 
 
-def create_data_source_registry() -> DataSourceRegistry:
+def create_data_source_registry(config: Config = None) -> DataSourceRegistry:
     """Create and populate the data source registry with all known sources."""
     registry = DataSourceRegistry()
 
@@ -24,7 +27,12 @@ def create_data_source_registry() -> DataSourceRegistry:
             # Register ABI sources (band 13, 9, 2, etc.)
             registry.register(Goes19AbiDataSource(band_config))
 
-    registry.register(RadarDataSource())
+    # Register radar data sources for each product
+    if config is not None:
+        radar_input_dir = Path(config.RADAR_INPUT_DIR)
+        for _product_id, product_config in RADAR_PRODUCT_CONFIGS.items():
+            registry.register(RadarDataSource(product_config, radar_input_dir))
+
     return registry
 
 

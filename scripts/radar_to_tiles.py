@@ -13,28 +13,39 @@ import multiprocessing
 # Configuración
 OUTPUT_DIR = Path("output_radar")
 GRID_RESOLUTION = 500  # metros por pixel
-
 # Paletas de colores por variable
 COLOR_PALETTES = {
     "DBZH": {
         "field": "reflectivity",
         "colors": [
-            (-30, (0, 0, 0, 0)),
-            (5, (0, 236, 236, 255)),
-            (10, (1, 160, 246, 255)),
-            (15, (0, 0, 246, 255)),
-            (20, (0, 255, 0, 255)),
-            (25, (0, 200, 0, 255)),
-            (30, (0, 144, 0, 255)),
-            (35, (255, 255, 0, 255)),
-            (40, (231, 192, 0, 255)),
-            (45, (255, 144, 0, 255)),
-            (50, (255, 0, 0, 255)),
-            (55, (214, 0, 0, 255)),
-            (60, (192, 0, 0, 255)),
-            (65, (255, 0, 255, 255)),
-            (70, (153, 85, 201, 255)),
-            (75, (255, 255, 255, 255)),
+                    # Zona Baja (Azules oscuros y grisáceos)
+        (-15, (60, 66, 109, 255)),    # Gris azulado muy oscuro
+        (-10, (61, 78, 123, 255)),   # Azul índigo oscuro
+        (-5,  (61, 89, 136, 255)),   # Azul marino
+        (0,   (60, 101, 150, 255)),   # Azul medio oscuro
+
+        # Zona Transición (Azules claros a Cyan)
+        (5,   (57, 113, 163, 255)),  # Azul rey/celeste oscuro
+        (10,  (47, 137, 187, 255)),  # Celeste
+        (15,  (38, 163, 209, 255)),   # Cyan / Turquesa
+
+        # Zona Verde (Lluvia ligera a moderada)
+        (20,  (77, 225, 51, 255)),   # Verde Lima brillante
+        (25,  (58, 176, 39, 255)),   # Verde Hoja
+        (30,  (36, 114, 23, 255)),     # Verde Bosque oscuro
+
+        # Zona Convectiva (Amarillo a Rojo)
+        (35,  (213, 217, 51, 255)),   # Amarillo puro
+        (40,  (214, 151, 25, 255)),   # Naranja
+        (45,  (193, 0, 23, 255)),     # Rojo brillante
+        (50,  (194, 0, 95, 255)),     # Rojo oscuro / Granate
+
+        # Zona Severa (Violetas a Blanco)
+        (55,  (203, 0, 205, 255)),   # Púrpura oscuro
+        (60,  (223, 246, 237, 255)),   # Magenta / Fucsia
+        (65,  (167, 236, 207, 255)), # Blanco puro
+        (70,  (135, 223, 190, 255)), # Cyan pálido / Hielo
+        (75,  (135, 223, 190, 255)), # Verde menta muy pálido
         ],
     },
     "ZDR": {
@@ -90,19 +101,18 @@ COLOR_PALETTES = {
 
 
 def create_colormap(variable: str):
-    """Crea colormap para la variable especificada."""
+    """Crea colormap discreto (sin interpolación) para la variable especificada."""
     palette = COLOR_PALETTES.get(variable, COLOR_PALETTES["DBZH"])
     color_list = palette["colors"]
 
     values = [c[0] for c in color_list]
-    colors = [np.array(c[1]) / 255.0 for c in color_list]
+    colors = [np.array(c[1][:3]) / 255.0 for c in color_list]  # Solo RGB
 
-    norm = mcolors.Normalize(vmin=min(values), vmax=max(values))
-    normalized_values = [norm(v) for v in values]
+    # BoundaryNorm: cada rango de valores tiene un color fijo, sin interpolación
+    boundaries = values + [values[-1] + 5]
+    norm = mcolors.BoundaryNorm(boundaries, len(colors))
+    cmap = mcolors.ListedColormap(colors)
 
-    cmap = mcolors.LinearSegmentedColormap.from_list(
-        variable, list(zip(normalized_values, colors))
-    )
     return cmap, norm, min(values)
 
 
@@ -114,6 +124,11 @@ def read_radar(filepath: str):
     print(
         f"  Centro: ({radar.latitude['data'][0]:.4f}, {radar.longitude['data'][0]:.4f})"
     )
+
+    # Agregar esta línea para ver el alcance máximo real:
+    print(f"  Alcance máximo del radar: {radar.range['data'][-1]/1000:.0f} km")
+    print(f"  Alcance limitado por código: 240 km")
+    
     return radar
 
 
@@ -160,10 +175,13 @@ def grid_to_rgba_geotiff(grid, output_path: Path, field_name: str, variable: str
 
     cmap, norm, min_val = create_colormap(variable)
 
-    data_normalized = norm(data)
-    rgba = cmap(data_normalized)
+    # Aplicar colormap discreto
+    indices = norm(data)
+    rgba = cmap(indices)
     rgba_uint8 = (rgba * 255).astype(np.uint8)
 
+    # Alpha: opaco donde hay datos válidos >= min_val, transparente donde no
+    rgba_uint8[:, :, 3] = 255
     mask = np.isnan(data) | (data < min_val)
     rgba_uint8[mask, 3] = 0
 

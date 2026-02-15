@@ -107,8 +107,8 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         # Check for GOES19 GLM sources
         if source_id == "goes19_glm_fed":
             return self._config.ENABLE_GLM_FED
-        # Check for radar sources
-        if source_id == "radar_nexrad":
+        # Check for radar sources (radar_DBZH, radar_VRAD, etc.)
+        if source_id.startswith("radar_"):
             return self._config.ENABLE_RADAR
 
         # Default: enabled if registered
@@ -121,12 +121,23 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         bounds: dict,
     ) -> int:
         """Discover and publish work units for a single data source."""
-        # Get band_id directly from band config
-        band_id = data_source.band_config.band_id
+        # Get band_id from band_config or product_config (for radar)
+        if hasattr(data_source, "band_config"):
+            band_id = data_source.band_config.band_id
+            output_prefix = f"{band_id}/tiles"
+            existing_tilesets = await self._get_existing_tilesets(output_prefix)
+        elif hasattr(data_source, "product_config"):
+            # Radar sources use product_id as band_id
+            band_id = f"radar_{data_source.product_config.product_id}"
+            product_id = data_source.product_config.product_id
+            # Search across all radar IDs for this product
+            existing_tilesets = await self._get_radar_existing_tilesets(product_id)
+        else:
+            band_id = data_source.source_id
+            output_prefix = f"{band_id}/tiles"
+            existing_tilesets = await self._get_existing_tilesets(output_prefix)
 
         # Get existing tilesets in MinIO
-        output_prefix = f"{band_id}/tiles"
-        existing_tilesets = await self._get_existing_tilesets(output_prefix)
         logger.info(
             "Found %d existing tilesets for %s",
             len(existing_tilesets),
@@ -201,6 +212,39 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             logger.warning("Error listing MinIO tilesets: %s", e)
             return set()
 
+    async def _get_radar_existing_tilesets(self, product_id: str) -> Set[str]:
+        """
+        Get existing radar tilesets across all radar IDs for a specific product.
+
+        Path structure: radar/{radar_id}/{product}/{timestamp}_elev{N}/
+        Returns image_ids like: RMA1_DBZH_20260114T170328Z
+        """
+        tilesets = set()
+        try:
+            # List radar IDs: radar/RMA1/, radar/RMA12/, etc.
+            radar_ids = await self._minio_client.list_prefixes("radar/", delimiter="/")
+            for radar_id_prefix in radar_ids:
+                # radar_id_prefix = "radar/RMA1/"
+                radar_id = radar_id_prefix.rstrip("/").split("/")[-1]
+                # Build product path: radar/RMA1/DBZH/
+                product_prefix = f"{radar_id_prefix}{product_id}/"
+                # List tilesets in this radar/product combination
+                prefixes = await self._minio_client.list_prefixes(
+                    product_prefix, delimiter="/"
+                )
+                for prefix in prefixes:
+                    # prefix = "radar/RMA1/DBZH/20260114T170328Z_elev0/"
+                    folder_name = prefix.rstrip("/").split("/")[-1]
+                    # Extract timestamp from "20260114T170328Z_elev0"
+                    if "_elev" in folder_name:
+                        timestamp = folder_name.split("_elev")[0]
+                        # Reconstruct image_id: RMA1_DBZH_20260114T170328Z
+                        image_id = f"{radar_id}_{product_id}_{timestamp}"
+                        tilesets.add(image_id)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning("Error listing radar tilesets: %s", e)
+        return tilesets
+
 
 def run_producer(config: Config) -> None:
     """
@@ -211,7 +255,7 @@ def run_producer(config: Config) -> None:
     Args:
         config: Application configuration
     """
-    data_source_registry = create_data_source_registry()
+    data_source_registry = create_data_source_registry(config)
 
     logger.info("Producer starting with APScheduler...")
 
