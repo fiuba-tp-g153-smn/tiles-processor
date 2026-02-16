@@ -24,7 +24,22 @@ class RadarDataSource(DataSource):
     Each RadarDataSource instance is configured for a specific product
     (DBZH, VRAD, RHOHV, etc.) and only discovers files matching that product
     and the correct subvolume (01 for most, 02 for VRAD).
+
+    TODO: Cuando se disponga del bucket real de radares (SINARAME/SMN),
+    adaptar esta clase para:
+      1. Navegar la estructura de carpetas del bucket por radar_id
+         (ej: RMA1/, RMA12/, RMA3/, etc.) y luego por producto.
+      2. Descargar desde el bucket remoto en vez de copiar archivos locales.
+      3. Actualmente se leen TODOS los .H5 del directorio sin límite;
+         con el bucket real se deben tomar solo las últimas TARGET_IMAGES
+         (14) imágenes por producto, ordenadas por timestamp descendente.
+         14 = 12 necesarias + 2 de margen (análogo al satélite: 26 = 24 + 2).
     """
+
+    # Cantidad máxima de imágenes a descubrir por ciclo por producto.
+    # 12 imágenes necesarias + 2 de margen = 14 (cada ~5 min, cubre ~70 min).
+    # Análogo a Goes19AbiDataSource.TARGET_IMAGES = 26 (24 + 2 margen).
+    TARGET_IMAGES = 14
 
     def __init__(self, product_config: RadarProductConfig, input_dir: Path):
         """
@@ -91,9 +106,15 @@ class RadarDataSource(DataSource):
                 logger.debug("Skipping file with invalid name: %s (%s)", filepath, e)
                 continue
 
-            # Filter by product and subvolume
+            # Filter by product (DBZH, VRAD, RHOHV, etc.)
             if parsed["variable"] != product_id:
                 continue
+
+            # Filtrar por subvolumen: cada producto define qué subvolumen usar
+            # en radar_config.py (ej: DBZH usa "01", VRAD usa "02").
+            # Archivos con subvolumen distinto al esperado se descartan.
+            # Ejemplo: RMA12_0315_02_DBZH_*.H5 se ignora porque DBZH
+            # espera subvolume="01".
             if parsed["subvolume"] != expected_subvolume:
                 continue
 
@@ -120,13 +141,19 @@ class RadarDataSource(DataSource):
                 )
             )
 
+        # Ordenar por timestamp descendente y tomar solo los más recientes
+        new_images.sort(key=lambda img: img.image_id, reverse=True)
+        target_images = new_images[: self.TARGET_IMAGES]
+
         logger.info(
-            "[%s] Found %d new files (from %d total H5 files)",
+            "[%s] Found %d new files, publishing %d (limit %d, from %d total H5 files)",
             self.source_id,
             len(new_images),
+            len(target_images),
+            self.TARGET_IMAGES,
             len(h5_files),
         )
-        return new_images
+        return target_images
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         """
