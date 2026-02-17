@@ -28,10 +28,14 @@ class EcmwfDataSource(DataSource):
     POLLING_START_DELAY_HOURS = 7  # Start checking 7h after run time
     POLLING_INTERVAL_MINUTES = 10  # Check every 10 minutes
     MAX_POLLING_ATTEMPTS = 60  # Max attempts (10 hours of polling)
-    LOOKBACK_HOURS = 36  # Search for runs in the last 36 hours
+    LOOKBACK_HOURS = 48  # Search for runs in the last 48 hours
 
     # Model run times
     MODEL_RUN_HOURS = [0, 12]  # 00Z and 12Z
+
+    # Forecast configuration (must match processor)
+    FORECAST_HOURS = 144  # 6-day forecast
+    INTERVAL_HOURS = 6  # 6-hour intervals
 
     def __init__(self, product_config: ProductConfig):
         """
@@ -116,15 +120,35 @@ class EcmwfDataSource(DataSource):
 
             if is_available:
                 logger.info(f"[{self.source_id}] Found available run: {run_id}")
-                return [
-                    ImageInfo(
-                        image_id=run_id,
-                        source_uri=run_id,  # Will be used by download() to fetch data
-                        data_source_id=self.source_id,
-                        processor_id=self.processor_id,
-                        output_prefix=self._product_config.s3_prefix,
+
+                # Return one ImageInfo per interval that isn't already processed/in progress
+                image_infos = []
+                for start_hour in range(0, self.FORECAST_HOURS, self.INTERVAL_HOURS):
+                    end_hour = start_hour + self.INTERVAL_HOURS
+                    interval_name = f"{start_hour:03d}-{end_hour:03d}h"
+                    interval_id = f"{run_id}_{interval_name}"
+
+                    # Skip if this specific interval is already processed or in progress
+                    if interval_id in config.existing_tilesets or interval_id in config.in_progress_images:
+                        logger.debug(f"[{self.source_id}] Interval {interval_id} already processed/in progress")
+                        continue
+
+                    image_infos.append(
+                        ImageInfo(
+                            image_id=interval_id,
+                            source_uri=run_id,  # Still download once per run
+                            data_source_id=self.source_id,
+                            processor_id=self.processor_id,
+                            output_prefix=self._product_config.s3_prefix,
+                        )
                     )
-                ]
+
+                if image_infos:
+                    logger.info(f"[{self.source_id}] Returning {len(image_infos)} intervals for {run_id}")
+                    return image_infos
+                else:
+                    logger.info(f"[{self.source_id}] All intervals for {run_id} already processed")
+                    continue
             else:
                 logger.debug(f"[{self.source_id}] Run {run_id} not yet available")
 
@@ -138,6 +162,10 @@ class EcmwfDataSource(DataSource):
         """
         Download ECMWF GRIB file for a specific model run.
 
+        Implements simple caching: if the file already exists at dest_path,
+        it is reused instead of downloading again. This is useful because
+        multiple intervals from the same run share the same GRIB file.
+
         Args:
             source_uri: Run identifier (e.g., "2026-02-05T00Z")
             dest_path: Local path to save the downloaded GRIB file
@@ -145,6 +173,13 @@ class EcmwfDataSource(DataSource):
         Returns:
             Path to the downloaded file.
         """
+        # Check if file already exists (cache for multiple intervals from same run)
+        if dest_path.exists() and dest_path.stat().st_size > 0:
+            logger.info(
+                f"[{self.source_id}] Reusing cached GRIB file for {source_uri} at {dest_path}"
+            )
+            return dest_path
+
         # Parse run time from source_uri
         run_time = self._parse_run_id(source_uri)
 

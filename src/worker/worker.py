@@ -1,9 +1,11 @@
 """Worker implementation for processing work units from RabbitMQ."""
 
+import asyncio
 from asyncio import AbstractEventLoop, new_event_loop, set_event_loop
 from logging import getLogger
 from signal import signal, SIGINT, SIGTERM
 from pathlib import Path
+from threading import Thread, Event
 from typing import Optional
 
 from clients.rabbitmq_client import RabbitMQClient
@@ -52,6 +54,8 @@ class Worker:
         self._handler = handler
         self._running = True
         self._loop: Optional[AbstractEventLoop] = None
+        self._cleanup_thread: Optional[Thread] = None
+        self._cleanup_stop_event = Event()
 
     def _check_readiness(self) -> tuple[bool, str]:
         """Check if external dependencies are available."""
@@ -79,6 +83,9 @@ class Worker:
         )
         self._health_server.start()
 
+        # Start background cleanup task
+        self._start_cleanup_task()
+
         # Set up signal handlers for graceful shutdown
         signal(SIGINT, self._signal_handler)
         signal(SIGTERM, self._signal_handler)
@@ -103,6 +110,13 @@ class Worker:
     def _shutdown(self) -> None:
         """Clean shutdown of the worker."""
         logger.info("Worker shutting down...")
+
+        # Stop cleanup task
+        if self._cleanup_thread and self._cleanup_thread.is_alive():
+            logger.info("Stopping cleanup task...")
+            self._cleanup_stop_event.set()
+            self._cleanup_thread.join(timeout=5)
+
         try:
             self._mq_client.close()
         except Exception as e:
@@ -160,6 +174,34 @@ class Worker:
                 client.publish_to_dlq(work_unit, str(e))
 
             return True  # Acknowledge (we've handled it via retry or DLQ)
+
+    def _start_cleanup_task(self):
+        """Start background thread for periodic file cleanup."""
+        def cleanup_loop():
+            """Run cleanup every 30 minutes."""
+            logger.info("Cleanup task started (runs every 30 minutes)")
+
+            while not self._cleanup_stop_event.is_set():
+                # Wait 30 minutes or until stop event
+                if self._cleanup_stop_event.wait(timeout=1800):  # 30 minutes
+                    break
+
+                try:
+                    logger.debug("Running periodic file cleanup...")
+                    # Run cleanup in the event loop
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._handler.cleanup_old_files(),
+                        self._loop
+                    )
+                    # Wait for completion with timeout
+                    future.result(timeout=300)  # 5 minute timeout for cleanup
+                except Exception as e:
+                    logger.error(f"Error in cleanup task: {e}")
+
+            logger.info("Cleanup task stopped")
+
+        self._cleanup_thread = Thread(target=cleanup_loop, daemon=True, name="CleanupTask")
+        self._cleanup_thread.start()
 
 
 def _create_data_source_registry(config: Config) -> DataSourceRegistry:

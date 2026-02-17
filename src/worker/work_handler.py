@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import time
 from collections import deque
 from logging import getLogger
 from pathlib import Path
@@ -42,6 +43,9 @@ class WorkHandler:
         self._progress_tracker = progress_tracker
         self._data_source_registry = data_source_registry
         self._base_dir = Path(config.TMP_DIR)
+        # TTL for cached files (e.g., GRIB files shared across intervals)
+        # 2 hours is enough for all 24 ECMWF intervals to process
+        self._cleanup_ttl_seconds = 7200  # 2 hours
 
     async def handle(self, work_unit: WorkUnit) -> None:
         """
@@ -61,14 +65,30 @@ class WorkHandler:
 
         # Setup directories
         raw_dir = self._ensure_dir(self._base_dir / work_unit.product_id / "raw")
-        local_path = raw_dir / work_unit.image_id
+        # Use source_uri for download path to enable caching for shared sources
+        # (e.g., ECMWF intervals from the same run share the same GRIB file)
+        local_path = raw_dir / work_unit.source_uri
 
         try:
             # Step 1: Download (lightweight, stays in main process)
-            download_start = perf_counter()
-            logger.info(f"[HANDLER] Downloading {work_unit.image_id}")
-            await data_source.download(work_unit.source_uri, local_path)
-            download_time = perf_counter() - download_start
+            # Use cached file if exists and not stale
+            should_download = (
+                not local_path.exists()
+                or self._is_file_stale(local_path)
+            )
+
+            if should_download:
+                download_start = perf_counter()
+                logger.info(f"[HANDLER] Downloading {work_unit.source_uri}")
+                await data_source.download(work_unit.source_uri, local_path)
+                download_time = perf_counter() - download_start
+                logger.info(
+                    f"[HANDLER] Downloaded {work_unit.source_uri} in {download_time:.2f}s"
+                )
+            else:
+                logger.info(
+                    f"[HANDLER] Reusing cached file for {work_unit.source_uri}: {local_path.name}"
+                )
 
             # Step 2: Process in subprocess (heavy libraries isolated)
             process_start = perf_counter()
@@ -86,15 +106,15 @@ class WorkHandler:
             total_time = perf_counter() - total_start
             logger.info(
                 f"[HANDLER] Completed end2end processing and upload | "
-                f"download: {download_time:.2f}s, "
                 f"process: {process_time:.2f}s, "
                 f"total: {total_time:.2f}s | "
                 f"image_id: {work_unit.image_id}"
             )
 
         finally:
-            # Cleanup downloaded file
-            self._cleanup_file(local_path)
+            # Don't cleanup here - let periodic cleanup task handle it
+            # This allows file reuse across multiple intervals from same source
+            pass
 
     def _run_processing_subprocess(self, work_unit: WorkUnit, file_path: str) -> None:
         """
@@ -212,3 +232,56 @@ class WorkHandler:
                 logger.debug(f"Cleaned up: {file_path}")
         except Exception as e:
             logger.warning(f"Failed to cleanup file {file_path}: {e}")
+
+    def _is_file_stale(self, file_path: Path) -> bool:
+        """Check if cached file is older than TTL."""
+        try:
+            mtime = file_path.stat().st_mtime
+            age_seconds = time.time() - mtime
+            return age_seconds > self._cleanup_ttl_seconds
+        except Exception:
+            return True
+
+    async def cleanup_old_files(self):
+        """
+        Periodic cleanup task to remove cached files older than TTL.
+
+        This prevents indefinite accumulation of downloaded files while
+        allowing reuse across multiple work units (e.g., ECMWF intervals
+        from the same model run share one GRIB file).
+        """
+        cleaned_count = 0
+        total_size = 0
+
+        try:
+            for product_dir in self._base_dir.iterdir():
+                if not product_dir.is_dir():
+                    continue
+
+                raw_dir = product_dir / "raw"
+                if not raw_dir.exists():
+                    continue
+
+                for file_path in raw_dir.iterdir():
+                    try:
+                        age_seconds = time.time() - file_path.stat().st_mtime
+                        if age_seconds > self._cleanup_ttl_seconds:
+                            file_size = file_path.stat().st_size
+                            file_path.unlink()
+                            cleaned_count += 1
+                            total_size += file_size
+                            logger.info(
+                                f"Cleaned up old cached file: {file_path.name} "
+                                f"(age: {age_seconds/60:.1f} minutes, "
+                                f"size: {file_size/1024/1024:.1f} MB)"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup {file_path}: {e}")
+
+            if cleaned_count > 0:
+                logger.info(
+                    f"Cleanup complete: removed {cleaned_count} file(s), "
+                    f"freed {total_size/1024/1024:.1f} MB"
+                )
+        except Exception as e:
+            logger.error(f"Error during cleanup task: {e}")
