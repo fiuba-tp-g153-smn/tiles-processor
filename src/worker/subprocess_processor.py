@@ -42,6 +42,7 @@ def create_processor_registry():
         Band2Processor,
         GlmFedProcessor,
         RadarProcessor,
+        EcmwfProcessor,
     )
 
     registry = ProcessorRegistry()
@@ -58,6 +59,9 @@ def create_processor_registry():
 
     # Register Radar processor
     registry.register("radar", RadarProcessor)
+
+    # Register ECMWF processor
+    registry.register("ecmwf_precipitation", EcmwfProcessor)
 
     return registry
 

@@ -387,6 +387,39 @@ class S3Client:
     # Upload Methods (for authenticated access to MinIO/S3)
     # =========================================================================
 
+    async def upload_file(self, local_path: Path, s3_key: str) -> bool:
+        """
+        Upload a single file to S3/MinIO.
+
+        Args:
+            local_path: Local file path to upload
+            s3_key: S3 key (path) where the file will be stored
+
+        Returns:
+            True if upload succeeded, False otherwise
+        """
+        if not Path(local_path).exists():
+            logger.warning("File does not exist: %s", local_path)
+            return False
+
+        logger.info(
+            "Uploading file to s3://%s/%s",
+            self._bucket_name,
+            s3_key,
+        )
+
+        async with self._session.client(
+            "s3", **self._get_client_kwargs(authenticated=True)
+        ) as s3_client:
+            result = await self._upload_file(s3_client, Path(local_path), s3_key)
+
+        if result:
+            logger.info("Successfully uploaded file to S3: %s", s3_key)
+        else:
+            logger.error("Failed to upload file to S3: %s", s3_key)
+
+        return result
+
     async def upload_directory(self, local_dir: Path, s3_prefix: str) -> int:
         """
         Upload a directory recursively to S3.
@@ -532,6 +565,25 @@ class S3Client:
                     prefixes.append(common_prefix["Prefix"])
 
         return prefixes
+
+    async def exists(self, s3_key: str) -> bool:
+        """
+        Check if an object exists in S3/MinIO.
+
+        Args:
+            s3_key: The S3 key (path) of the object to check
+
+        Returns:
+            True if the object exists, False otherwise
+        """
+        try:
+            async with self._session.client(
+                "s3", **self._get_client_kwargs(authenticated=True)
+            ) as s3_client:
+                await s3_client.head_object(Bucket=self._bucket_name, Key=s3_key)
+                return True
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
 
     async def ensure_bucket_exists(self) -> bool:
         """

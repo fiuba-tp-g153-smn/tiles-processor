@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-venv \
     curl \
+    libeccodes-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry
@@ -29,6 +30,13 @@ RUN (poetry check --lock || poetry lock) && poetry install --without dev --no-ro
 # Stage 2: Runtime
 ################################
 FROM ghcr.io/osgeo/gdal:ubuntu-small-latest-amd64 AS runner
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies for ecCodes (required by cfgrib for GRIB file processing)
+RUN apt-get update && apt-get install -y \
+    libeccodes0 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

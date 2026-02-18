@@ -10,9 +10,11 @@ from data_sources import (
     Goes19AbiDataSource,
     Goes19GlmDataSource,
     RadarDataSource,
+    EcmwfDataSource,
 )
 from models.band_config import BAND_CONFIGS
 from models.radar_config import RADAR_PRODUCT_CONFIGS
+from models.ecmwf_config import ECMWF_CONFIGS
 
 
 def create_data_source_registry(config: Config = None) -> DataSourceRegistry:
@@ -32,6 +34,11 @@ def create_data_source_registry(config: Config = None) -> DataSourceRegistry:
         radar_input_dir = Path(config.RADAR_INPUT_DIR)
         for _product_id, product_config in RADAR_PRODUCT_CONFIGS.items():
             registry.register(RadarDataSource(product_config, radar_input_dir))
+
+        # Register ECMWF data sources
+        minio_client = create_minio_client(config)
+        for _product_id, ecmwf_config in ECMWF_CONFIGS.items():
+            registry.register(EcmwfDataSource(ecmwf_config, minio_client))
 
     return registry
 

@@ -5,6 +5,7 @@ from data_sources.registry import DataSourceRegistry
 from data_sources.goes19_abi import Goes19AbiDataSource
 from data_sources.goes19_glm import Goes19GlmDataSource
 from data_sources.radar import RadarDataSource
+from data_sources.ecmwf import EcmwfDataSource
 
 __all__ = [
     "DataSource",
@@ -14,4 +15,5 @@ __all__ = [
     "Goes19AbiDataSource",
     "Goes19GlmDataSource",
     "RadarDataSource",
+    "EcmwfDataSource",
 ]

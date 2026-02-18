@@ -3,11 +3,12 @@
   "tile_retention_days": 1,
   "radar_input_dir": "/data/radar_h5",
   "features": {
-    "enable_band_13": true,
-    "enable_band_9": true,
-    "enable_band_2": true,
-    "enable_glm_fed": true,
-    "enable_radar": false
+    "enable_band_13": false,
+    "enable_band_9": false,
+    "enable_band_2": false,
+    "enable_glm_fed": false,
+    "enable_radar": false,
+    "enable_ecmwf_precipitation": true
   },
   "bounds": {
     "minx": -90.0,

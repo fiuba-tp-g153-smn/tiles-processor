@@ -1,6 +1,6 @@
 """Producer that discovers new images and publishes work units."""
 
-from asyncio import Event, get_running_loop, run
+from asyncio import Event, get_running_loop, run, gather
 from logging import getLogger
 from signal import SIGINT, SIGTERM
 from datetime import datetime, UTC, timedelta
@@ -60,34 +60,45 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         """
         Discover new images and publish work units.
 
+        Processes all data sources in parallel to avoid blocking.
+
         Returns:
             Number of work units published
         """
         current_time = datetime.now(UTC)
         bounds = self._config.get_bounds()
-        total_published = 0
 
-        # Process each registered data source
+        # Prepare tasks for all enabled data sources
+        tasks = []
+        source_names = []
+
         for data_source in self._data_source_registry.get_all():
             if not self._is_source_enabled(data_source):
                 logger.info("Skipping %s (disabled in config)", data_source.source_id)
                 continue
 
             logger.info("Discovering new images for %s...", data_source.source_id)
+            tasks.append(self._discover_source(current_time, data_source, bounds))
+            source_names.append(data_source.source_id)
 
-            try:
-                count = await self._discover_source(current_time, data_source, bounds)
-                total_published += count
-                logger.info(
-                    "Published %d work units for %s",
-                    count,
-                    data_source.source_id,
-                )
-            except Exception as e:  # pylint: disable=broad-exception-caught
+        # Execute all data source discoveries in parallel
+        results = await gather(*tasks, return_exceptions=True)
+
+        # Process results
+        total_published = 0
+        for source_name, result in zip(source_names, results):
+            if isinstance(result, Exception):
                 logger.exception(
                     "Error discovering images for %s: %s",
-                    data_source.source_id,
-                    e,
+                    source_name,
+                    result,
+                )
+            else:
+                total_published += result
+                logger.info(
+                    "Published %d work units for %s",
+                    result,
+                    source_name,
                 )
 
         logger.info("Total work units published: %d", total_published)
@@ -110,6 +121,9 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         # Check for radar sources (radar_DBZH, radar_VRAD, etc.)
         if source_id.startswith("radar_"):
             return self._config.ENABLE_RADAR
+        # Check for ECMWF sources (ecmwf_precipitation, etc.)
+        if source_id.startswith("ecmwf_"):
+            return self._config.ENABLE_ECMWF_PRECIPITATION
 
         # Default: enabled if registered
         return True
@@ -121,7 +135,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         bounds: dict,
     ) -> int:
         """Discover and publish work units for a single data source."""
-        # Get band_id from band_config or product_config (for radar)
+        # Get band_id from band_config or product_config (for radar/ECMWF)
         if hasattr(data_source, "band_config"):
             band_id = data_source.band_config.band_id
             output_prefix = f"{band_id}/tiles"
@@ -132,6 +146,11 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             product_id = data_source.product_config.product_id
             # Search across all radar IDs for this product
             existing_tilesets = await self._get_radar_existing_tilesets(product_id)
+        elif hasattr(data_source, "_product_config"):
+            # ECMWF sources use product_id as band_id
+            band_id = f"ecmwf_{data_source._product_config.product_id}"  # pylint: disable=protected-access
+            output_prefix = data_source._product_config.s3_prefix  # pylint: disable=protected-access
+            existing_tilesets = await self._get_existing_tilesets(output_prefix)
         else:
             band_id = data_source.source_id
             output_prefix = f"{band_id}/tiles"
