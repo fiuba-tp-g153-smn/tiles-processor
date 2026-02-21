@@ -131,7 +131,7 @@ class TestWindowCompletenessFilter:
         # Assert: One window returned
         assert len(result) == 1, "Complete window should be included"
         assert (
-            result[0].image_id == "GLM_FED_s2026044120000"
+            result[0].image_id == "2026044120000"
         )  # Day 44 = Feb 13, format: sYYYYjjjHHMMSS
 
     @pytest.mark.asyncio
@@ -215,8 +215,8 @@ class TestWindowCompletenessFilter:
         # Assert: Only first two windows returned (sorted descending by time)
         assert len(result) == 2, "Two complete windows should be included"
         # Results are sorted descending, so 12:10 window comes first
-        assert result[0].image_id == "GLM_FED_s2026044121000"  # 12:10 window
-        assert result[1].image_id == "GLM_FED_s2026044120000"  # 12:00 window
+        assert result[0].image_id == "2026044121000"  # 12:10 window
+        assert result[1].image_id == "2026044120000"  # 12:00 window
 
     @pytest.mark.asyncio
     async def test_empty_result_all_incomplete(self, glm_source):
@@ -308,7 +308,7 @@ class TestWindowCompletenessFilter:
         glm_source._collect_candidates_from_hourly_paths = AsyncMock(return_value=files)
 
         # Mark first window as already processed
-        existing_tilesets = {"GLM_FED_s2026044120000"}  # 12:00 window
+        existing_tilesets = {"2026044120000"}  # 12:00 window
 
         # Run discovery
         config = DiscoveryConfig(
@@ -322,7 +322,7 @@ class TestWindowCompletenessFilter:
 
         # Assert: Only second window returned (first filtered by existing_tilesets)
         assert len(result) == 1, "existing_tilesets filter should still work"
-        assert result[0].image_id == "GLM_FED_s2026044121000"  # 12:10 window only
+        assert result[0].image_id == "2026044121000"  # 12:10 window only
 
 
 class TestWindowGrouping:
