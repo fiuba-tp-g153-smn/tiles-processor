@@ -193,7 +193,7 @@ class TestGenerateGeoTIFFService:
         assert "maxy" in bounds
 
         # Verify Argentina-region defaults in constant
-        assert bounds["minx"] == -90.0
+        assert bounds["minx"] == -110.0
         assert bounds["miny"] == -60.0
         assert bounds["maxx"] == -30.0
         assert bounds["maxy"] == -15.0
