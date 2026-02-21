@@ -308,7 +308,7 @@ class TestWindowCompletenessFilter:
         glm_source._collect_candidates_from_hourly_paths = AsyncMock(return_value=files)
 
         # Mark first window as already processed
-        existing_tilesets = {"2026044120000"}  # 12:00 window
+        existing_tilesets = {"20260213120000"}  # 12:00 window
 
         # Run discovery
         config = DiscoveryConfig(
