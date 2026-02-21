@@ -78,7 +78,7 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
 
     # Default bounding box (Argentina with margin)
     DEFAULT_BOUNDS = {
-        "minx": -90.0,  # 90°W - Pacific (includes Chile, Peru)
+        "minx": -110.0,  # 110°W - Pacific (includes Chile, Peru)
         "miny": -60.0,  # 60°S - Further south (ocean/Antarctica)
         "maxx": -30.0,  # 30°W - Middle of Atlantic
         "maxy": -15.0,  # 15°S - North (Bolivia/Brazil)

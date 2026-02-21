@@ -161,8 +161,7 @@ class GlmFedProcessor(ImageProcessor):
         # pylint: disable=duplicate-code
         self._check_shutdown()
         logger.info("Step 4: Upload to MinIO")
-        tileset_name = f"{geotiff_path.stem}_tiles"
-        s3_prefix = f"{band_config.s3_prefix}/{tileset_name}"
+        s3_prefix = f"{band_config.s3_prefix}/{geotiff_path.stem}"
 
         await self._minio_client.ensure_bucket_exists()
         await self._minio_client.upload_directory(tiles_output_dir, s3_prefix)

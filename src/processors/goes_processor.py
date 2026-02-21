@@ -63,7 +63,7 @@ class GoesProcessor(ImageProcessor):
 
         # Setup per-image work directory to isolate concurrent workers
         band_dir = self._get_band_dir(work_unit)
-        image_stem = Path(work_unit.image_id).stem
+        image_stem = work_unit.image_id
         work_dir = self._ensure_dir(band_dir / image_stem)
         geotiff_dir = self._ensure_dir(work_dir / "geotiff")
         tiles_dir = self._ensure_dir(work_dir / "tiles")
@@ -152,8 +152,7 @@ class GoesProcessor(ImageProcessor):
         # pylint: disable=duplicate-code
         self._check_shutdown()
         logger.info("Step 5: Upload to S3")
-        tileset_name = f"{geotiff_path.stem}_tiles"
-        s3_prefix = f"{band_config.s3_prefix}/{tileset_name}"
+        s3_prefix = f"{band_config.s3_prefix}/{geotiff_path.stem}"
 
         await self._minio_client.ensure_bucket_exists()
         await self._minio_client.upload_directory(tiles_output_dir, s3_prefix)
@@ -254,8 +253,7 @@ class GoesProcessor(ImageProcessor):
         gc.collect()
 
         # Save
-        stem = Path(image_id).stem
-        output_path = output_dir / f"{stem}.tif"
+        output_path = output_dir / f"{image_id}.tif"
         tmp_path = output_dir / f"{uuid.uuid4()}.tif"
 
         try:

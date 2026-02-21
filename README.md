@@ -282,7 +282,7 @@ docker run --rm -it python:3-alpine sh -c "python -c 'import secrets; print(\"Ge
 | `ENABLE_BAND_9`             | Enable/Disable Band 9 processing (`true`/`false`).      | `true`       |
 | `DATA_DIR_HOST`             | Local path for data files (host).                       | `./data`     |
 | `DATA_DIR`                  | Container path for data files.                          | `/app/data`  |
-| `BOUNDS_MINX`               | West longitude for clipping (EPSG:4326).                | `-90.0`      |
+| `BOUNDS_MINX`               | West longitude for clipping (EPSG:4326).                | `-110.00`      |
 | `BOUNDS_MINY`               | South latitude for clipping (EPSG:4326).                | `-60.0`      |
 | `BOUNDS_MAXX`               | East longitude for clipping (EPSG:4326).                | `-30.0`      |
 | `BOUNDS_MAXY`               | North latitude for clipping (EPSG:4326).                | `-15.0`      |
@@ -309,7 +309,7 @@ Feature toggles and geographic bounds are configured in `settings.json`:
     "enable_radar": false
   },
   "bounds": {
-    "minx": -90.0,
+    "minx": -110.0,
     "miny": -60.0,
     "maxx": -30.0,
     "maxy": -15.0

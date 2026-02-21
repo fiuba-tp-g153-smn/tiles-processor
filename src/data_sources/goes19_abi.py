@@ -1,6 +1,7 @@
 """GOES-19 ABI (Advanced Baseline Imager) satellite data source implementation."""
 
 import logging
+import re
 from pathlib import Path
 
 from data_sources.base import ImageInfo, DiscoveryConfig
@@ -70,19 +71,24 @@ class Goes19AbiDataSource(Goes19BaseDataSource):
         new_images = []
         for s3_key in target_candidates:
             filename = s3_key.split("/")[-1]
-            stem = Path(filename).stem
+
+            # Extract timestamp (s20260521320209 -> 20260521320209)
+            match = re.search(r's(\d{14})_', filename)
+            if not match:
+                continue
+            timestamp = match.group(1)
 
             # Skip if tiles already exist
-            if stem in config.existing_tilesets:
+            if timestamp in config.existing_tilesets:
                 continue
 
             # Skip if already in progress
-            if filename in config.in_progress_images:
+            if timestamp in config.in_progress_images:
                 continue
 
             new_images.append(
                 ImageInfo(
-                    image_id=filename,
+                    image_id=timestamp,
                     source_uri=s3_key,
                     data_source_id=self.source_id,
                     processor_id=self.processor_id,

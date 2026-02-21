@@ -184,9 +184,9 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
         return list(windows.items())
 
     def _create_window_id(self, window_start: datetime) -> str:
-        """Create a unique ID for a time window."""
-        # Format: GLM_FED_s20260212120000
-        return f"GLM_FED_{window_start.strftime('s%Y%j%H%M%S')}"
+        """Create a unique ID for a time window (timestamp only)."""
+        # Format: 20260521120000 (YYYYMMDDHHMMSS)
+        return window_start.strftime('%Y%m%d%H%M%S')
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         """
