@@ -57,13 +57,13 @@ This is a **distributed satellite imagery processing system** using a producer-w
 ### Processing Flow
 
 ```
-NOAA S3 (GOES-19) → Producer (discovery) → RabbitMQ → Workers (1-5) → MinIO (tiles)
+NOAA S3 (GOES-19) → Producer (discovery) → RabbitMQ → Workers (1-5) → Seaweedfs (tiles)
 ```
 
-1. **Producer** (`src/producer/`): Runs on cron schedule, discovers new satellite images from NOAA S3, checks MinIO for already-processed images, publishes work units to RabbitMQ
+1. **Producer** (`src/producer/`): Runs on cron schedule, discovers new satellite images from NOAA S3, checks Seaweedfs for already-processed images, publishes work units to RabbitMQ
 2. **Workers** (`src/worker/`): Consume work units, execute processing pipeline (download → georeference → brightness temp → GeoTIFF → tiles → upload → cleanup)
 3. **RabbitMQ**: Work queue with dead letter queue for failed messages, manual ack, prefetch=1
-4. **MinIO**: S3-compatible storage for generated XYZ map tiles
+4. **Seaweedfs**: S3-compatible storage for generated XYZ map tiles
 
 ### Key Components
 
@@ -183,7 +183,7 @@ NOAA S3 (GOES-19) → Producer (discovery) → RabbitMQ → Workers (1-5) → Mi
 - **Dead letter exchange**: Route failed messages for later analysis
 - **Connection pooling**: Reuse channels within a connection
 
-#### S3/MinIO Best Practices
+#### S3/Seaweedfs Best Practices
 
 - **Multipart uploads**: Use for files >5MB to improve reliability
 - **Async client**: Use aioboto3 for non-blocking S3 operations

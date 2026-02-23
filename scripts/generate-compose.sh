@@ -60,25 +60,21 @@ fi
 # Set mode-specific variables
 if [ "$DEV_MODE" = true ]; then
     MODE_LABEL="dev"
-    MINIO_CONTAINER_NAME="tiles-processor-dev-minio"
-    MINIO_SETUP_CONTAINER_NAME="tiles-processor-dev-minio-setup"
+    SEAWEEDFS_CONTAINER_NAME="tiles-processor-dev-seaweedfs"
     RABBITMQ_VOLUME="rabbitmq_dev_data"
-    MINIO_DATA_VOLUME="./data_minio:/data"
+    SEAWEEDFS_DATA_VOLUME="./data_seaweedfs:/data"
     APP_DATA_VOLUME="./data:\${DATA_DIR}"
     RABBITMQ_RETRIES="10"
-    MINIO_RETRIES="10"
-    MINIO_SETUP_RETRIES="10"
+    SEAWEEDFS_RETRIES="10"
     APP_RETRIES="3"
 else
     MODE_LABEL="prod"
-    MINIO_CONTAINER_NAME="tiles-processor-minio"
-    MINIO_SETUP_CONTAINER_NAME="tiles-processor-minio-setup"
+    SEAWEEDFS_CONTAINER_NAME="tiles-processor-seaweedfs"
     RABBITMQ_VOLUME="rabbitmq_data"
-    MINIO_DATA_VOLUME="minio_data:/data"
+    SEAWEEDFS_DATA_VOLUME="seaweedfs_data:/data"
     APP_DATA_VOLUME="tiles_data:/app/data"
     RABBITMQ_RETRIES="10"
-    MINIO_RETRIES="10"
-    MINIO_SETUP_RETRIES="10"
+    SEAWEEDFS_RETRIES="10"
     APP_RETRIES="20"
 fi
 
@@ -125,56 +121,34 @@ services:
       start_period: 15s
       start_interval: 1s
 
-  # MinIO S3-compatible object storage
-  minio:
-    image: minio/minio:latest
-    container_name: ${MINIO_CONTAINER_NAME}
-    command: server /data --console-address ":9001"
-    ports:
-      - "\${S3_TILES_DATA_PORT}:9000"
-      - "\${MINIO_CONSOLE_PORT}:9001"
-    environment:
-      MINIO_ROOT_USER: \${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: \${MINIO_ROOT_PASSWORD}
-    volumes:
-      - ${MINIO_DATA_VOLUME}
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 30s
-      timeout: 10s
-      retries: ${MINIO_RETRIES}
-      start_period: 15s
-      start_interval: 1s
-
-  # MinIO setup service (creates buckets and users)
-  minio-setup:
-    image: minio/mc:latest
-    container_name: ${MINIO_SETUP_CONTAINER_NAME}
-    depends_on:
-      minio:
-        condition: service_healthy
-    volumes:
-      - ./scripts/init_minio.sh:/setup.sh
-      - ./scripts/keepalive.sh:/keepalive.sh
+  # SeaweedFS S3-compatible object storage
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    container_name: ${SEAWEEDFS_CONTAINER_NAME}
     entrypoint: /bin/sh
-    command: -c "chmod +x /keepalive.sh && /keepalive.sh /setup.sh"
-    restart: on-failure
+    command: -c "sh /start.sh"
+    ports:
+      - "\${S3_TILES_DATA_PORT}:8333"      # S3 API
+      - "\${SEAWEEDFS_CONSOLE_PORT}:9333"  # Master admin panel
+      - "\${SEAWEEDFS_FILER_PORT}:8888"    # Filer web UI / file explorer
     environment:
-      MINIO_ROOT_USER: \${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: \${MINIO_ROOT_PASSWORD}
-      MINIO_ENDPOINT: http://minio:\${S3_TILES_DATA_PORT}
-      BUCKET_NAME: \${S3_TILES_DATA_BUCKET_NAME}
-      S3_TILES_DATA_TILES_PROCESSOR_USER: \${S3_TILES_DATA_TILES_PROCESSOR_USER}
-      S3_TILES_DATA_TILES_PROCESSOR_PASSWORD: \${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
-      S3_TILES_DATA_DATA_SERVICE_USER: \${S3_TILES_DATA_DATA_SERVICE_USER}
-      S3_TILES_DATA_DATA_SERVICE_PASSWORD: \${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
+      - S3_ROOT_USER=\${S3_ROOT_USER}
+      - S3_ROOT_PASSWORD=\${S3_ROOT_PASSWORD}
+      - S3_TILES_DATA_BUCKET_NAME=\${S3_TILES_DATA_BUCKET_NAME}
+      - S3_TILES_DATA_TILES_PROCESSOR_USER=\${S3_TILES_DATA_TILES_PROCESSOR_USER}
+      - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=\${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
+      - S3_TILES_DATA_DATA_SERVICE_USER=\${S3_TILES_DATA_DATA_SERVICE_USER}
+      - S3_TILES_DATA_DATA_SERVICE_PASSWORD=\${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
+    volumes:
+      - ${SEAWEEDFS_DATA_VOLUME}
+      - ./scripts/seaweedfs_start.sh:/start.sh:ro
     healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/setup_done"]
-      interval: 30s
-      timeout: 10s
-      retries: ${MINIO_SETUP_RETRIES}
-      start_period: 15s
-      start_interval: 1s
+      test: ["CMD-SHELL", "test -f /tmp/seaweedfs_ready && wget -qO /dev/null http://localhost:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: ${SEAWEEDFS_RETRIES}
+      start_period: 30s
+      start_interval: 2s
 
   # Producer - discovers new images and publishes work units
   # Runs continuously with APScheduler (every 5 minutes)
@@ -184,7 +158,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      minio-setup:
+      seaweedfs:
         condition: service_healthy
     build:
       context: .
@@ -196,7 +170,7 @@ services:
     environment:
       - LOG_LEVEL=\${LOG_LEVEL}
       - DATA_DIR=\${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=minio:9000
+      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
       - S3_TILES_DATA_BUCKET_NAME=\${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - S3_TILES_DATA_TILES_PROCESSOR_USER=\${S3_TILES_DATA_TILES_PROCESSOR_USER}
@@ -232,7 +206,7 @@ for i in $(seq 1 "$NUM_WORKERS"); do
     depends_on:
       rabbitmq:
         condition: service_healthy
-      minio-setup:
+      seaweedfs:
         condition: service_healthy
     build:
       context: .
@@ -244,7 +218,7 @@ for i in $(seq 1 "$NUM_WORKERS"); do
     environment:
       - LOG_LEVEL=\${LOG_LEVEL}
       - DATA_DIR=\${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=minio:9000
+      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
       - S3_TILES_DATA_BUCKET_NAME=\${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - S3_TILES_DATA_TILES_PROCESSOR_USER=\${S3_TILES_DATA_TILES_PROCESSOR_USER}
@@ -281,7 +255,7 @@ else
     cat >> "$OUTPUT_FILE" << VOLUMES
 volumes:
   tiles_data:
-  minio_data:
+  seaweedfs_data:
   ${RABBITMQ_VOLUME}:
 VOLUMES
 fi

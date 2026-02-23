@@ -130,9 +130,7 @@ class TestWindowCompletenessFilter:
 
         # Assert: One window returned
         assert len(result) == 1, "Complete window should be included"
-        assert (
-            result[0].image_id == "20260213120000"
-        )  # Nuevo formato: YYYYMMDDHHMMSS
+        assert result[0].image_id == "20260213120000"  # Nuevo formato: YYYYMMDDHHMMSS
 
     @pytest.mark.asyncio
     async def test_exact_boundary_included(self, glm_source):
