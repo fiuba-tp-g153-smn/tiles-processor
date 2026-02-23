@@ -80,7 +80,6 @@ services:
     command: python3 src/main.py producer
     volumes:
       - ./data:${DATA_DIR}
-      - ./settings.json:/app/settings.json:ro
       - ./:/data/radar_h5:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
@@ -125,7 +124,6 @@ services:
     command: python3 src/main.py worker
     volumes:
       - ./data:${DATA_DIR}
-      - ./settings.json:/app/settings.json:ro
       - ./:/data/radar_h5:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
@@ -170,7 +168,6 @@ services:
     command: python3 src/main.py worker
     volumes:
       - ./data:${DATA_DIR}
-      - ./settings.json:/app/settings.json:ro
       - ./:/data/radar_h5:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
