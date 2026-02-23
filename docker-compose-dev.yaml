@@ -115,6 +115,7 @@ services:
   worker1:
     image: tiles-processor
     container_name: tiles-processor-worker1
+    stop_grace_period: 30s
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -159,6 +160,7 @@ services:
   worker2:
     image: tiles-processor
     container_name: tiles-processor-worker2
+    stop_grace_period: 30s
     depends_on:
       rabbitmq:
         condition: service_healthy
