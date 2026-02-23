@@ -1,6 +1,7 @@
 """Factory functions for constructing shared infrastructure objects from config."""
 
 from pathlib import Path
+from typing import Optional
 
 from clients.rabbitmq_client import RabbitMQClient
 from clients.s3_client import S3Client
@@ -15,11 +16,16 @@ from models.band_config import BAND_CONFIGS
 from models.radar_config import RADAR_PRODUCT_CONFIGS
 
 
-def create_data_source_registry(config: Config = None) -> DataSourceRegistry:
+def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRegistry:
     """Create and populate the data source registry with all known sources."""
     registry = DataSourceRegistry()
 
+    # Products computed as by-products of another source's processor (no separate download)
+    combined_products = {"glm_toe"}
+
     for _band_id, band_config in BAND_CONFIGS.items():
+        if band_config.band_id in combined_products:
+            continue
         if band_config.band_id.startswith("glm_"):
             # Register GLM sources (lightning products)
             registry.register(Goes19GlmDataSource(band_config))
@@ -51,8 +57,8 @@ def create_rabbitmq_client(config: Config) -> RabbitMQClient:
     return client
 
 
-def create_minio_client(config: Config) -> S3Client:
-    """Build an authenticated S3 client for MinIO tile storage."""
+def create_s3_client(config: Config) -> S3Client:
+    """Build an authenticated S3 client for tile storage."""
     return S3Client.create_with_credentials(
         bucket_name=config.S3_TILES_DATA_BUCKET_NAME,
         endpoint=config.S3_TILES_DATA_ENDPOINT,

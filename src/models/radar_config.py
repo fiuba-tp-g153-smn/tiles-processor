@@ -52,33 +52,29 @@ DBZH_CONFIG = RadarProductConfig(
     subvolume="01",
     colors=(
         # Zona Baja (Azules oscuros y grisáceos)
-        (-15, (60, 66, 109, 255)),    # Gris azulado muy oscuro
-        (-10, (61, 78, 123, 255)),   # Azul índigo oscuro
-        (-5,  (61, 89, 136, 255)),   # Azul marino
-        (0,   (60, 101, 150, 255)),   # Azul medio oscuro
-
+        (-15, (60, 66, 109, 255)),  # Gris azulado muy oscuro
+        (-10, (61, 78, 123, 255)),  # Azul índigo oscuro
+        (-5, (61, 89, 136, 255)),  # Azul marino
+        (0, (60, 101, 150, 255)),  # Azul medio oscuro
         # Zona Transición (Azules claros a Cyan)
-        (5,   (57, 113, 163, 255)),  # Azul rey/celeste oscuro
-        (10,  (47, 137, 187, 255)),  # Celeste
-        (15,  (38, 163, 209, 255)),   # Cyan / Turquesa
-
+        (5, (57, 113, 163, 255)),  # Azul rey/celeste oscuro
+        (10, (47, 137, 187, 255)),  # Celeste
+        (15, (38, 163, 209, 255)),  # Cyan / Turquesa
         # Zona Verde (Lluvia ligera a moderada)
-        (20,  (77, 225, 51, 255)),   # Verde Lima brillante
-        (25,  (58, 176, 39, 255)),   # Verde Hoja
-        (30,  (36, 114, 23, 255)),     # Verde Bosque oscuro
-
+        (20, (77, 225, 51, 255)),  # Verde Lima brillante
+        (25, (58, 176, 39, 255)),  # Verde Hoja
+        (30, (36, 114, 23, 255)),  # Verde Bosque oscuro
         # Zona Convectiva (Amarillo a Rojo)
-        (35,  (213, 217, 51, 255)),   # Amarillo puro
-        (40,  (214, 151, 25, 255)),   # Naranja
-        (45,  (193, 0, 23, 255)),     # Rojo brillante
-        (50,  (194, 0, 95, 255)),     # Rojo oscuro / Granate
-
+        (35, (213, 217, 51, 255)),  # Amarillo puro
+        (40, (214, 151, 25, 255)),  # Naranja
+        (45, (193, 0, 23, 255)),  # Rojo brillante
+        (50, (194, 0, 95, 255)),  # Rojo oscuro / Granate
         # Zona Severa (Violetas a Blanco)
-        (55,  (203, 0, 205, 255)),   # Púrpura oscuro
-        (60,  (223, 246, 237, 255)),   # Magenta / Fucsia
-        (65,  (167, 236, 207, 255)), # Blanco puro
-        (70,  (135, 223, 190, 255)), # Cyan pálido / Hielo
-        (75,  (135, 223, 190, 255)), # Verde menta muy pálido
+        (55, (203, 0, 205, 255)),  # Púrpura oscuro
+        (60, (223, 246, 237, 255)),  # Magenta / Fucsia
+        (65, (167, 236, 207, 255)),  # Blanco puro
+        (70, (135, 223, 190, 255)),  # Cyan pálido / Hielo
+        (75, (135, 223, 190, 255)),  # Verde menta muy pálido
     ),
     s3_prefix="radar",
 )

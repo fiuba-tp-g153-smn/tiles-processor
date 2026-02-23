@@ -1,4 +1,4 @@
-"""GLM Flash Extent Density (FED) processor."""
+"""GLM Flash Extent Density (FED) and Total Optical Energy (TOE) processor."""
 
 import asyncio
 import gc
@@ -7,13 +7,15 @@ import uuid
 from pathlib import Path
 
 from config import Config
-from factories import create_minio_client
+from factories import create_s3_client
+from models.band_config import BandConfig, get_band_config
 from models.work_unit import WorkUnit
 from processors.base_processor import ImageProcessor, ShutdownRequested
 from services.generate_geotiff_files import GenerateGeoTIFFFilesService
 from services.processing_steps import (
     build_rgba_data_array,
-    compute_flash_extent_density,
+    compute_glm_grids,
+    fill_missing_tiles,
     normalize_and_colorize,
     run_gdal2tiles,
 )
@@ -29,10 +31,10 @@ class GlmFedProcessor(ImageProcessor):
     1. Load all GLM-L2-LCFA files in 10-min window (from directory, not single file)
     2. Extract flash lat/lon coordinates
     3. Bin into 0.02° grid (2D histogram)
-    4. Colorize with LIGHTNING_PALETTE
+    4. Colorize with FED_PALETTE (or TOE_PALETTE for the TOE pass)
     5. Generate GeoTIFF (already in EPSG:4326, no reprojection needed)
     6. Generate tiles with gdal2tiles
-    7. Upload to MinIO
+    7. Upload to S3
 
     Key Difference from GOES Processors:
     - Input is a DIRECTORY of files, not a single NetCDF file
@@ -45,10 +47,10 @@ class GlmFedProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._minio_client = create_minio_client(config)
+        self._s3_client = create_s3_client(config)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
-        """Execute the GLM FED processing pipeline."""
+        """Execute the GLM FED (and optionally TOE) processing pipeline."""
         logger.info("[GLM-FED] Starting processing for %s", work_unit.image_id)
 
         # For GLM, downloaded_file_path is a DIRECTORY containing multiple L2-LCFA files
@@ -56,19 +58,18 @@ class GlmFedProcessor(ImageProcessor):
         if not data_dir.exists() or not data_dir.is_dir():
             raise FileNotFoundError(f"GLM data directory not found: {data_dir}")
 
-        # Setup work directory
+        # Setup work directory — FED and TOE use separate subdirs to avoid name collisions
         band_dir = self._get_band_dir(work_unit)
-        image_stem = work_unit.image_id
-        work_dir = self._ensure_dir(band_dir / image_stem)
-        geotiff_dir = self._ensure_dir(work_dir / "geotiff")
-        tiles_dir = self._ensure_dir(work_dir / "tiles")
-
-        fed_data = None
+        work_dir = self._ensure_dir(band_dir / work_unit.image_id)
+        fed_geotiff_dir = self._ensure_dir(work_dir / "fed" / "geotiff")
+        fed_tiles_dir = self._ensure_dir(work_dir / "fed" / "tiles")
+        toe_geotiff_dir = self._ensure_dir(work_dir / "toe" / "geotiff")
+        toe_tiles_dir = self._ensure_dir(work_dir / "toe" / "tiles")
 
         try:
-            # 1. Compute FED grid from all files
+            # 1. Compute FED and TOE grids in a single pass over GLM files
             self._check_shutdown()
-            logger.info("Step 1: Computing FED grid")
+            logger.info("Step 1: Computing GLM grids (FED + TOE)")
             glm_files = sorted(data_dir.glob("OR_GLM-L2-LCFA_*.nc"))
 
             if not glm_files:
@@ -76,32 +77,58 @@ class GlmFedProcessor(ImageProcessor):
 
             logger.info("Found %d GLM L2-LCFA files in window", len(glm_files))
 
-            fed_data = await asyncio.to_thread(
-                compute_flash_extent_density,
+            fed_data, toe_data = await asyncio.to_thread(
+                compute_glm_grids,
                 glm_files,
                 work_unit.bounds,
                 grid_resolution=0.02,
             )
 
-            # 2. Generate and upload
-            await self._generate_and_upload(fed_data, geotiff_dir, tiles_dir, work_unit)
+            # 2. FED — always generated
+            await self._generate_and_upload(
+                fed_data,
+                fed_geotiff_dir,
+                fed_tiles_dir,
+                work_unit,
+                get_band_config("glm_fed"),
+            )
+            del fed_data
+            gc.collect()
+
+            # 3. TOE — optional toggle
+            if self.config.ENABLE_GLM_TOE:
+                await self._generate_and_upload(
+                    toe_data,
+                    toe_geotiff_dir,
+                    toe_tiles_dir,
+                    work_unit,
+                    get_band_config("glm_toe"),
+                )
+            del toe_data
+            gc.collect()
 
         except ShutdownRequested:
-            logger.info("Shutdown requested, aborting GLM FED processing")
+            logger.info("Shutdown requested, aborting GLM processing")
             raise
         except Exception as e:
-            logger.error("GLM FED processing failed for %s: %s", work_unit.image_id, e)
+            logger.error("GLM processing failed for %s: %s", work_unit.image_id, e)
             raise
         finally:
             self._cleanup_directory(work_dir)
             gc.collect()
 
-    async def _generate_and_upload(  # pylint: disable=too-many-locals
-        self, fed_data, geotiff_dir, tiles_dir, work_unit
+    async def _generate_and_upload(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
+        self,
+        product_data,
+        geotiff_dir,
+        tiles_dir,
+        work_unit: WorkUnit,
+        band_config: BandConfig,
     ):
-        """Generate GeoTIFF, tiles, and upload to S3."""
-        band_config = work_unit.band_config
-        color_palette = GenerateGeoTIFFFilesService.LIGHTNING_PALETTE
+        """Generate GeoTIFF, tiles, and upload to S3 for the given product config."""
+        color_palette = GenerateGeoTIFFFilesService.get_palette(
+            band_config.palette_name
+        )
 
         # 2. GeoTIFF Generation
         self._check_shutdown()
@@ -109,7 +136,7 @@ class GlmFedProcessor(ImageProcessor):
 
         # Normalize and colorize
         r, g, b, a = normalize_and_colorize(
-            fed_data,
+            product_data,
             vmin=band_config.vmin,
             vmax=band_config.vmax,
             color_palette=color_palette,
@@ -121,13 +148,13 @@ class GlmFedProcessor(ImageProcessor):
             g,
             b,
             a,
-            coords_x=fed_data.coords["x"],
-            coords_y=fed_data.coords["y"],
+            coords_x=product_data.coords["x"],
+            coords_y=product_data.coords["y"],
             product_name=band_config.product_name,
         )
 
         # Clean up intermediate arrays
-        del fed_data, r, g, b, a
+        del product_data, r, g, b, a
         gc.collect()
 
         # Write GeoTIFF
@@ -157,14 +184,23 @@ class GlmFedProcessor(ImageProcessor):
             processes=self.GDAL_PROCESSES,
         )
 
-        # 4. Upload to MinIO
+        self._check_shutdown()
+        await asyncio.to_thread(
+            fill_missing_tiles,
+            tiles_output_dir,
+            work_unit.bounds,
+            self.ZOOM_LEVELS,
+        )
+
+        # 4. Upload to S3
         # pylint: disable=duplicate-code
         self._check_shutdown()
-        logger.info("Step 4: Upload to MinIO")
+        logger.info("Step 4: Upload to S3")
         s3_prefix = f"{band_config.s3_prefix}/{geotiff_path.stem}"
 
-        await self._minio_client.ensure_bucket_exists()
-        await self._minio_client.upload_directory(tiles_output_dir, s3_prefix)
+        await self._s3_client.ensure_bucket_exists()
+        self._check_shutdown()
+        await self._s3_client.upload_directory(tiles_output_dir, s3_prefix)
 
         logger.info("Processing complete: %s", s3_prefix)
 
@@ -174,4 +210,5 @@ class GlmFedProcessor(ImageProcessor):
         gc.collect()
         # pylint: enable=duplicate-code
 
-        logger.info("[GLM-FED] Processing complete for %s", work_unit.image_id)
+        logger.info("[GLM] %s processing complete: %s", band_config.band_id, s3_prefix)
+        self._check_shutdown()

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from data_sources.base import ImageInfo, DiscoveryConfig
@@ -42,7 +42,7 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
         super().__init__(
             band_config=band_config,
             product_path="GLM-L2-LCFA",
-            max_concurrent_downloads=8,
+            max_concurrent_downloads=self.MAX_CONCURRENT_DOWNLOADS,
         )
 
     @property
@@ -71,24 +71,26 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
         # Group files into 10-minute windows
         windows = self._group_into_windows(all_files)
 
-        # Sort by window start time (descending) and take latest N windows
+        # Sort by window start time (descending)
         windows.sort(key=lambda x: x[0], reverse=True)
-        candidate_windows = windows[: self.TARGET_WINDOWS]
 
         # Filter out incomplete windows (must have full duration elapsed)
-        target_windows = [
+        complete_windows = [
             (window_start, window_files)
-            for window_start, window_files in candidate_windows
+            for window_start, window_files in windows
             if window_start + timedelta(minutes=self.WINDOW_DURATION_MINUTES)
-            <= config.current_time.replace(tzinfo=None)
+            <= config.current_time
         ]
+
+        # Cap at TARGET_WINDOWS after filtering so we get up to N complete windows
+        target_windows = complete_windows[: self.TARGET_WINDOWS]
 
         logger.debug(
             "[%s] Filtered %d/%d windows (excluded %d incomplete windows)",
             self.source_id,
             len(target_windows),
-            len(candidate_windows),
-            len(candidate_windows) - len(target_windows),
+            len(windows),
+            len(windows) - len(complete_windows),
         )
 
         # Filter already processed
@@ -161,8 +163,8 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
                 minute = int(start_str[9:11])
                 second = int(start_str[11:13])
 
-                # Convert day-of-year to datetime
-                file_time = datetime(year, 1, 1) + timedelta(
+                # Convert day-of-year to datetime (UTC, matching NOAA filenames)
+                file_time = datetime(year, 1, 1, tzinfo=timezone.utc) + timedelta(
                     days=day_of_year - 1, hours=hour, minutes=minute, seconds=second
                 )
 
@@ -184,9 +186,21 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
         return list(windows.items())
 
     def _create_window_id(self, window_start: datetime) -> str:
-        """Create a unique ID for a time window (timestamp only)."""
-        # Format: 20260521120000 (YYYYMMDDHHMMSS)
-        return window_start.strftime('%Y%m%d%H%M%S')
+        """Create a unique ID for a time window.
+
+        Matches the NOAA 14-char timestamp format used by ABI: YYYYdddHHMMSSs
+        where ddd is day-of-year (001-366) and s is tenths of second (always 0
+        for window starts, which are aligned to 10-minute boundaries).
+        """
+        day_of_year = window_start.timetuple().tm_yday
+        return (
+            f"{window_start.year}"
+            f"{day_of_year:03d}"
+            f"{window_start.hour:02d}"
+            f"{window_start.minute:02d}"
+            f"{window_start.second:02d}"
+            f"0"
+        )
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         """

@@ -6,7 +6,7 @@ Processing pipeline:
 2. Convert polar coordinates to cartesian grid
 3. Apply colormap and create RGBA GeoTIFF
 4. Generate XYZ tiles with gdal2tiles
-5. Upload tiles to MinIO
+5. Upload tiles to S3
 """
 
 import gc
@@ -18,18 +18,18 @@ from pathlib import Path
 import numpy as np
 import rasterio
 from rasterio.transform import from_bounds
-from rasterio.crs import CRS
+from rasterio.crs import CRS  # pylint: disable=no-name-in-module
 import matplotlib.colors as mcolors
 
 from config import Config
-from factories import create_minio_client
+from factories import create_s3_client
 from models.work_unit import WorkUnit
 from models.radar_config import (
     parse_radar_filename,
     get_radar_product_config,
     RadarProductConfig,
 )
-from processors.base_processor import ImageProcessor, ShutdownRequested
+from processors.base_processor import ImageProcessor
 
 logger = getLogger(__name__)
 
@@ -51,9 +51,11 @@ class RadarProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._minio_client = create_minio_client(config)
+        self._s3_client = create_s3_client(config)
 
-    async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
+    async def process(  # pylint: disable=too-many-locals
+        self, downloaded_file_path: str, work_unit: WorkUnit
+    ) -> None:
         """Execute the full radar processing pipeline."""
         logger.info(
             "[RADAR] Starting processing for %s",
@@ -118,12 +120,13 @@ class RadarProcessor(ImageProcessor):
                 tiles_dir = sweep_dir / "tiles"
                 self._generate_tiles(geotiff_path, tiles_dir)
 
-                # Upload to MinIO
+                # Upload to S3
                 # Path format: radar/{radar_id}/{product}/{timestamp}_elev{N}/
                 # This matches the producer's tileset detection logic
                 self._check_shutdown()
                 s3_prefix = (
-                    f"radar/{parsed['radar_id']}/{parsed['variable']}/{parsed['timestamp']}_elev{sweep_idx}"
+                    f"radar/{parsed['radar_id']}/{parsed['variable']}/"
+                    f"{parsed['timestamp']}_elev{sweep_idx}"
                 )
                 await self._upload_tiles(tiles_dir, s3_prefix)
 
@@ -179,12 +182,12 @@ class RadarProcessor(ImageProcessor):
         )
         return grid
 
-    def _grid_to_geotiff(
+    def _grid_to_geotiff(  # pylint: disable=too-many-locals
         self,
         grid,
         output_path: Path,
         product_config: RadarProductConfig,
-        variable: str,
+        variable: str,  # pylint: disable=unused-argument
     ) -> None:
         """Save grid as colorized RGBA GeoTIFF."""
         logger.info("[RADAR] Creating GeoTIFF: %s", output_path.name)
@@ -262,9 +265,12 @@ class RadarProcessor(ImageProcessor):
 
         cmd = [
             "gdal2tiles.py",
-            "-p", "mercator",
-            "-z", self.ZOOM_LEVELS,
-            "-w", "none",
+            "-p",
+            "mercator",
+            "-z",
+            self.ZOOM_LEVELS,
+            "-w",
+            "none",
             f"--processes={self.GDAL_PROCESSES}",
             "--tiledriver=WEBP",
             str(geotiff_path),
@@ -279,8 +285,8 @@ class RadarProcessor(ImageProcessor):
         logger.info("[RADAR] Tiles generated successfully")
 
     async def _upload_tiles(self, tiles_dir: Path, s3_prefix: str) -> None:
-        """Upload generated tiles to MinIO."""
+        """Upload generated tiles to S3."""
         logger.info("[RADAR] Uploading tiles to %s", s3_prefix)
 
-        count = await self._minio_client.upload_directory(tiles_dir, s3_prefix)
-        logger.info("[RADAR] Uploaded %d files to MinIO", count)
+        count = await self._s3_client.upload_directory(tiles_dir, s3_prefix)
+        logger.info("[RADAR] Uploaded %d files to S3", count)

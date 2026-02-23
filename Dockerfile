@@ -39,6 +39,7 @@ RUN .venv/bin/pip install --no-cache-dir --upgrade arm-pyart
 
 # Copy project source code
 COPY src/ ./src/
+COPY settings.json ./settings.json
 
 # Use the venv for all subsequent commands
 ENV PATH="/app/.venv/bin:$PATH"

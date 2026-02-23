@@ -130,9 +130,7 @@ class TestWindowCompletenessFilter:
 
         # Assert: One window returned
         assert len(result) == 1, "Complete window should be included"
-        assert (
-            result[0].image_id == "20260213120000"
-        )  # Nuevo formato: YYYYMMDDHHMMSS
+        assert result[0].image_id == "20260441200000"  # NOAA format: YYYYdddHHMMSSs
 
     @pytest.mark.asyncio
     async def test_exact_boundary_included(self, glm_source):
@@ -215,8 +213,8 @@ class TestWindowCompletenessFilter:
         # Assert: Only first two windows returned (sorted descending by time)
         assert len(result) == 2, "Two complete windows should be included"
         # Results are sorted descending, so 12:10 window comes first
-        assert result[0].image_id == "20260213121000"  # 12:10 window
-        assert result[1].image_id == "20260213120000"  # 12:00 window
+        assert result[0].image_id == "20260441210000"  # 12:10 window
+        assert result[1].image_id == "20260441200000"  # 12:00 window
 
     @pytest.mark.asyncio
     async def test_empty_result_all_incomplete(self, glm_source):
@@ -255,9 +253,10 @@ class TestWindowCompletenessFilter:
     @pytest.mark.asyncio
     async def test_timezone_handling(self, glm_source):
         """
-        Test that UTC-aware current_time works correctly with naive window_start.
+        Test that UTC-aware current_time works correctly with UTC-aware window_start.
 
-        This verifies the .replace(tzinfo=None) timezone stripping works properly.
+        window_start is parsed as UTC-aware from NOAA filenames; current_time is
+        also UTC-aware, so the comparison is always aware-to-aware.
         """
         # Setup: Current time is UTC-aware
         current_time = datetime(2026, 2, 13, 12, 15, 0, tzinfo=UTC)
@@ -308,7 +307,7 @@ class TestWindowCompletenessFilter:
         glm_source._collect_candidates_from_hourly_paths = AsyncMock(return_value=files)
 
         # Mark first window as already processed
-        existing_tilesets = {"20260213120000"}  # 12:00 window
+        existing_tilesets = {"20260441200000"}  # 12:00 window
 
         # Run discovery
         config = DiscoveryConfig(
@@ -322,7 +321,7 @@ class TestWindowCompletenessFilter:
 
         # Assert: Only second window returned (first filtered by existing_tilesets)
         assert len(result) == 1, "existing_tilesets filter should still work"
-        assert result[0].image_id == "20260213121000"  # 12:10 window only
+        assert result[0].image_id == "20260441210000"  # 12:10 window only
 
 
 class TestWindowGrouping:
@@ -344,17 +343,23 @@ class TestWindowGrouping:
         # Should have 3 windows: 12:00, 12:10, 12:20
         assert len(windows) == 3, "Should group into 3 ten-minute windows"
 
-        # Check window start times
+        # Check window start times (UTC-aware, matching NOAA filename timestamps)
         window_starts = sorted([w[0] for w in windows])
         expected_starts = [
-            datetime(2026, 2, 13, 12, 0, 0),
-            datetime(2026, 2, 13, 12, 10, 0),
-            datetime(2026, 2, 13, 12, 20, 0),
+            datetime(2026, 2, 13, 12, 0, 0, tzinfo=UTC),
+            datetime(2026, 2, 13, 12, 10, 0, tzinfo=UTC),
+            datetime(2026, 2, 13, 12, 20, 0, tzinfo=UTC),
         ]
         assert window_starts == expected_starts, "Window start times should be correct"
 
         # Check file counts per window
         window_dict = {start: files for start, files in windows}
-        assert len(window_dict[datetime(2026, 2, 13, 12, 0, 0)]) == 10  # 12:00-12:09
-        assert len(window_dict[datetime(2026, 2, 13, 12, 10, 0)]) == 10  # 12:10-12:19
-        assert len(window_dict[datetime(2026, 2, 13, 12, 20, 0)]) == 5  # 12:20-12:24
+        assert (
+            len(window_dict[datetime(2026, 2, 13, 12, 0, 0, tzinfo=UTC)]) == 10
+        )  # 12:00-12:09
+        assert (
+            len(window_dict[datetime(2026, 2, 13, 12, 10, 0, tzinfo=UTC)]) == 10
+        )  # 12:10-12:19
+        assert (
+            len(window_dict[datetime(2026, 2, 13, 12, 20, 0, tzinfo=UTC)]) == 5
+        )  # 12:20-12:24

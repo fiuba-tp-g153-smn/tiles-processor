@@ -3,7 +3,7 @@ S3 Client for async downloads and uploads.
 
 Supports both:
 - Unsigned access for public buckets (e.g., NOAA's noaa-goes19)
-- Authenticated access for private buckets (e.g., MinIO for tile storage)
+- Authenticated access for private buckets (e.g., s3 for tile storage)
 """
 
 import asyncio
@@ -28,9 +28,9 @@ class S3Client:
     For private buckets with auth (uploads):
         client = S3Client.create_with_credentials(
             bucket_name="tiles-data",
-            endpoint="minio:9000",
-            access_key="minioadmin",
-            secret_key="minioadmin",
+            endpoint="s3-service:9000",
+            access_key="s3admin",
+            secret_key="s3admin",
         )
     """
 
@@ -50,9 +50,9 @@ class S3Client:
             bucket_name: S3 bucket name
             endpoint_url: S3 endpoint URL (optional, for S3-compatible services)
             max_concurrent_downloads: Maximum number of concurrent operations
-            access_key: AWS/MinIO access key (optional, for authenticated access)
-            secret_key: AWS/MinIO secret key (optional, for authenticated access)
-            secure: Use HTTPS (default: False for local MinIO)
+            access_key: S3 access key (optional, for authenticated access)
+            secret_key: S3 secret key (optional, for authenticated access)
+            secure: Use HTTPS (default: False for local S3)
         """
         self._bucket_name = bucket_name
         self._endpoint_url = endpoint_url
@@ -74,11 +74,11 @@ class S3Client:
         max_concurrent_operations: int = 10,
     ) -> "S3Client":
         """
-        Factory method to create an authenticated S3 client for MinIO/S3.
+        Factory method to create an authenticated S3 client for S3.
 
         Args:
             bucket_name: Target bucket name
-            endpoint: S3 endpoint (host:port, e.g., "minio:9000")
+            endpoint: S3 endpoint (host:port, e.g., "s3-service:9000")
             access_key: Access key (username)
             secret_key: Secret key (password)
             secure: Use HTTPS (default: False)
@@ -384,7 +384,7 @@ class S3Client:
         return file_paths
 
     # =========================================================================
-    # Upload Methods (for authenticated access to MinIO/S3)
+    # Upload Methods (for authenticated access to S3)
     # =========================================================================
 
     async def upload_directory(self, local_dir: Path, s3_prefix: str) -> int:
@@ -558,9 +558,9 @@ class S3Client:
 
     async def configure_lifecycle_policy(self, retention_days: int) -> bool:
         """
-        Configure MinIO lifecycle policy to automatically expire old tiles.
+        Configure S3 lifecycle policy to automatically expire old tiles.
 
-        MinIO will automatically delete objects older than the specified retention
+        S3 will automatically delete objects older than the specified retention
         period. This eliminates the need for application-level retention management.
 
         Args:
@@ -570,7 +570,7 @@ class S3Client:
             True if lifecycle policy was configured successfully
 
         Note:
-            MinIO lifecycle policies are checked periodically (typically every 24 hours),
+            S3 lifecycle policies are checked periodically (typically every 24 hours),
             so objects may not be deleted exactly at the expiration time.
         """
         try:

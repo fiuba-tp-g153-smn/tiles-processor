@@ -42,6 +42,30 @@ from services.processing_steps import build_rgba_data_array, normalize_and_color
 logger = logging.getLogger(__name__)
 
 
+def _interpolate_palette(  # pylint: disable=too-many-locals
+    control_points: list[tuple[int, int, int, int]],
+) -> list[str]:
+    """Build a 256-entry hex palette by linearly interpolating between control points.
+
+    Args:
+        control_points: List of (index, r, g, b) tuples, index in 0–255.
+                        Must start at index 0 and end at index 255.
+    """
+    result = []
+    for i in range(256):
+        for j in range(len(control_points) - 1):
+            idx0, r0, g0, b0 = control_points[j]
+            idx1, r1, g1, b1 = control_points[j + 1]
+            if idx0 <= i <= idx1:
+                t = (i - idx0) / (idx1 - idx0) if idx1 != idx0 else 0.0
+                r = round(r0 + t * (r1 - r0))
+                g = round(g0 + t * (g1 - g0))
+                b = round(b0 + t * (b1 - b0))
+                result.append(f"#{r:02x}{g:02x}{b:02x}")
+                break
+    return result
+
+
 class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
     """
     Generates colorized RGBA GeoTIFF files from brightness temperature data.
@@ -609,275 +633,56 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
     # Low reflectance (surface/ocean) = dark, high reflectance (clouds) = white
     VISIBLE_PALETTE = [f"#{i:02x}{i:02x}{i:02x}" for i in range(256)]
 
-    # Palette for GLM - Lightning (Flash Extent Density)
-    # Flash count range: 0 to 100+ flashes per grid cell per 10 minutes
-    # Very Faint Yellow → Bright Yellow → Orange → Red → White
-    # All values visible (no fully transparent colors)
-    LIGHTNING_PALETTE = [
-        # Very low (0-15): Very faint yellow (5-20% opacity) - barely visible
-        "#ffff0008",
-        "#ffff0009",
-        "#ffff000a",
-        "#ffff000b",
-        "#ffff000c",
-        "#ffff000d",
-        "#ffff000e",
-        "#ffff000f",
-        "#ffff0010",
-        "#ffff0011",
-        "#ffff0012",
-        "#ffff0013",
-        "#ffff0014",
-        "#ffff0015",
-        "#ffff0016",
-        "#ffff0017",
-        # Low (16-45): Faint to visible yellow (increasing opacity)
-        "#ffff0018",
-        "#ffff001e",
-        "#ffff0024",
-        "#ffff002a",
-        "#ffff0030",
-        "#ffff0036",
-        "#ffff003c",
-        "#ffff0042",
-        "#ffff0048",
-        "#ffff004e",
-        "#ffff0054",
-        "#ffff005a",
-        "#ffff0060",
-        "#ffff0066",
-        "#ffff006c",
-        "#ffff0072",
-        "#ffff0078",
-        "#ffff007e",
-        "#ffff0084",
-        "#ffff008a",
-        "#ffff0090",
-        "#ffff0096",
-        "#ffff009c",
-        "#ffff00a2",
-        "#ffff00a8",
-        "#ffff00ae",
-        "#ffff00b4",
-        "#ffff00ba",
-        "#ffff00c0",
-        "#ffff00c6",
-        # Medium-low (46-80): Bright yellow with high opacity to solid
-        "#ffff00cc",
-        "#ffff00d2",
-        "#ffff00d8",
-        "#ffff00de",
-        "#ffff00e4",
-        "#ffff00ea",
-        "#ffff00f0",
-        "#ffff00f6",
-        "#ffff00ff",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        "#ffff00",
-        # Medium (81-120): Yellow to orange gradient
-        "#fffd00",
-        "#fffa00",
-        "#fff800",
-        "#fff500",
-        "#fff300",
-        "#fff000",
-        "#ffee00",
-        "#ffeb00",
-        "#ffe900",
-        "#ffe600",
-        "#ffe400",
-        "#ffe100",
-        "#ffdf00",
-        "#ffdc00",
-        "#ffda00",
-        "#ffd700",
-        "#ffd500",
-        "#ffd200",
-        "#ffd000",
-        "#ffcd00",
-        "#ffcb00",
-        "#ffc800",
-        "#ffc600",
-        "#ffc300",
-        "#ffc100",
-        "#ffbe00",
-        "#ffbc00",
-        "#ffb900",
-        "#ffb700",
-        "#ffb400",
-        "#ffb200",
-        "#ffaf00",
-        "#ffad00",
-        "#ffaa00",
-        "#ffa800",
-        "#ffa500",
-        "#ffa300",
-        "#ffa000",
-        "#ff9e00",
-        "#ff9b00",
-        # High (121-180): Orange to red gradient
-        "#ff9900",
-        "#ff9600",
-        "#ff9400",
-        "#ff9100",
-        "#ff8f00",
-        "#ff8c00",
-        "#ff8900",
-        "#ff8700",
-        "#ff8400",
-        "#ff8200",
-        "#ff7f00",
-        "#ff7c00",
-        "#ff7a00",
-        "#ff7700",
-        "#ff7500",
-        "#ff7200",
-        "#ff7000",
-        "#ff6d00",
-        "#ff6a00",
-        "#ff6800",
-        "#ff6500",
-        "#ff6300",
-        "#ff6000",
-        "#ff5d00",
-        "#ff5b00",
-        "#ff5800",
-        "#ff5600",
-        "#ff5300",
-        "#ff5100",
-        "#ff4e00",
-        "#ff4b00",
-        "#ff4900",
-        "#ff4600",
-        "#ff4400",
-        "#ff4100",
-        "#ff3e00",
-        "#ff3c00",
-        "#ff3900",
-        "#ff3700",
-        "#ff3400",
-        "#ff3200",
-        "#ff2f00",
-        "#ff2c00",
-        "#ff2a00",
-        "#ff2700",
-        "#ff2500",
-        "#ff2200",
-        "#ff1f00",
-        "#ff1d00",
-        "#ff1a00",
-        "#ff1800",
-        "#ff1500",
-        "#ff1300",
-        "#ff1000",
-        "#ff0d00",
-        "#ff0b00",
-        "#ff0800",
-        "#ff0600",
-        "#ff0300",
-        "#ff0000",
-        # Very high (181-230): Deep red
-        "#fd0000",
-        "#fb0000",
-        "#f90000",
-        "#f70000",
-        "#f50000",
-        "#f30000",
-        "#f10000",
-        "#ef0000",
-        "#ed0000",
-        "#eb0000",
-        "#e90000",
-        "#e70000",
-        "#e50000",
-        "#e30000",
-        "#e10000",
-        "#df0000",
-        "#dd0000",
-        "#db0000",
-        "#d90000",
-        "#d70000",
-        "#d50000",
-        "#d30000",
-        "#d10000",
-        "#cf0000",
-        "#cd0000",
-        "#cb0000",
-        "#c90000",
-        "#c70000",
-        "#c60000",
-        "#c30000",
-        "#c10000",
-        "#bf0000",
-        "#bd0000",
-        "#bb0000",
-        "#b90000",
-        "#b70000",
-        "#b50000",
-        "#b30000",
-        "#b10000",
-        "#af0000",
-        "#ad0000",
-        "#ab0000",
-        "#a90000",
-        "#a70000",
-        "#a50000",
-        "#a30000",
-        "#a10000",
-        "#9f0000",
-        "#9d0000",
-        "#9b0000",
-        # Extreme (231-255): Red to white (very rare events)
-        "#9b9b9b",
-        "#9f9f9f",
-        "#a3a3a3",
-        "#a7a7a7",
-        "#ababab",
-        "#afafaf",
-        "#b3b3b3",
-        "#b7b7b7",
-        "#bbbbbb",
-        "#bfbfbf",
-        "#c3c3c3",
-        "#c7c7c7",
-        "#cbcbcb",
-        "#cfcfcf",
-        "#d3d3d3",
-        "#d7d7d7",
-        "#dbdbdb",
-        "#dfdfdf",
-        "#e3e3e3",
-        "#e7e7e7",
-        "#ebebeb",
-        "#efefef",
-        "#f3f3f3",
-        "#f7f7f7",
-        "#fbfbfb",
-    ]
+    # Palette for GLM Flash Extent Density (FED)
+    # Range: 0–256 flashes per grid cell
+    # Ticks: 1, 2, 4, 8, 16, 32, 64, 128, 256
+    FED_PALETTE = _interpolate_palette(
+        [
+            (0, 0, 0, 139),  # 1 flash (Index 0): Dark navy
+            (1, 0, 0, 255),  # 2 flashes (Index 1): Blue
+            (3, 0, 191, 255),  # 4 flashes (Index 3): Light blue
+            (7, 0, 255, 0),  # 8 flashes (Index 7): Green
+            (15, 173, 255, 47),  # 16 flashes (Index 15): Green-yellow
+            (31, 255, 255, 0),  # 32 flashes (Index 31): Yellow
+            (63, 255, 165, 0),  # 64 flashes (Index 63): Orange
+            (127, 255, 0, 0),  # 128 flashes (Index 127): Red
+            (255, 255, 255, 255),  # 256 flashes (Index 255): White
+        ]
+    )
+
+    # Backward-compat alias — use FED_PALETTE in new code
+    LIGHTNING_PALETTE = FED_PALETTE
+
+    # Palette for GLM Total Optical Energy (TOE)
+    # Range: 0–1500 fJ per grid cell
+    # Ticks: 1, 5, 10, 25, 50, 100, 500, 1500 fJ
+    TOE_PALETTE = _interpolate_palette(
+        [
+            (0, 75, 0, 130),  # 1-5 fJ (Index 0): Dark purple
+            (1, 0, 0, 128),  # 10 fJ (Index 1): Dark blue
+            (4, 0, 0, 255),  # 25 fJ (Index 4): Blue
+            (8, 255, 105, 180),  # 50 fJ (Index 8): Hot Pink
+            (17, 255, 0, 255),  # 100 fJ (Index 17): Magenta
+            (85, 255, 165, 0),  # 500 fJ (Index 85): Orange
+            (170, 255, 255, 0),  # 1000 fJ (Index 170): Bright yellow
+            (255, 255, 255, 255),  # 1500 fJ (Index 255): White
+        ]
+    )
+
+    @classmethod
+    def get_palette(cls, name: str) -> list[str]:
+        """Look up a color palette by its BandConfig palette_name string."""
+        palettes = {
+            "FED_PALETTE": cls.FED_PALETTE,
+            "TOE_PALETTE": cls.TOE_PALETTE,
+            "LIGHTNING_PALETTE": cls.FED_PALETTE,
+            "CLOUD_TOPS_PALETTE": cls.CLOUD_TOPS_PALETTE,
+            "WATER_VAPOR_PALETTE": cls.WATER_VAPOR_PALETTE,
+            "VISIBLE_PALETTE": cls.VISIBLE_PALETTE,
+        }
+        if name not in palettes:
+            raise ValueError(f"Unknown palette '{name}'. Valid: {list(palettes)}")
+        return palettes[name]
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,

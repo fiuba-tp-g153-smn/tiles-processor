@@ -7,6 +7,7 @@ processor pipeline (GoesProcessor) and the batch service classes.
 import gc
 import io
 import logging
+import math
 import shutil
 import subprocess
 import uuid
@@ -82,53 +83,71 @@ def compute_brightness_temperature(dataset: xr.Dataset) -> xr.DataArray:
     return brightness_temperature
 
 
-def compute_flash_extent_density(  # pylint: disable=too-many-locals
-    glm_file_paths: list[Path], grid_bounds: dict, grid_resolution: float = 0.02
+def _make_grid_array(
+    data: np.ndarray,
+    lat_centers: np.ndarray,
+    lon_centers: np.ndarray,
+    name: str,
 ) -> xr.DataArray:
-    """
-    Compute Flash Extent Density from GLM-L2-LCFA files.
+    """Build a georeferenced xr.DataArray from a 2-D histogram result.
 
-    Bins flash locations from multiple GLM files into a regular lat/lon grid
-    to create a density map showing flash counts per cell over a time window.
+    Sets CRS to EPSG:4326, spatial dims, and replaces zero cells with NaN.
+    """
+    import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
+
+    arr = xr.DataArray(
+        data,
+        dims=["y", "x"],
+        coords={"x": lon_centers, "y": lat_centers},
+        name=name,
+    )
+    arr.rio.write_crs("EPSG:4326", inplace=True)
+    arr.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+    return xr.where(arr > 0, arr, np.nan)
+
+
+def compute_glm_grids(  # pylint: disable=too-many-locals
+    glm_file_paths: list[Path],
+    grid_bounds: dict,
+    grid_resolution: float = 0.02,
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Compute both FED and TOE grids from GLM-L2-LCFA files in a single pass.
+
+    Opens each file once; reads flash_lat, flash_lon, and flash_energy together.
+    Both grids share identical spatial coordinates.
 
     Args:
-        glm_file_paths: List of GLM-L2-LCFA NetCDF files (typically ~30 files for 10-min window)
-        grid_bounds: Geographic bounds dict with keys: minx, maxx, miny, maxy (degrees)
-        grid_resolution: Grid cell size in degrees (default 0.02° ≈ 2km at equator)
+        glm_file_paths: List of GLM-L2-LCFA NetCDF files (typically ~30 for a 10-min window).
+        grid_bounds: Geographic bounds dict with keys: minx, maxx, miny, maxy (degrees).
+        grid_resolution: Grid cell size in degrees (default 0.02° ≈ 2 km at equator).
 
     Returns:
-        xr.DataArray with flash counts per grid cell, georeferenced to EPSG:4326.
-        Cells with zero flashes are set to NaN for transparency in visualization.
+        (fed_array, toe_array) — both georeferenced to EPSG:4326.
+        Cells with no flashes are set to NaN for map transparency.
 
     Memory Profile:
         - Each GLM file: ~2-5 MB
         - 30 files: ~150 MB raw data
-        - Output grid (e.g., 3000×1500): ~36 MB float64
-        - Peak memory: ~200 MB (well within limits)
+        - Output grids (e.g. 3000×1500 each): ~36 MB float64 each
+        - Peak memory: ~250 MB
     """
-    import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
-
-    # 1. Read all flash locations from all files
-    all_flash_lats = []
-    all_flash_lons = []
+    all_lats, all_lons, all_energies = [], [], []
 
     for file_path in glm_file_paths:
         with xr.open_dataset(file_path, engine="h5netcdf") as ds:
-            # Extract flash lat/lon (GLM stores as scaled int16, xarray auto-decodes)
-            flash_lat = ds["flash_lat"].values
-            flash_lon = ds["flash_lon"].values
-            all_flash_lats.append(flash_lat)
-            all_flash_lons.append(flash_lon)
+            all_lats.append(ds["flash_lat"].values)
+            all_lons.append(ds["flash_lon"].values)
+            all_energies.append(ds["flash_energy"].values)  # Joules, auto-decoded
 
-    # Flatten all arrays into single list
-    all_flash_lats = np.concatenate(all_flash_lats)
-    all_flash_lons = np.concatenate(all_flash_lons)
+    lats = np.concatenate(all_lats)
+    lons = np.concatenate(all_lons)
+    energies = np.concatenate(all_energies)
+    del all_lats, all_lons, all_energies
+    gc.collect()
 
-    logger.info(
-        "Loaded %d flashes from %d GLM files", len(all_flash_lats), len(glm_file_paths)
-    )
+    flash_count = len(lats)
+    logger.info("Loaded %d flashes from %d GLM files", flash_count, len(glm_file_paths))
 
-    # 2. Create grid bins
     lon_bins = np.arange(
         grid_bounds["minx"], grid_bounds["maxx"] + grid_resolution, grid_resolution
     )
@@ -136,41 +155,57 @@ def compute_flash_extent_density(  # pylint: disable=too-many-locals
         grid_bounds["miny"], grid_bounds["maxy"] + grid_resolution, grid_resolution
     )
 
-    # 3. Bin flashes into grid cells (2D histogram)
-    # Note: histogram2d expects (x, y) order but returns (y, x) shaped array
-    flash_counts, _, _ = np.histogram2d(
-        all_flash_lats, all_flash_lons, bins=[lat_bins, lon_bins]
+    # FED: count flashes per cell
+    fed_counts, _, _ = np.histogram2d(lats, lons, bins=[lat_bins, lon_bins])
+
+    # TOE: sum energy per cell (same bins, one extra histogram call)
+    toe_energy, _, _ = np.histogram2d(
+        lats, lons, bins=[lat_bins, lon_bins], weights=energies
     )
 
-    # Free memory
-    del all_flash_lats, all_flash_lons
+    del lats, lons, energies
     gc.collect()
 
-    # 4. Create xarray DataArray with proper coordinates
     lon_centers = (lon_bins[:-1] + lon_bins[1:]) / 2
     lat_centers = (lat_bins[:-1] + lat_bins[1:]) / 2
 
-    fed_array = xr.DataArray(
-        flash_counts,
-        dims=["y", "x"],
-        coords={"x": lon_centers, "y": lat_centers},
-        name="Flash_Extent_Density",
+    fed_array = _make_grid_array(
+        fed_counts, lat_centers, lon_centers, "Flash_Extent_Density"
+    )
+    toe_array = _make_grid_array(
+        toe_energy, lat_centers, lon_centers, "Total_Optical_Energy"
     )
 
-    # 5. Set CRS and spatial dims
-    fed_array.rio.write_crs("EPSG:4326", inplace=True)
-    fed_array.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+    if flash_count == 0:
+        logger.info(
+            "Computed GLM grids: %d x %d cells, no flashes — transparent tiles will be generated",
+            len(lat_centers),
+            len(lon_centers),
+        )
+    else:
+        logger.info(
+            "Computed FED grid: %d x %d cells, max flash count: %.0f",
+            len(lat_centers),
+            len(lon_centers),
+            float(np.nanmax(fed_array.values)),
+        )
+        logger.info(
+            "Computed TOE grid: max energy: %.3e J/cell",
+            float(np.nanmax(toe_array.values)),
+        )
 
-    # 6. Replace zeros with NaN for transparency (avoid clutter on map)
-    fed_array = xr.where(fed_array > 0, fed_array, np.nan)
+    return fed_array, toe_array
 
-    logger.info(
-        "Computed FED grid: %d x %d cells, max flash count: %.0f",
-        len(lat_centers),
-        len(lon_centers),
-        float(np.nanmax(fed_array.values)),
-    )
 
+def compute_flash_extent_density(
+    glm_file_paths: list[Path], grid_bounds: dict, grid_resolution: float = 0.02
+) -> xr.DataArray:
+    """Compute Flash Extent Density from GLM-L2-LCFA files.
+
+    Thin wrapper around compute_glm_grids that returns only the FED grid.
+    Kept for backward compatibility.
+    """
+    fed_array, _ = compute_glm_grids(glm_file_paths, grid_bounds, grid_resolution)
     return fed_array
 
 
@@ -316,3 +351,77 @@ def run_gdal2tiles(
         if tmp_tiles_dir.exists():
             shutil.rmtree(tmp_tiles_dir)
         raise
+
+
+def _compute_tile_range(
+    bounds: dict, zoom: int, padding: int = 0
+) -> tuple[int, int, int, int]:
+    """Return inclusive (x_min, x_max, y_min, y_max) XYZ tile indices for bounds at zoom.
+
+    Y increases southward: maxy (north) → y_min, miny (south) → y_max.
+    padding expands the range by that many tiles in every direction (clamped to 0–n-1).
+    """
+    n = 2**zoom
+    x_min = int(math.floor((bounds["minx"] + 180) / 360 * n))
+    x_max = int(math.floor((bounds["maxx"] + 180) / 360 * n))
+
+    def _lat_to_y(lat_deg: float) -> int:
+        lat_r = math.radians(lat_deg)
+        merc = math.log(math.tan(lat_r) + 1 / math.cos(lat_r)) / math.pi
+        return int(math.floor((1 - merc) / 2 * n))
+
+    y_min = _lat_to_y(bounds["maxy"])
+    y_max = _lat_to_y(bounds["miny"])
+    return (
+        max(0, min(x_min - padding, n - 1)),
+        max(0, min(x_max + padding, n - 1)),
+        max(0, min(y_min - padding, n - 1)),
+        max(0, min(y_max + padding, n - 1)),
+    )
+
+
+def _make_transparent_webp() -> bytes:
+    """Return bytes for a 256×256 fully transparent WEBP tile."""
+    from PIL import Image  # pylint: disable=import-outside-toplevel
+
+    img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="WEBP", lossless=True)
+    return buf.getvalue()
+
+
+def fill_missing_tiles(  # pylint: disable=too-many-locals
+    tiles_dir: Path, bounds: dict, zoom_levels: str = "3-7"
+) -> int:
+    """Create transparent WEBP tiles for every XYZ position within bounds that is missing.
+
+    Iterates all expected (z, x, y) tiles derived from the geographic bounds and writes
+    a 256×256 transparent WEBP for any that gdal2tiles did not produce.
+
+    Args:
+        tiles_dir: Tile directory with structure {z}/{x}/{y}.webp.
+        bounds: Geographic bounds dict with keys: minx, miny, maxx, maxy (degrees).
+        zoom_levels: Zoom range string (e.g. "3-7").
+
+    Returns:
+        Number of transparent tiles created.
+    """
+    parts = zoom_levels.split("-")
+    z_min, z_max = int(parts[0]), int(parts[-1])
+    transparent = _make_transparent_webp()
+    created = 0
+
+    for zoom in range(z_min, z_max + 1):
+        x_min, x_max, y_min, y_max = _compute_tile_range(bounds, zoom, padding=1)
+        for x in range(x_min, x_max + 1):
+            x_dir = tiles_dir / str(zoom) / str(x)
+            x_dir.mkdir(parents=True, exist_ok=True)
+            for y in range(y_min, y_max + 1):
+                tile_path = x_dir / f"{y}.webp"
+                if not tile_path.exists():
+                    tile_path.write_bytes(transparent)
+                    created += 1
+
+    if created:
+        logger.info("Created %d transparent filler tiles in %s", created, tiles_dir)
+    return created

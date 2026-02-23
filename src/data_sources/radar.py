@@ -119,7 +119,9 @@ class RadarDataSource(DataSource):
                 continue
 
             # Build image_id: radar_id/variable/timestamp
-            image_id = f"{parsed['radar_id']}_{parsed['variable']}_{parsed['timestamp']}"
+            image_id = (
+                f"{parsed['radar_id']}_{parsed['variable']}_{parsed['timestamp']}"
+            )
 
             # Check if already processed
             if image_id in config.existing_tilesets:

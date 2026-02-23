@@ -1,6 +1,8 @@
 """Unified work handler for processing work units (download + process)."""
 
+import os
 import shutil
+import signal as _signal
 import subprocess
 import sys
 from collections import deque
@@ -104,10 +106,34 @@ class WorkHandler:
             self._cleanup_directory(work_dir)
 
     def abort(self) -> None:
-        """Terminate the current subprocess if one is running."""
-        if self._current_process and self._current_process.poll() is None:
-            logger.info("[HANDLER] Terminating subprocess for graceful shutdown...")
-            self._current_process.terminate()
+        """Terminate the subprocess process group for graceful shutdown."""
+        if not self._current_process or self._current_process.poll() is not None:
+            return
+
+        logger.info(
+            "[HANDLER] Terminating subprocess process group for graceful shutdown..."
+        )
+        try:
+            pgid = os.getpgid(self._current_process.pid)
+            os.killpg(pgid, _signal.SIGTERM)
+        except ProcessLookupError:
+            return  # Already exited
+
+        proc = self._current_process
+
+        def _force_kill():
+            try:
+                proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "[HANDLER] Subprocess did not exit after SIGTERM; sending SIGKILL"
+                )
+                try:
+                    os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+        Thread(target=_force_kill, daemon=True).start()
 
     def _run_processing_subprocess(self, work_unit: WorkUnit, file_path: str) -> None:
         """
@@ -140,6 +166,7 @@ class WorkHandler:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,  # Line-buffered
+            start_new_session=True,
         ) as process:
             self._current_process = process
 
