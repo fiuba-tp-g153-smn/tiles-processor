@@ -138,7 +138,7 @@ def compute_glm_grids(  # pylint: disable=too-many-locals
             all_lats.append(ds["flash_lat"].values)
             all_lons.append(ds["flash_lon"].values)
             all_energies.append(ds["flash_energy"].values)  # Joules, auto-decoded
-            all_areas.append(ds["flash_area"].values)  # km², auto-decoded
+            all_areas.append(ds["flash_area"].values / 1e6)  # m² → km²
 
     lats = np.concatenate(all_lats)
     lons = np.concatenate(all_lons)

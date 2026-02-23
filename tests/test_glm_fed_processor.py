@@ -224,7 +224,10 @@ class TestZeroFlashWindowPipeline:
 
         with patch(
             "processors.glm_fed_processor.compute_glm_grids",
-            return_value=(fed_data, fed_data, fed_data),
+            side_effect=[
+                (fed_data, fed_data, fed_data),  # 0.08° call: FED + MFA
+                (fed_data, fed_data, fed_data),  # 0.02° call: TOE
+            ],
         ), patch(
             "processors.glm_fed_processor.run_gdal2tiles",
             return_value=fake_tiles_dir,

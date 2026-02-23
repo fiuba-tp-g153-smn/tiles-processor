@@ -140,12 +140,13 @@ class TestComputeGlmGrids:
     def test_mfa_returns_minimum_area_per_cell(self, tmp_path):
         """MFA grid value equals the minimum flash_area in each cell."""
         fake_file = tmp_path / "OR_GLM-L2-LCFA_G19_s20260441.nc"
-        # Two flashes in the same 1° cell: areas 200 and 50 → MFA should be 50
-        # One flash in another cell: area 300 → MFA should be 300
+        # Two flashes in the same 1° cell: areas 200 and 50 km² → MFA should be 50 km²
+        # One flash in another cell: area 300 km² → MFA should be 300 km²
+        # Mock values are in m² (real unit) — code divides by 1e6 to get km²
         lats = [-44.5, -44.8, -29.5]
         lons = [-74.5, -74.8, -59.5]
         energies = [1e-10, 2e-10, 3e-10]
-        areas = [200.0, 50.0, 300.0]
+        areas = [200.0e6, 50.0e6, 300.0e6]
         mock_ds = _make_glm_dataset(lats, lons, energies, areas)
 
         with patch("services.processing_steps.xr.open_dataset", return_value=mock_ds):
