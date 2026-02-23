@@ -15,6 +15,7 @@ from services.generate_geotiff_files import GenerateGeoTIFFFilesService
 from services.processing_steps import (
     build_rgba_data_array,
     compute_glm_grids,
+    fill_missing_tiles,
     normalize_and_colorize,
     run_gdal2tiles,
 )
@@ -183,6 +184,14 @@ class GlmFedProcessor(ImageProcessor):
             processes=self.GDAL_PROCESSES,
         )
 
+        self._check_shutdown()
+        await asyncio.to_thread(
+            fill_missing_tiles,
+            tiles_output_dir,
+            work_unit.bounds,
+            self.ZOOM_LEVELS,
+        )
+
         # 4. Upload to seaweedfs
         # pylint: disable=duplicate-code
         self._check_shutdown()
@@ -190,6 +199,7 @@ class GlmFedProcessor(ImageProcessor):
         s3_prefix = f"{band_config.s3_prefix}/{geotiff_path.stem}"
 
         await self._s3_client.ensure_bucket_exists()
+        self._check_shutdown()
         await self._s3_client.upload_directory(tiles_output_dir, s3_prefix)
 
         logger.info("Processing complete: %s", s3_prefix)
@@ -201,3 +211,4 @@ class GlmFedProcessor(ImageProcessor):
         # pylint: enable=duplicate-code
 
         logger.info("[GLM] %s processing complete: %s", band_config.band_id, s3_prefix)
+        self._check_shutdown()

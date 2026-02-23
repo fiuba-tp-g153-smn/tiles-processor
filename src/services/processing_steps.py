@@ -7,6 +7,7 @@ processor pipeline (GoesProcessor) and the batch service classes.
 import gc
 import io
 import logging
+import math
 import shutil
 import subprocess
 import uuid
@@ -350,3 +351,77 @@ def run_gdal2tiles(
         if tmp_tiles_dir.exists():
             shutil.rmtree(tmp_tiles_dir)
         raise
+
+
+def _compute_tile_range(
+    bounds: dict, zoom: int, padding: int = 0
+) -> tuple[int, int, int, int]:
+    """Return inclusive (x_min, x_max, y_min, y_max) XYZ tile indices for bounds at zoom.
+
+    Y increases southward: maxy (north) → y_min, miny (south) → y_max.
+    padding expands the range by that many tiles in every direction (clamped to 0–n-1).
+    """
+    n = 2**zoom
+    x_min = int(math.floor((bounds["minx"] + 180) / 360 * n))
+    x_max = int(math.floor((bounds["maxx"] + 180) / 360 * n))
+
+    def _lat_to_y(lat_deg: float) -> int:
+        lat_r = math.radians(lat_deg)
+        merc = math.log(math.tan(lat_r) + 1 / math.cos(lat_r)) / math.pi
+        return int(math.floor((1 - merc) / 2 * n))
+
+    y_min = _lat_to_y(bounds["maxy"])
+    y_max = _lat_to_y(bounds["miny"])
+    return (
+        max(0, min(x_min - padding, n - 1)),
+        max(0, min(x_max + padding, n - 1)),
+        max(0, min(y_min - padding, n - 1)),
+        max(0, min(y_max + padding, n - 1)),
+    )
+
+
+def _make_transparent_webp() -> bytes:
+    """Return bytes for a 256×256 fully transparent WEBP tile."""
+    from PIL import Image  # pylint: disable=import-outside-toplevel
+
+    img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="WEBP", lossless=True)
+    return buf.getvalue()
+
+
+def fill_missing_tiles(  # pylint: disable=too-many-locals
+    tiles_dir: Path, bounds: dict, zoom_levels: str = "3-7"
+) -> int:
+    """Create transparent WEBP tiles for every XYZ position within bounds that is missing.
+
+    Iterates all expected (z, x, y) tiles derived from the geographic bounds and writes
+    a 256×256 transparent WEBP for any that gdal2tiles did not produce.
+
+    Args:
+        tiles_dir: Tile directory with structure {z}/{x}/{y}.webp.
+        bounds: Geographic bounds dict with keys: minx, miny, maxx, maxy (degrees).
+        zoom_levels: Zoom range string (e.g. "3-7").
+
+    Returns:
+        Number of transparent tiles created.
+    """
+    parts = zoom_levels.split("-")
+    z_min, z_max = int(parts[0]), int(parts[-1])
+    transparent = _make_transparent_webp()
+    created = 0
+
+    for zoom in range(z_min, z_max + 1):
+        x_min, x_max, y_min, y_max = _compute_tile_range(bounds, zoom, padding=1)
+        for x in range(x_min, x_max + 1):
+            x_dir = tiles_dir / str(zoom) / str(x)
+            x_dir.mkdir(parents=True, exist_ok=True)
+            for y in range(y_min, y_max + 1):
+                tile_path = x_dir / f"{y}.webp"
+                if not tile_path.exists():
+                    tile_path.write_bytes(transparent)
+                    created += 1
+
+    if created:
+        logger.info("Created %d transparent filler tiles in %s", created, tiles_dir)
+    return created
