@@ -110,11 +110,11 @@ def compute_glm_grids(  # pylint: disable=too-many-locals
     glm_file_paths: list[Path],
     grid_bounds: dict,
     grid_resolution: float = 0.02,
-) -> tuple[xr.DataArray, xr.DataArray]:
-    """Compute both FED and TOE grids from GLM-L2-LCFA files in a single pass.
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
+    """Compute FED, TOE, and MFA grids from GLM-L2-LCFA files in a single pass.
 
-    Opens each file once; reads flash_lat, flash_lon, and flash_energy together.
-    Both grids share identical spatial coordinates.
+    Opens each file once; reads flash_lat, flash_lon, flash_energy, and flash_area together.
+    All grids share identical spatial coordinates.
 
     Args:
         glm_file_paths: List of GLM-L2-LCFA NetCDF files (typically ~30 for a 10-min window).
@@ -122,7 +122,7 @@ def compute_glm_grids(  # pylint: disable=too-many-locals
         grid_resolution: Grid cell size in degrees (default 0.02° ≈ 2 km at equator).
 
     Returns:
-        (fed_array, toe_array) — both georeferenced to EPSG:4326.
+        (fed_array, toe_array, mfa_array) — all georeferenced to EPSG:4326.
         Cells with no flashes are set to NaN for map transparency.
 
     Memory Profile:
@@ -131,18 +131,20 @@ def compute_glm_grids(  # pylint: disable=too-many-locals
         - Output grids (e.g. 3000×1500 each): ~36 MB float64 each
         - Peak memory: ~250 MB
     """
-    all_lats, all_lons, all_energies = [], [], []
+    all_lats, all_lons, all_energies, all_areas = [], [], [], []
 
     for file_path in glm_file_paths:
         with xr.open_dataset(file_path, engine="h5netcdf") as ds:
             all_lats.append(ds["flash_lat"].values)
             all_lons.append(ds["flash_lon"].values)
             all_energies.append(ds["flash_energy"].values)  # Joules, auto-decoded
+            all_areas.append(ds["flash_area"].values)  # km², auto-decoded
 
     lats = np.concatenate(all_lats)
     lons = np.concatenate(all_lons)
     energies = np.concatenate(all_energies)
-    del all_lats, all_lons, all_energies
+    areas = np.concatenate(all_areas)
+    del all_lats, all_lons, all_energies, all_areas
     gc.collect()
 
     flash_count = len(lats)
@@ -155,6 +157,9 @@ def compute_glm_grids(  # pylint: disable=too-many-locals
         grid_bounds["miny"], grid_bounds["maxy"] + grid_resolution, grid_resolution
     )
 
+    n_lat = len(lat_bins) - 1
+    n_lon = len(lon_bins) - 1
+
     # FED: count flashes per cell
     fed_counts, _, _ = np.histogram2d(lats, lons, bins=[lat_bins, lon_bins])
 
@@ -163,7 +168,15 @@ def compute_glm_grids(  # pylint: disable=too-many-locals
         lats, lons, bins=[lat_bins, lon_bins], weights=energies
     )
 
-    del lats, lons, energies
+    # MFA: minimum flash area per cell using np.minimum.at
+    mfa_raw = np.full((n_lat, n_lon), np.inf)
+    lat_idx = np.digitize(lats, lat_bins) - 1
+    lon_idx = np.digitize(lons, lon_bins) - 1
+    valid = (lat_idx >= 0) & (lat_idx < n_lat) & (lon_idx >= 0) & (lon_idx < n_lon)
+    np.minimum.at(mfa_raw, (lat_idx[valid], lon_idx[valid]), areas[valid])
+    mfa_raw[mfa_raw == np.inf] = 0  # → _make_grid_array converts 0 → NaN
+
+    del lats, lons, energies, areas, lat_idx, lon_idx, valid
     gc.collect()
 
     lon_centers = (lon_bins[:-1] + lon_bins[1:]) / 2
@@ -174,6 +187,9 @@ def compute_glm_grids(  # pylint: disable=too-many-locals
     )
     toe_array = _make_grid_array(
         toe_energy, lat_centers, lon_centers, "Total_Optical_Energy"
+    )
+    mfa_array = _make_grid_array(
+        mfa_raw, lat_centers, lon_centers, "Minimum_Flash_Area"
     )
 
     if flash_count == 0:
@@ -193,8 +209,12 @@ def compute_glm_grids(  # pylint: disable=too-many-locals
             "Computed TOE grid: max energy: %.3e J/cell",
             float(np.nanmax(toe_array.values)),
         )
+        logger.info(
+            "Computed MFA grid: min flash area: %.1f km²/cell",
+            float(np.nanmin(mfa_array.values)),
+        )
 
-    return fed_array, toe_array
+    return fed_array, toe_array, mfa_array
 
 
 def compute_flash_extent_density(
@@ -205,7 +225,7 @@ def compute_flash_extent_density(
     Thin wrapper around compute_glm_grids that returns only the FED grid.
     Kept for backward compatibility.
     """
-    fed_array, _ = compute_glm_grids(glm_file_paths, grid_bounds, grid_resolution)
+    fed_array, _, _ = compute_glm_grids(glm_file_paths, grid_bounds, grid_resolution)
     return fed_array
 
 

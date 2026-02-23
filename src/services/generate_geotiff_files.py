@@ -669,12 +669,29 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
         ]
     )
 
+    # Palette for GLM Minimum Flash Area (MFA)
+    # Range: 0–3000 km² per grid cell
+    # Ticks: ~60, 120, 300, 600, 1200, 2000, 3000 km²
+    MFA_PALETTE = _interpolate_palette(
+        [
+            (0, 255, 255, 0),  # ~0 km²:    Yellow (placeholder; 0→NaN→transparent)
+            (5, 255, 255, 0),  # ~60 km²:   Bright Yellow (strong updraft)
+            (10, 255, 200, 0),  # ~120 km²:  Yellow-Orange
+            (26, 0, 255, 0),  # ~300 km²:  Green
+            (51, 0, 128, 255),  # ~600 km²:  Light Blue
+            (102, 0, 0, 255),  # ~1200 km²: Blue
+            (170, 128, 0, 255),  # ~2000 km²: Purple
+            (255, 255, 0, 255),  # ~3000 km²: Magenta
+        ]
+    )
+
     @classmethod
     def get_palette(cls, name: str) -> list[str]:
         """Look up a color palette by its BandConfig palette_name string."""
         palettes = {
             "FED_PALETTE": cls.FED_PALETTE,
             "TOE_PALETTE": cls.TOE_PALETTE,
+            "MFA_PALETTE": cls.MFA_PALETTE,
             "LIGHTNING_PALETTE": cls.FED_PALETTE,
             "CLOUD_TOPS_PALETTE": cls.CLOUD_TOPS_PALETTE,
             "WATER_VAPOR_PALETTE": cls.WATER_VAPOR_PALETTE,

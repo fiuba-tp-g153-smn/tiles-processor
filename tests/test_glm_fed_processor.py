@@ -31,6 +31,7 @@ def _make_empty_glm_dataset():
         "flash_lat": np.array([], dtype=np.float32),
         "flash_lon": np.array([], dtype=np.float32),
         "flash_energy": np.array([], dtype=np.float32),
+        "flash_area": np.array([], dtype=np.float32),
     }
     mock_ds = MagicMock()
     mock_ds.__enter__ = MagicMock(return_value=mock_ds)
@@ -104,7 +105,7 @@ class TestZeroFlashFedGrid:
         assert result.shape == (expected_rows, expected_cols)
 
     def test_compute_glm_grids_returns_both_arrays(self, tmp_path):
-        """compute_glm_grids returns (fed, toe) tuple, both all-NaN when no flashes."""
+        """compute_glm_grids returns (fed, toe, mfa) tuple, all all-NaN when no flashes."""
         fake_files = [
             tmp_path
             / "OR_GLM-L2-LCFA_G19_s2026044120000_e2026044120200_c2026044120200.nc",
@@ -112,13 +113,15 @@ class TestZeroFlashFedGrid:
         mock_ds = _make_empty_glm_dataset()
 
         with patch("services.processing_steps.xr.open_dataset", return_value=mock_ds):
-            fed, toe = compute_glm_grids(fake_files, BOUNDS, RESOLUTION)
+            fed, toe, mfa = compute_glm_grids(fake_files, BOUNDS, RESOLUTION)
 
         assert fed.name == "Flash_Extent_Density"
         assert toe.name == "Total_Optical_Energy"
-        assert fed.shape == toe.shape
+        assert mfa.name == "Minimum_Flash_Area"
+        assert fed.shape == toe.shape == mfa.shape
         assert np.all(np.isnan(fed.values))
         assert np.all(np.isnan(toe.values))
+        assert np.all(np.isnan(mfa.values))
 
 
 class TestZeroFlashWindowPipeline:
@@ -130,10 +133,11 @@ class TestZeroFlashWindowPipeline:
 
     @pytest.mark.asyncio
     async def test_zero_flash_window_uploads_tiles(self, tmp_path):
-        """upload_directory is called exactly once (FED only) when TOE is disabled."""
+        """upload_directory is called exactly once (FED only) when TOE and MFA are disabled."""
         config = MagicMock()
         config.TMP_DIR = str(tmp_path / "proc")
         config.ENABLE_GLM_TOE = False
+        config.ENABLE_GLM_MFA = False
 
         mock_s3 = AsyncMock()
         mock_s3.upload_directory = AsyncMock()
@@ -170,7 +174,7 @@ class TestZeroFlashWindowPipeline:
 
         with patch(
             "processors.glm_fed_processor.compute_glm_grids",
-            return_value=(fed_data, fed_data),
+            return_value=(fed_data, fed_data, fed_data),
         ), patch(
             "processors.glm_fed_processor.run_gdal2tiles",
             return_value=fake_tiles_dir,
@@ -185,6 +189,7 @@ class TestZeroFlashWindowPipeline:
         config = MagicMock()
         config.TMP_DIR = str(tmp_path / "proc")
         config.ENABLE_GLM_TOE = True
+        config.ENABLE_GLM_MFA = False
 
         mock_s3 = AsyncMock()
         mock_s3.upload_directory = AsyncMock()
@@ -219,7 +224,7 @@ class TestZeroFlashWindowPipeline:
 
         with patch(
             "processors.glm_fed_processor.compute_glm_grids",
-            return_value=(fed_data, fed_data),
+            return_value=(fed_data, fed_data, fed_data),
         ), patch(
             "processors.glm_fed_processor.run_gdal2tiles",
             return_value=fake_tiles_dir,

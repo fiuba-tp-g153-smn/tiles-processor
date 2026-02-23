@@ -3,11 +3,12 @@
   "tile_retention_days": 1,
   "radar_input_dir": "/data/radar_h5",
   "features": {
-    "enable_band_13":  true,
-    "enable_band_9": true,
-    "enable_band_2": true,
+    "enable_band_13":  false,
+    "enable_band_9": false,
+    "enable_band_2": false,
     "enable_glm_fed": true,
     "enable_glm_toe": true,
+    "enable_glm_mfa": true,
     "enable_radar": false
   },
   "bounds": {
