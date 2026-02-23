@@ -124,9 +124,8 @@ def compute_flash_extent_density(  # pylint: disable=too-many-locals
     all_flash_lats = np.concatenate(all_flash_lats)
     all_flash_lons = np.concatenate(all_flash_lons)
 
-    logger.info(
-        "Loaded %d flashes from %d GLM files", len(all_flash_lats), len(glm_file_paths)
-    )
+    flash_count = len(all_flash_lats)
+    logger.info("Loaded %d flashes from %d GLM files", flash_count, len(glm_file_paths))
 
     # 2. Create grid bins
     lon_bins = np.arange(
@@ -164,12 +163,19 @@ def compute_flash_extent_density(  # pylint: disable=too-many-locals
     # 6. Replace zeros with NaN for transparency (avoid clutter on map)
     fed_array = xr.where(fed_array > 0, fed_array, np.nan)
 
-    logger.info(
-        "Computed FED grid: %d x %d cells, max flash count: %.0f",
-        len(lat_centers),
-        len(lon_centers),
-        float(np.nanmax(fed_array.values)),
-    )
+    if flash_count == 0:
+        logger.info(
+            "Computed FED grid: %d x %d cells, no flashes — transparent tiles will be generated",
+            len(lat_centers),
+            len(lon_centers),
+        )
+    else:
+        logger.info(
+            "Computed FED grid: %d x %d cells, max flash count: %.0f",
+            len(lat_centers),
+            len(lon_centers),
+            float(np.nanmax(fed_array.values)),
+        )
 
     return fed_array
 
