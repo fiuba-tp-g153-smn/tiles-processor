@@ -73,7 +73,7 @@ class Goes19AbiDataSource(Goes19BaseDataSource):
             filename = s3_key.split("/")[-1]
 
             # Extract timestamp (s20260521320209 -> 20260521320209)
-            match = re.search(r's(\d{14})_', filename)
+            match = re.search(r"s(\d{14})_", filename)
             if not match:
                 continue
             timestamp = match.group(1)

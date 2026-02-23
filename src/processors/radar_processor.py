@@ -122,9 +122,7 @@ class RadarProcessor(ImageProcessor):
                 # Path format: radar/{radar_id}/{product}/{timestamp}_elev{N}/
                 # This matches the producer's tileset detection logic
                 self._check_shutdown()
-                s3_prefix = (
-                    f"radar/{parsed['radar_id']}/{parsed['variable']}/{parsed['timestamp']}_elev{sweep_idx}"
-                )
+                s3_prefix = f"radar/{parsed['radar_id']}/{parsed['variable']}/{parsed['timestamp']}_elev{sweep_idx}"
                 await self._upload_tiles(tiles_dir, s3_prefix)
 
                 logger.info(
@@ -262,9 +260,12 @@ class RadarProcessor(ImageProcessor):
 
         cmd = [
             "gdal2tiles.py",
-            "-p", "mercator",
-            "-z", self.ZOOM_LEVELS,
-            "-w", "none",
+            "-p",
+            "mercator",
+            "-z",
+            self.ZOOM_LEVELS,
+            "-w",
+            "none",
             f"--processes={self.GDAL_PROCESSES}",
             "--tiledriver=WEBP",
             str(geotiff_path),
