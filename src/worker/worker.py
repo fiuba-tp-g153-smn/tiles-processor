@@ -184,7 +184,7 @@ def run_worker(config: Config) -> None:
     data_source_registry = create_data_source_registry(config)
     mq_client = create_rabbitmq_client(config)
 
-    # Configure seaweedfs lifecycle policy for automatic tile expiration
+    # Configure S3 lifecycle policy for automatic tile expiration
     s3_client = create_s3_client(config)
     loop = new_event_loop()
     set_event_loop(loop)
@@ -195,7 +195,7 @@ def run_worker(config: Config) -> None:
             s3_client.configure_lifecycle_policy(config.TILE_RETENTION_DAYS)
         )
         logger.info(
-            "seaweedfs lifecycle configured: tiles will expire after %d days",
+            "S3 lifecycle configured: tiles will expire after %d days",
             config.TILE_RETENTION_DAYS,
         )
     finally:

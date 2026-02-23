@@ -6,7 +6,7 @@ Processing pipeline:
 2. Convert polar coordinates to cartesian grid
 3. Apply colormap and create RGBA GeoTIFF
 4. Generate XYZ tiles with gdal2tiles
-5. Upload tiles to seaweedfs
+5. Upload tiles to S3
 """
 
 import gc
@@ -120,7 +120,7 @@ class RadarProcessor(ImageProcessor):
                 tiles_dir = sweep_dir / "tiles"
                 self._generate_tiles(geotiff_path, tiles_dir)
 
-                # Upload to seaweedfs
+                # Upload to S3
                 # Path format: radar/{radar_id}/{product}/{timestamp}_elev{N}/
                 # This matches the producer's tileset detection logic
                 self._check_shutdown()
@@ -285,8 +285,8 @@ class RadarProcessor(ImageProcessor):
         logger.info("[RADAR] Tiles generated successfully")
 
     async def _upload_tiles(self, tiles_dir: Path, s3_prefix: str) -> None:
-        """Upload generated tiles to seaweedfs."""
+        """Upload generated tiles to S3."""
         logger.info("[RADAR] Uploading tiles to %s", s3_prefix)
 
         count = await self._s3_client.upload_directory(tiles_dir, s3_prefix)
-        logger.info("[RADAR] Uploaded %d files to seaweedfs", count)
+        logger.info("[RADAR] Uploaded %d files to S3", count)

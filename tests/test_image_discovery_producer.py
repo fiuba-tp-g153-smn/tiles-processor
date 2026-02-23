@@ -165,12 +165,12 @@ class TestDuplicatePrevention:
         # Simulate worker completing the first image:
         # mark_completed removes from SQLite
         progress_tracker.mark_completed(images[0].image_id, "band_2")
-        # And its tiles now exist in seaweedfs
+        # And its tiles now exist in S3
         stem = Path(images[0].image_id).stem
         tileset_prefix = f"band_2/tiles/{stem}/"
         producer._s3_client.list_prefixes = AsyncMock(return_value=[tileset_prefix])
 
-        # Second run: images[0] covered by seaweedfs, images[1-2] still in-progress
+        # Second run: images[0] covered by S3, images[1-2] still in-progress
         count = await producer.discover_and_publish()
         assert count == 0
         assert mq_client.publish.call_count == 0

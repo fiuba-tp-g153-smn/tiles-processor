@@ -62,7 +62,7 @@ if [ "$DEV_MODE" = true ]; then
     MODE_LABEL="dev"
     SEAWEEDFS_CONTAINER_NAME="tiles-processor-dev-seaweedfs"
     RABBITMQ_VOLUME="rabbitmq_dev_data"
-    SEAWEEDFS_DATA_VOLUME="./data_seaweedfs:/data"
+    SEAWEEDFS_DATA_VOLUME="./data_s3:/data"
     APP_DATA_VOLUME="./data:\${DATA_DIR}"
     RABBITMQ_RETRIES="10"
     SEAWEEDFS_RETRIES="10"
@@ -121,7 +121,7 @@ services:
       start_period: 15s
       start_interval: 1s
 
-  # SeaweedFS S3-compatible object storage
+  # S3-compatible object storage
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     container_name: ${SEAWEEDFS_CONTAINER_NAME}
@@ -129,8 +129,6 @@ services:
     command: -c "sh /start.sh"
     ports:
       - "\${S3_TILES_DATA_PORT}:8333"      # S3 API
-      - "\${SEAWEEDFS_CONSOLE_PORT}:9333"  # Master admin panel
-      - "\${SEAWEEDFS_FILER_PORT}:8888"    # Filer web UI / file explorer
     environment:
       - S3_ROOT_USER=\${S3_ROOT_USER}
       - S3_ROOT_PASSWORD=\${S3_ROOT_PASSWORD}
@@ -255,7 +253,7 @@ else
     cat >> "$OUTPUT_FILE" << VOLUMES
 volumes:
   tiles_data:
-  seaweedfs_data:
+  s3_data:
   ${RABBITMQ_VOLUME}:
 VOLUMES
 fi

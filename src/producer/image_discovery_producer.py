@@ -33,7 +33,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
     1. Runs on a schedule using APScheduler
     2. Iterates over registered data sources
     3. Discovers new images from each data source
-    4. Checks seaweedfs for existing tiles (to avoid reprocessing)
+    4. Checks S3 for existing tiles (to avoid reprocessing)
     5. Checks in-progress tracker (to avoid duplicate work units)
     6. Creates work units for new images
     7. Publishes work units to RabbitMQ
@@ -138,7 +138,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             output_prefix = f"{band_id}/tiles"
             existing_tilesets = await self._get_existing_tilesets(output_prefix)
 
-        # Get existing tilesets in seaweedfs
+        # Get existing tilesets in S3
         logger.info(
             "Found %d existing tilesets for %s",
             len(existing_tilesets),
@@ -196,7 +196,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         return published
 
     async def _get_existing_tilesets(self, s3_prefix: str) -> Set[str]:
-        """Get set of existing tileset names (base filenames) in seaweedfs."""
+        """Get set of existing tileset names (base filenames) in S3."""
         try:
             prefixes = await self._s3_client.list_prefixes(
                 f"{s3_prefix}/", delimiter="/"
@@ -207,7 +207,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
                 tilesets.add(tileset_name)
             return tilesets
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.warning("Error listing seaweedfs tilesets: %s", e)
+            logger.warning("Error listing S3 tilesets: %s", e)
             return set()
 
     async def _get_radar_existing_tilesets(self, product_id: str) -> Set[str]:

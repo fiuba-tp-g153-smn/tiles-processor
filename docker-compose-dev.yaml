@@ -36,7 +36,7 @@ services:
       start_period: 15s
       start_interval: 1s
 
-  # SeaweedFS S3-compatible object storage
+  # S3-compatible object storage
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     container_name: tiles-processor-dev-seaweedfs
@@ -45,8 +45,6 @@ services:
     command: -c "sh /start.sh"
     ports:
       - "${S3_TILES_DATA_PORT}:8333"      # S3 API
-      - "${SEAWEEDFS_CONSOLE_PORT}:9333"  # Master admin panel
-      - "${SEAWEEDFS_FILER_PORT}:8888"    # Filer web UI / file explorer
     environment:
       - S3_ROOT_USER=${S3_ROOT_USER}
       - S3_ROOT_PASSWORD=${S3_ROOT_PASSWORD}
@@ -56,7 +54,7 @@ services:
       - S3_TILES_DATA_DATA_SERVICE_USER=${S3_TILES_DATA_DATA_SERVICE_USER}
       - S3_TILES_DATA_DATA_SERVICE_PASSWORD=${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
     volumes:
-      - ./data_seaweedfs:/data
+      - ./data_s3:/data
       - ./scripts/seaweedfs_start.sh:/start.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/seaweedfs_ready && wget -qO /dev/null http://seaweedfs:9333/cluster/status"]

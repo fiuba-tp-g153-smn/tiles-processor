@@ -15,5 +15,5 @@ benchmark_results/
 .agent
 data_minio/
 .vscode
-data_seaweedfs/
+data_s3/
 sftpgo/

@@ -34,7 +34,7 @@ class GlmFedProcessor(ImageProcessor):
     4. Colorize with FED_PALETTE (or TOE_PALETTE for the TOE pass)
     5. Generate GeoTIFF (already in EPSG:4326, no reprojection needed)
     6. Generate tiles with gdal2tiles
-    7. Upload to seaweedfs
+    7. Upload to S3
 
     Key Difference from GOES Processors:
     - Input is a DIRECTORY of files, not a single NetCDF file
@@ -192,10 +192,10 @@ class GlmFedProcessor(ImageProcessor):
             self.ZOOM_LEVELS,
         )
 
-        # 4. Upload to seaweedfs
+        # 4. Upload to S3
         # pylint: disable=duplicate-code
         self._check_shutdown()
-        logger.info("Step 4: Upload to seaweedfs")
+        logger.info("Step 4: Upload to S3")
         s3_prefix = f"{band_config.s3_prefix}/{geotiff_path.stem}"
 
         await self._s3_client.ensure_bucket_exists()
