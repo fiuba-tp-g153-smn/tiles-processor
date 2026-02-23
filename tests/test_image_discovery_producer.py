@@ -119,8 +119,8 @@ class TestDuplicatePrevention:
         producer._mq_client = mq_client
         producer._progress_tracker = progress_tracker
         producer._data_source_registry = registry
-        producer._minio_client = AsyncMock()
-        producer._minio_client.list_prefixes = AsyncMock(return_value=[])
+        producer._s3_client = AsyncMock()
+        producer._s3_client.list_prefixes = AsyncMock(return_value=[])
 
         # First run: should publish 78 work units (26 per band)
         first_count = await producer.discover_and_publish()
@@ -154,8 +154,8 @@ class TestDuplicatePrevention:
         producer._mq_client = mq_client
         producer._progress_tracker = progress_tracker
         producer._data_source_registry = registry
-        producer._minio_client = AsyncMock()
-        producer._minio_client.list_prefixes = AsyncMock(return_value=[])
+        producer._s3_client = AsyncMock()
+        producer._s3_client.list_prefixes = AsyncMock(return_value=[])
 
         # First run: publish all 3
         count = await producer.discover_and_publish()
@@ -165,12 +165,12 @@ class TestDuplicatePrevention:
         # Simulate worker completing the first image:
         # mark_completed removes from SQLite
         progress_tracker.mark_completed(images[0].image_id, "band_2")
-        # And its tiles now exist in MinIO
+        # And its tiles now exist in seaweedfs
         stem = Path(images[0].image_id).stem
         tileset_prefix = f"band_2/tiles/{stem}_tiles/"
-        producer._minio_client.list_prefixes = AsyncMock(return_value=[tileset_prefix])
+        producer._s3_client.list_prefixes = AsyncMock(return_value=[tileset_prefix])
 
-        # Second run: images[0] covered by MinIO, images[1-2] still in-progress
+        # Second run: images[0] covered by seaweedfs, images[1-2] still in-progress
         count = await producer.discover_and_publish()
         assert count == 0
         assert mq_client.publish.call_count == 0
@@ -196,8 +196,8 @@ class TestDuplicatePrevention:
         producer._mq_client = mq_client
         producer._progress_tracker = progress_tracker
         producer._data_source_registry = registry
-        producer._minio_client = AsyncMock()
-        producer._minio_client.list_prefixes = AsyncMock(return_value=[])
+        producer._s3_client = AsyncMock()
+        producer._s3_client.list_prefixes = AsyncMock(return_value=[])
 
         # First run: publish 2 images
         count = await producer.discover_and_publish()

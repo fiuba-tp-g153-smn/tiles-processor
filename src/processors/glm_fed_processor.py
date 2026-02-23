@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 from config import Config
-from factories import create_minio_client
+from factories import create_s3_client
 from models.work_unit import WorkUnit
 from processors.base_processor import ImageProcessor, ShutdownRequested
 from services.generate_geotiff_files import GenerateGeoTIFFFilesService
@@ -32,7 +32,7 @@ class GlmFedProcessor(ImageProcessor):
     4. Colorize with LIGHTNING_PALETTE
     5. Generate GeoTIFF (already in EPSG:4326, no reprojection needed)
     6. Generate tiles with gdal2tiles
-    7. Upload to MinIO
+    7. Upload to seaweedfs
 
     Key Difference from GOES Processors:
     - Input is a DIRECTORY of files, not a single NetCDF file
@@ -45,7 +45,7 @@ class GlmFedProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._minio_client = create_minio_client(config)
+        self._s3_client = create_s3_client(config)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute the GLM FED processing pipeline."""
@@ -157,14 +157,14 @@ class GlmFedProcessor(ImageProcessor):
             processes=self.GDAL_PROCESSES,
         )
 
-        # 4. Upload to MinIO
+        # 4. Upload to seaweedfs
         # pylint: disable=duplicate-code
         self._check_shutdown()
-        logger.info("Step 4: Upload to MinIO")
+        logger.info("Step 4: Upload to seaweedfs")
         s3_prefix = f"{band_config.s3_prefix}/{geotiff_path.stem}"
 
-        await self._minio_client.ensure_bucket_exists()
-        await self._minio_client.upload_directory(tiles_output_dir, s3_prefix)
+        await self._s3_client.ensure_bucket_exists()
+        await self._s3_client.upload_directory(tiles_output_dir, s3_prefix)
 
         logger.info("Processing complete: %s", s3_prefix)
 

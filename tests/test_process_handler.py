@@ -34,8 +34,8 @@ class TestGoesProcessor:
     async def test_process_flow(self, mock_config):
         """Test the sequence of steps in process()."""
 
-        # Patch create_minio_client to avoid connection attempts in init
-        with patch("processors.goes_processor.create_minio_client"):
+        # Patch create_s3_client to avoid connection attempts in init
+        with patch("processors.goes_processor.create_s3_client"):
             processor = GoesProcessor(mock_config)
 
             # Mock all the internal steps (instance methods for polymorphism)
@@ -43,8 +43,8 @@ class TestGoesProcessor:
             processor._compute_brightness_temperature = MagicMock()
             processor._generate_geotiff = MagicMock(return_value=Path("/tmp/out.tif"))
             processor._generate_tiles = MagicMock(return_value=Path("/tmp/tiles"))
-            processor._minio_client.upload_directory = AsyncMock()
-            processor._minio_client.ensure_bucket_exists = AsyncMock()
+            processor._s3_client.upload_directory = AsyncMock()
+            processor._s3_client.ensure_bucket_exists = AsyncMock()
             processor._cleanup_file = MagicMock()
             processor._cleanup_directory = MagicMock()
 
@@ -68,4 +68,4 @@ class TestGoesProcessor:
             processor._compute_brightness_temperature.assert_called_once()
             processor._generate_geotiff.assert_called_once()
             processor._generate_tiles.assert_called_once()
-            processor._minio_client.upload_directory.assert_awaited_once()
+            processor._s3_client.upload_directory.assert_awaited_once()

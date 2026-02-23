@@ -6,7 +6,7 @@ Processing pipeline:
 2. Convert polar coordinates to cartesian grid
 3. Apply colormap and create RGBA GeoTIFF
 4. Generate XYZ tiles with gdal2tiles
-5. Upload tiles to MinIO
+5. Upload tiles to seaweedfs
 """
 
 import gc
@@ -22,7 +22,7 @@ from rasterio.crs import CRS
 import matplotlib.colors as mcolors
 
 from config import Config
-from factories import create_minio_client
+from factories import create_s3_client
 from models.work_unit import WorkUnit
 from models.radar_config import (
     parse_radar_filename,
@@ -51,7 +51,7 @@ class RadarProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._minio_client = create_minio_client(config)
+        self._s3_client = create_s3_client(config)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute the full radar processing pipeline."""
@@ -118,7 +118,7 @@ class RadarProcessor(ImageProcessor):
                 tiles_dir = sweep_dir / "tiles"
                 self._generate_tiles(geotiff_path, tiles_dir)
 
-                # Upload to MinIO
+                # Upload to seaweedfs
                 # Path format: radar/{radar_id}/{product}/{timestamp}_elev{N}/
                 # This matches the producer's tileset detection logic
                 self._check_shutdown()
@@ -280,8 +280,8 @@ class RadarProcessor(ImageProcessor):
         logger.info("[RADAR] Tiles generated successfully")
 
     async def _upload_tiles(self, tiles_dir: Path, s3_prefix: str) -> None:
-        """Upload generated tiles to MinIO."""
+        """Upload generated tiles to seaweedfs."""
         logger.info("[RADAR] Uploading tiles to %s", s3_prefix)
 
-        count = await self._minio_client.upload_directory(tiles_dir, s3_prefix)
-        logger.info("[RADAR] Uploaded %d files to MinIO", count)
+        count = await self._s3_client.upload_directory(tiles_dir, s3_prefix)
+        logger.info("[RADAR] Uploaded %d files to seaweedfs", count)

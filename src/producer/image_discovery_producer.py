@@ -16,7 +16,7 @@ from config import Config
 from data_sources import DataSource, DataSourceRegistry, DiscoveryConfig
 from factories import (
     create_data_source_registry,
-    create_minio_client,
+    create_s3_client,
     create_rabbitmq_client,
 )
 from models.work_unit import WorkUnit
@@ -33,7 +33,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
     1. Runs on a schedule using APScheduler
     2. Iterates over registered data sources
     3. Discovers new images from each data source
-    4. Checks MinIO for existing tiles (to avoid reprocessing)
+    4. Checks seaweedfs for existing tiles (to avoid reprocessing)
     5. Checks in-progress tracker (to avoid duplicate work units)
     6. Creates work units for new images
     7. Publishes work units to RabbitMQ
@@ -54,7 +54,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         self._mq_client = mq_client
         self._progress_tracker = progress_tracker
         self._data_source_registry = data_source_registry
-        self._minio_client = create_minio_client(config)
+        self._s3_client = create_s3_client(config)
 
     async def discover_and_publish(self) -> int:
         """
@@ -137,7 +137,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             output_prefix = f"{band_id}/tiles"
             existing_tilesets = await self._get_existing_tilesets(output_prefix)
 
-        # Get existing tilesets in MinIO
+        # Get existing tilesets in seaweedfs
         logger.info(
             "Found %d existing tilesets for %s",
             len(existing_tilesets),
@@ -195,9 +195,9 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         return published
 
     async def _get_existing_tilesets(self, s3_prefix: str) -> Set[str]:
-        """Get set of existing tileset names (base filenames) in MinIO."""
+        """Get set of existing tileset names (base filenames) in seaweedfs."""
         try:
-            prefixes = await self._minio_client.list_prefixes(
+            prefixes = await self._s3_client.list_prefixes(
                 f"{s3_prefix}/", delimiter="/"
             )
             tilesets = set()
@@ -209,7 +209,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
                     tilesets.add(base_name)
             return tilesets
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.warning("Error listing MinIO tilesets: %s", e)
+            logger.warning("Error listing seaweedfs tilesets: %s", e)
             return set()
 
     async def _get_radar_existing_tilesets(self, product_id: str) -> Set[str]:
@@ -222,14 +222,14 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         tilesets = set()
         try:
             # List radar IDs: radar/RMA1/, radar/RMA12/, etc.
-            radar_ids = await self._minio_client.list_prefixes("radar/", delimiter="/")
+            radar_ids = await self._s3_client.list_prefixes("radar/", delimiter="/")
             for radar_id_prefix in radar_ids:
                 # radar_id_prefix = "radar/RMA1/"
                 radar_id = radar_id_prefix.rstrip("/").split("/")[-1]
                 # Build product path: radar/RMA1/DBZH/
                 product_prefix = f"{radar_id_prefix}{product_id}/"
                 # List tilesets in this radar/product combination
-                prefixes = await self._minio_client.list_prefixes(
+                prefixes = await self._s3_client.list_prefixes(
                     product_prefix, delimiter="/"
                 )
                 for prefix in prefixes:

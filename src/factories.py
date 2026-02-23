@@ -51,8 +51,8 @@ def create_rabbitmq_client(config: Config) -> RabbitMQClient:
     return client
 
 
-def create_minio_client(config: Config) -> S3Client:
-    """Build an authenticated S3 client for MinIO tile storage."""
+def create_s3_client(config: Config) -> S3Client:
+    """Build an authenticated S3 client for tile storage."""
     return S3Client.create_with_credentials(
         bucket_name=config.S3_TILES_DATA_BUCKET_NAME,
         endpoint=config.S3_TILES_DATA_ENDPOINT,

@@ -15,7 +15,7 @@ import numpy as np
 import xarray as xr
 
 from config import Config
-from factories import create_minio_client
+from factories import create_s3_client
 from models.work_unit import WorkUnit
 from processors.base_processor import ImageProcessor, ShutdownRequested
 from services.generate_geotiff_files import GenerateGeoTIFFFilesService
@@ -46,7 +46,7 @@ class GoesProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._minio_client = create_minio_client(config)
+        self._s3_client = create_s3_client(config)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute the full processing pipeline."""
@@ -154,8 +154,8 @@ class GoesProcessor(ImageProcessor):
         logger.info("Step 5: Upload to S3")
         s3_prefix = f"{band_config.s3_prefix}/{geotiff_path.stem}"
 
-        await self._minio_client.ensure_bucket_exists()
-        await self._minio_client.upload_directory(tiles_output_dir, s3_prefix)
+        await self._s3_client.ensure_bucket_exists()
+        await self._s3_client.upload_directory(tiles_output_dir, s3_prefix)
 
         logger.info("Processing complete: %s", s3_prefix)
 

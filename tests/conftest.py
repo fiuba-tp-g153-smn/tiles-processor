@@ -5,9 +5,9 @@ import pytest
 # These are set before any other imports to ensure config.py picks them up
 os.environ.setdefault("LOG_LEVEL", "INFO")
 os.environ.setdefault("DATA_DIR", "/app/data")
-os.environ.setdefault("S3_TILES_DATA_ENDPOINT", "minio:9000")
-os.environ.setdefault("S3_TILES_DATA_TILES_PROCESSOR_USER", "minioadmin")
-os.environ.setdefault("S3_TILES_DATA_TILES_PROCESSOR_PASSWORD", "minioadmin")
+os.environ.setdefault("S3_TILES_DATA_ENDPOINT", "seaweedfs:9000")
+os.environ.setdefault("S3_TILES_DATA_TILES_PROCESSOR_USER", "seaweedfsadmin")
+os.environ.setdefault("S3_TILES_DATA_TILES_PROCESSOR_PASSWORD", "seaweedfsadmin")
 os.environ.setdefault("S3_TILES_DATA_BUCKET_NAME", "tiles-data")
 os.environ.setdefault("RABBITMQ_HOST", "rabbitmq")
 os.environ.setdefault("RABBITMQ_PORT", "5672")

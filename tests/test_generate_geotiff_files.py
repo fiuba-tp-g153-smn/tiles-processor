@@ -37,9 +37,9 @@ def env_vars(tmp_path):
     return {
         "LOG_LEVEL": "DEBUG",
         "DATA_DIR": str(tmp_path / "data"),
-        "S3_TILES_DATA_ENDPOINT": "minio:9000",
-        "S3_TILES_DATA_TILES_PROCESSOR_USER": "minioadmin",
-        "S3_TILES_DATA_TILES_PROCESSOR_PASSWORD": "minioadmin",
+        "S3_TILES_DATA_ENDPOINT": "seaweedfs:9000",
+        "S3_TILES_DATA_TILES_PROCESSOR_USER": "seaweedfsadmin",
+        "S3_TILES_DATA_TILES_PROCESSOR_PASSWORD": "seaweedfsadmin",
         "S3_TILES_DATA_BUCKET_NAME": "tiles-data",
         "RABBITMQ_HOST": "rabbitmq",
         "RABBITMQ_PORT": "5672",

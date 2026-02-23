@@ -12,7 +12,7 @@ The subprocess:
 2. Selects the appropriate processor based on work_unit.processor_id
 3. Loads heavy libraries (pyproj, rioxarray, GDAL stack)
 4. Processes the downloaded file
-5. Uploads results to MinIO
+5. Uploads results to seaweedfs
 6. Exits, releasing all memory
 """
 
