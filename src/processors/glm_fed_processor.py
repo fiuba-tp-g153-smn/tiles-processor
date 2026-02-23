@@ -51,25 +51,25 @@ class GlmFedProcessor(ImageProcessor):
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute the GLM FED (and optionally TOE) processing pipeline."""
-        logger.info("[GLM-FED] Starting processing for %s", work_unit.image_id)
+        logger.info("[GLM-FED/TOE/MFA] Starting processing for %s", work_unit.image_id)
 
         # For GLM, downloaded_file_path is a DIRECTORY containing multiple L2-LCFA files
         data_dir = Path(downloaded_file_path)
         if not data_dir.exists() or not data_dir.is_dir():
             raise FileNotFoundError(f"GLM data directory not found: {data_dir}")
 
-        # Setup work directory — FED and TOE use separate subdirs to avoid name collisions
+        # Setup work directory — FED, TOE, and MFA use separate subdirs to avoid name collisions
         band_dir = self._get_band_dir(work_unit)
         work_dir = self._ensure_dir(band_dir / work_unit.image_id)
         fed_geotiff_dir = self._ensure_dir(work_dir / "fed" / "geotiff")
         fed_tiles_dir = self._ensure_dir(work_dir / "fed" / "tiles")
         toe_geotiff_dir = self._ensure_dir(work_dir / "toe" / "geotiff")
         toe_tiles_dir = self._ensure_dir(work_dir / "toe" / "tiles")
+        mfa_geotiff_dir = self._ensure_dir(work_dir / "mfa" / "geotiff")
+        mfa_tiles_dir = self._ensure_dir(work_dir / "mfa" / "tiles")
 
         try:
-            # 1. Compute FED and TOE grids in a single pass over GLM files
             self._check_shutdown()
-            logger.info("Step 1: Computing GLM grids (FED + TOE)")
             glm_files = sorted(data_dir.glob("OR_GLM-L2-LCFA_*.nc"))
 
             if not glm_files:
@@ -77,11 +77,13 @@ class GlmFedProcessor(ImageProcessor):
 
             logger.info("Found %d GLM L2-LCFA files in window", len(glm_files))
 
-            fed_data, toe_data = await asyncio.to_thread(
+            # 1. Compute FED + MFA at 0.08° (≈8 km cells)
+            logger.info("Step 1a: Computing FED + MFA grids at 0.08°")
+            fed_data, _, mfa_data = await asyncio.to_thread(
                 compute_glm_grids,
                 glm_files,
                 work_unit.bounds,
-                grid_resolution=0.02,
+                grid_resolution=0.08,
             )
 
             # 2. FED — always generated
@@ -95,8 +97,15 @@ class GlmFedProcessor(ImageProcessor):
             del fed_data
             gc.collect()
 
-            # 3. TOE — optional toggle
+            # 3. TOE — separate pass at 0.02° (≈2 km cells), optional toggle
             if self.config.ENABLE_GLM_TOE:
+                logger.info("Step 1b: Computing TOE grid at 0.02°")
+                _, toe_data, _ = await asyncio.to_thread(
+                    compute_glm_grids,
+                    glm_files,
+                    work_unit.bounds,
+                    grid_resolution=0.08,
+                )
                 await self._generate_and_upload(
                     toe_data,
                     toe_geotiff_dir,
@@ -104,7 +113,19 @@ class GlmFedProcessor(ImageProcessor):
                     work_unit,
                     get_band_config("glm_toe"),
                 )
-            del toe_data
+                del toe_data
+                gc.collect()
+
+            # 4. MFA — optional toggle
+            if self.config.ENABLE_GLM_MFA:
+                await self._generate_and_upload(
+                    mfa_data,
+                    mfa_geotiff_dir,
+                    mfa_tiles_dir,
+                    work_unit,
+                    get_band_config("glm_mfa"),
+                )
+            del mfa_data
             gc.collect()
 
         except ShutdownRequested:

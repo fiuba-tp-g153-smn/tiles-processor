@@ -106,6 +106,16 @@ GLM_TOE_CONFIG = BandConfig(
     product_name="GLM_Total_Optical_Energy",
 )
 
+GLM_MFA_CONFIG = BandConfig(
+    band_id="glm_mfa",
+    file_pattern="GLM-L2-LCFA",  # same source files as FED — no separate download
+    vmin=0.0,
+    vmax=3000.0,  # km² operational cap
+    palette_name="MFA_PALETTE",
+    s3_prefix="glm_mfa/tiles",
+    product_name="GLM_Minimum_Flash_Area",
+)
+
 # Registry for looking up band configs by ID
 BAND_CONFIGS = {
     "band_13": BAND_13_CONFIG,
@@ -113,6 +123,7 @@ BAND_CONFIGS = {
     "band_2": BAND_2_CONFIG,
     "glm_fed": GLM_FED_CONFIG,
     "glm_toe": GLM_TOE_CONFIG,
+    "glm_mfa": GLM_MFA_CONFIG,
 }
 
 

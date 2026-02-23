@@ -8,6 +8,7 @@
     "enable_band_2": true,
     "enable_glm_fed": true,
     "enable_glm_toe": true,
+    "enable_glm_mfa": true,
     "enable_radar": false
   },
   "bounds": {

@@ -61,6 +61,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.ENABLE_BAND_2: bool = settings["features"].get("enable_band_2", False)
         self.ENABLE_GLM_FED: bool = settings["features"].get("enable_glm_fed", False)
         self.ENABLE_GLM_TOE: bool = settings["features"].get("enable_glm_toe", False)
+        self.ENABLE_GLM_MFA: bool = settings["features"].get("enable_glm_mfa", False)
         self.ENABLE_RADAR: bool = settings["features"].get("enable_radar", True)
 
         # Radar Configuration
@@ -123,6 +124,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("ENABLE_BAND_2: %s", self.ENABLE_BAND_2)
         logger.info("ENABLE_GLM_FED: %s", self.ENABLE_GLM_FED)
         logger.info("ENABLE_GLM_TOE: %s", self.ENABLE_GLM_TOE)
+        logger.info("ENABLE_GLM_MFA: %s", self.ENABLE_GLM_MFA)
         logger.info("ENABLE_RADAR: %s", self.ENABLE_RADAR)
         logger.info("RADAR_INPUT_DIR: %s", self.RADAR_INPUT_DIR)
         logger.info("DATA_DIR: %s", self.DATA_DIR)

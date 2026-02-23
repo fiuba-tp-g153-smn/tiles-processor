@@ -21,7 +21,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     registry = DataSourceRegistry()
 
     # Products computed as by-products of another source's processor (no separate download)
-    combined_products = {"glm_toe"}
+    combined_products = {"glm_toe", "glm_mfa"}
 
     for _band_id, band_config in BAND_CONFIGS.items():
         if band_config.band_id in combined_products:
