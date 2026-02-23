@@ -19,7 +19,12 @@ def create_data_source_registry(config: Config = None) -> DataSourceRegistry:
     """Create and populate the data source registry with all known sources."""
     registry = DataSourceRegistry()
 
+    # Products computed as by-products of another source's processor (no separate download)
+    _COMBINED_PRODUCTS = {"glm_toe"}
+
     for _band_id, band_config in BAND_CONFIGS.items():
+        if band_config.band_id in _COMBINED_PRODUCTS:
+            continue
         if band_config.band_id.startswith("glm_"):
             # Register GLM sources (lightning products)
             registry.register(Goes19GlmDataSource(band_config))

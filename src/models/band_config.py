@@ -96,12 +96,23 @@ GLM_FED_CONFIG = BandConfig(
     product_name="GLM_Flash_Extent_Density",
 )
 
+GLM_TOE_CONFIG = BandConfig(
+    band_id="glm_toe",
+    file_pattern="GLM-L2-LCFA",  # same source files as FED — no separate download
+    vmin=0.0,
+    vmax=1e-9,  # 1 nJ/cell; calibrate after inspecting real-data logs
+    palette_name="LIGHTNING_PALETTE",
+    s3_prefix="glm_toe/tiles",
+    product_name="GLM_Total_Optical_Energy",
+)
+
 # Registry for looking up band configs by ID
 BAND_CONFIGS = {
     "band_13": BAND_13_CONFIG,
     "band_9": BAND_9_CONFIG,
     "band_2": BAND_2_CONFIG,
     "glm_fed": GLM_FED_CONFIG,
+    "glm_toe": GLM_TOE_CONFIG,
 }
 
 

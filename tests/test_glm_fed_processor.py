@@ -1,4 +1,4 @@
-"""Tests for GLM FED processor zero-flash window handling."""
+"""Tests for GLM FED/TOE processor zero-flash window handling."""
 
 import os
 import sys
@@ -15,19 +15,33 @@ import rioxarray  # noqa: F401  # ensures rio accessor is registered
 
 from models.work_unit import WorkUnit
 from processors.glm_fed_processor import GlmFedProcessor
-from services.processing_steps import compute_flash_extent_density
+from services.processing_steps import compute_flash_extent_density, compute_glm_grids
 
 BOUNDS = {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15}
 RESOLUTION = 0.02
 
 
 def _make_empty_glm_dataset():
-    """Return a mock xr.Dataset whose flash arrays are empty."""
+    """Return a mock xr.Dataset whose flash arrays are empty.
+
+    Uses side_effect on __getitem__ so each key gets its own .values,
+    avoiding the MagicMock pitfall where a single return_value is shared.
+    """
+    _data = {
+        "flash_lat": np.array([], dtype=np.float32),
+        "flash_lon": np.array([], dtype=np.float32),
+        "flash_energy": np.array([], dtype=np.float32),
+    }
     mock_ds = MagicMock()
     mock_ds.__enter__ = MagicMock(return_value=mock_ds)
     mock_ds.__exit__ = MagicMock(return_value=False)
-    mock_ds["flash_lat"].values = np.array([], dtype=np.float32)
-    mock_ds["flash_lon"].values = np.array([], dtype=np.float32)
+
+    def _getitem(key):
+        child = MagicMock()
+        child.values = _data[key]
+        return child
+
+    mock_ds.__getitem__.side_effect = _getitem
     return mock_ds
 
 
@@ -50,7 +64,7 @@ def _make_fed_data_array(bounds: dict, resolution: float = RESOLUTION) -> xr.Dat
 
 
 class TestZeroFlashFedGrid:
-    """compute_flash_extent_density behaves correctly when no flashes are present."""
+    """compute_glm_grids / compute_flash_extent_density behave correctly when no flashes present."""
 
     def test_zero_flash_returns_all_nan_dataarray(self, tmp_path):
         """Empty flash arrays yield an all-NaN DataArray named Flash_Extent_Density."""
@@ -89,6 +103,23 @@ class TestZeroFlashFedGrid:
         expected_cols = len(lon_bins) - 1
         assert result.shape == (expected_rows, expected_cols)
 
+    def test_compute_glm_grids_returns_both_arrays(self, tmp_path):
+        """compute_glm_grids returns (fed, toe) tuple, both all-NaN when no flashes."""
+        fake_files = [
+            tmp_path
+            / "OR_GLM-L2-LCFA_G19_s2026044120000_e2026044120200_c2026044120200.nc",
+        ]
+        mock_ds = _make_empty_glm_dataset()
+
+        with patch("services.processing_steps.xr.open_dataset", return_value=mock_ds):
+            fed, toe = compute_glm_grids(fake_files, BOUNDS, RESOLUTION)
+
+        assert fed.name == "Flash_Extent_Density"
+        assert toe.name == "Total_Optical_Energy"
+        assert fed.shape == toe.shape
+        assert np.all(np.isnan(fed.values))
+        assert np.all(np.isnan(toe.values))
+
 
 class TestZeroFlashWindowPipeline:
     """GlmFedProcessor completes and uploads tiles for a zero-flash window."""
@@ -99,9 +130,10 @@ class TestZeroFlashWindowPipeline:
 
     @pytest.mark.asyncio
     async def test_zero_flash_window_uploads_tiles(self, tmp_path):
-        """upload_directory is called exactly once even when all flashes are absent."""
+        """upload_directory is called exactly once (FED only) when TOE is disabled."""
         config = MagicMock()
         config.TMP_DIR = str(tmp_path / "proc")
+        config.ENABLE_GLM_TOE = False
 
         mock_s3 = AsyncMock()
         mock_s3.upload_directory = AsyncMock()
@@ -137,8 +169,8 @@ class TestZeroFlashWindowPipeline:
         fed_data = _make_fed_data_array(self._SMALL_BOUNDS, self._SMALL_RESOLUTION)
 
         with patch(
-            "processors.glm_fed_processor.compute_flash_extent_density",
-            return_value=fed_data,
+            "processors.glm_fed_processor.compute_glm_grids",
+            return_value=(fed_data, fed_data),
         ), patch(
             "processors.glm_fed_processor.run_gdal2tiles",
             return_value=fake_tiles_dir,
@@ -146,3 +178,52 @@ class TestZeroFlashWindowPipeline:
             await processor.process(str(data_dir), work_unit)
 
         mock_s3.upload_directory.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_toe_enabled_uploads_twice(self, tmp_path):
+        """upload_directory is called twice (FED + TOE) when ENABLE_GLM_TOE is True."""
+        config = MagicMock()
+        config.TMP_DIR = str(tmp_path / "proc")
+        config.ENABLE_GLM_TOE = True
+
+        mock_s3 = AsyncMock()
+        mock_s3.upload_directory = AsyncMock()
+        mock_s3.ensure_bucket_exists = AsyncMock()
+
+        with patch(
+            "processors.glm_fed_processor.create_s3_client", return_value=mock_s3
+        ):
+            processor = GlmFedProcessor(config)
+
+        data_dir = tmp_path / "glm_window"
+        data_dir.mkdir()
+        (
+            data_dir
+            / "OR_GLM-L2-LCFA_G19_s2026044120000_e2026044120200_c2026044120200.nc"
+        ).touch()
+
+        fake_tiles_dir = tmp_path / "fake_tiles"
+        fake_tiles_dir.mkdir()
+
+        work_unit = WorkUnit.create(
+            image_id="20260213120000",
+            source_uri="test://unused",
+            data_source_id="goes19_glm",
+            processor_id="glm_fed",
+            output_prefix="glm_fed/tiles",
+            bounds=self._SMALL_BOUNDS,
+            band_id="glm_fed",
+        )
+
+        fed_data = _make_fed_data_array(self._SMALL_BOUNDS, self._SMALL_RESOLUTION)
+
+        with patch(
+            "processors.glm_fed_processor.compute_glm_grids",
+            return_value=(fed_data, fed_data),
+        ), patch(
+            "processors.glm_fed_processor.run_gdal2tiles",
+            return_value=fake_tiles_dir,
+        ):
+            await processor.process(str(data_dir), work_unit)
+
+        assert mock_s3.upload_directory.call_count == 2

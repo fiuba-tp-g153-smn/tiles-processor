@@ -1,4 +1,4 @@
-"""GLM Flash Extent Density (FED) processor."""
+"""GLM Flash Extent Density (FED) and Total Optical Energy (TOE) processor."""
 
 import asyncio
 import gc
@@ -8,12 +8,13 @@ from pathlib import Path
 
 from config import Config
 from factories import create_s3_client
+from models.band_config import BandConfig, get_band_config
 from models.work_unit import WorkUnit
 from processors.base_processor import ImageProcessor, ShutdownRequested
 from services.generate_geotiff_files import GenerateGeoTIFFFilesService
 from services.processing_steps import (
     build_rgba_data_array,
-    compute_flash_extent_density,
+    compute_glm_grids,
     normalize_and_colorize,
     run_gdal2tiles,
 )
@@ -48,7 +49,7 @@ class GlmFedProcessor(ImageProcessor):
         self._s3_client = create_s3_client(config)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
-        """Execute the GLM FED processing pipeline."""
+        """Execute the GLM FED (and optionally TOE) processing pipeline."""
         logger.info("[GLM-FED] Starting processing for %s", work_unit.image_id)
 
         # For GLM, downloaded_file_path is a DIRECTORY containing multiple L2-LCFA files
@@ -56,19 +57,18 @@ class GlmFedProcessor(ImageProcessor):
         if not data_dir.exists() or not data_dir.is_dir():
             raise FileNotFoundError(f"GLM data directory not found: {data_dir}")
 
-        # Setup work directory
+        # Setup work directory — FED and TOE use separate subdirs to avoid name collisions
         band_dir = self._get_band_dir(work_unit)
-        image_stem = work_unit.image_id
-        work_dir = self._ensure_dir(band_dir / image_stem)
-        geotiff_dir = self._ensure_dir(work_dir / "geotiff")
-        tiles_dir = self._ensure_dir(work_dir / "tiles")
-
-        fed_data = None
+        work_dir = self._ensure_dir(band_dir / work_unit.image_id)
+        fed_geotiff_dir = self._ensure_dir(work_dir / "fed" / "geotiff")
+        fed_tiles_dir = self._ensure_dir(work_dir / "fed" / "tiles")
+        toe_geotiff_dir = self._ensure_dir(work_dir / "toe" / "geotiff")
+        toe_tiles_dir = self._ensure_dir(work_dir / "toe" / "tiles")
 
         try:
-            # 1. Compute FED grid from all files
+            # 1. Compute FED and TOE grids in a single pass over GLM files
             self._check_shutdown()
-            logger.info("Step 1: Computing FED grid")
+            logger.info("Step 1: Computing GLM grids (FED + TOE)")
             glm_files = sorted(data_dir.glob("OR_GLM-L2-LCFA_*.nc"))
 
             if not glm_files:
@@ -76,31 +76,55 @@ class GlmFedProcessor(ImageProcessor):
 
             logger.info("Found %d GLM L2-LCFA files in window", len(glm_files))
 
-            fed_data = await asyncio.to_thread(
-                compute_flash_extent_density,
+            fed_data, toe_data = await asyncio.to_thread(
+                compute_glm_grids,
                 glm_files,
                 work_unit.bounds,
                 grid_resolution=0.02,
             )
 
-            # 2. Generate and upload
-            await self._generate_and_upload(fed_data, geotiff_dir, tiles_dir, work_unit)
+            # 2. FED — always generated
+            await self._generate_and_upload(
+                fed_data,
+                fed_geotiff_dir,
+                fed_tiles_dir,
+                work_unit,
+                get_band_config("glm_fed"),
+            )
+            del fed_data
+            gc.collect()
+
+            # 3. TOE — optional toggle
+            if self.config.ENABLE_GLM_TOE:
+                await self._generate_and_upload(
+                    toe_data,
+                    toe_geotiff_dir,
+                    toe_tiles_dir,
+                    work_unit,
+                    get_band_config("glm_toe"),
+                )
+            del toe_data
+            gc.collect()
 
         except ShutdownRequested:
-            logger.info("Shutdown requested, aborting GLM FED processing")
+            logger.info("Shutdown requested, aborting GLM processing")
             raise
         except Exception as e:
-            logger.error("GLM FED processing failed for %s: %s", work_unit.image_id, e)
+            logger.error("GLM processing failed for %s: %s", work_unit.image_id, e)
             raise
         finally:
             self._cleanup_directory(work_dir)
             gc.collect()
 
     async def _generate_and_upload(  # pylint: disable=too-many-locals
-        self, fed_data, geotiff_dir, tiles_dir, work_unit
+        self,
+        product_data,
+        geotiff_dir,
+        tiles_dir,
+        work_unit: WorkUnit,
+        band_config: BandConfig,
     ):
-        """Generate GeoTIFF, tiles, and upload to S3."""
-        band_config = work_unit.band_config
+        """Generate GeoTIFF, tiles, and upload to S3 for the given product config."""
         color_palette = GenerateGeoTIFFFilesService.LIGHTNING_PALETTE
 
         # 2. GeoTIFF Generation
@@ -109,7 +133,7 @@ class GlmFedProcessor(ImageProcessor):
 
         # Normalize and colorize
         r, g, b, a = normalize_and_colorize(
-            fed_data,
+            product_data,
             vmin=band_config.vmin,
             vmax=band_config.vmax,
             color_palette=color_palette,
@@ -121,13 +145,13 @@ class GlmFedProcessor(ImageProcessor):
             g,
             b,
             a,
-            coords_x=fed_data.coords["x"],
-            coords_y=fed_data.coords["y"],
+            coords_x=product_data.coords["x"],
+            coords_y=product_data.coords["y"],
             product_name=band_config.product_name,
         )
 
         # Clean up intermediate arrays
-        del fed_data, r, g, b, a
+        del product_data, r, g, b, a
         gc.collect()
 
         # Write GeoTIFF
@@ -174,4 +198,4 @@ class GlmFedProcessor(ImageProcessor):
         gc.collect()
         # pylint: enable=duplicate-code
 
-        logger.info("[GLM-FED] Processing complete for %s", work_unit.image_id)
+        logger.info("[GLM] %s processing complete: %s", band_config.band_id, s3_prefix)

@@ -82,52 +82,71 @@ def compute_brightness_temperature(dataset: xr.Dataset) -> xr.DataArray:
     return brightness_temperature
 
 
-def compute_flash_extent_density(  # pylint: disable=too-many-locals
-    glm_file_paths: list[Path], grid_bounds: dict, grid_resolution: float = 0.02
+def _make_grid_array(
+    data: np.ndarray,
+    lat_centers: np.ndarray,
+    lon_centers: np.ndarray,
+    name: str,
 ) -> xr.DataArray:
-    """
-    Compute Flash Extent Density from GLM-L2-LCFA files.
+    """Build a georeferenced xr.DataArray from a 2-D histogram result.
 
-    Bins flash locations from multiple GLM files into a regular lat/lon grid
-    to create a density map showing flash counts per cell over a time window.
+    Sets CRS to EPSG:4326, spatial dims, and replaces zero cells with NaN.
+    """
+    import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
+
+    arr = xr.DataArray(
+        data,
+        dims=["y", "x"],
+        coords={"x": lon_centers, "y": lat_centers},
+        name=name,
+    )
+    arr.rio.write_crs("EPSG:4326", inplace=True)
+    arr.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+    return xr.where(arr > 0, arr, np.nan)
+
+
+def compute_glm_grids(  # pylint: disable=too-many-locals
+    glm_file_paths: list[Path],
+    grid_bounds: dict,
+    grid_resolution: float = 0.02,
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Compute both FED and TOE grids from GLM-L2-LCFA files in a single pass.
+
+    Opens each file once; reads flash_lat, flash_lon, and flash_energy together.
+    Both grids share identical spatial coordinates.
 
     Args:
-        glm_file_paths: List of GLM-L2-LCFA NetCDF files (typically ~30 files for 10-min window)
-        grid_bounds: Geographic bounds dict with keys: minx, maxx, miny, maxy (degrees)
-        grid_resolution: Grid cell size in degrees (default 0.02° ≈ 2km at equator)
+        glm_file_paths: List of GLM-L2-LCFA NetCDF files (typically ~30 for a 10-min window).
+        grid_bounds: Geographic bounds dict with keys: minx, maxx, miny, maxy (degrees).
+        grid_resolution: Grid cell size in degrees (default 0.02° ≈ 2 km at equator).
 
     Returns:
-        xr.DataArray with flash counts per grid cell, georeferenced to EPSG:4326.
-        Cells with zero flashes are set to NaN for transparency in visualization.
+        (fed_array, toe_array) — both georeferenced to EPSG:4326.
+        Cells with no flashes are set to NaN for map transparency.
 
     Memory Profile:
         - Each GLM file: ~2-5 MB
         - 30 files: ~150 MB raw data
-        - Output grid (e.g., 3000×1500): ~36 MB float64
-        - Peak memory: ~200 MB (well within limits)
+        - Output grids (e.g. 3000×1500 each): ~36 MB float64 each
+        - Peak memory: ~250 MB
     """
-    import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
-
-    # 1. Read all flash locations from all files
-    all_flash_lats = []
-    all_flash_lons = []
+    all_lats, all_lons, all_energies = [], [], []
 
     for file_path in glm_file_paths:
         with xr.open_dataset(file_path, engine="h5netcdf") as ds:
-            # Extract flash lat/lon (GLM stores as scaled int16, xarray auto-decodes)
-            flash_lat = ds["flash_lat"].values
-            flash_lon = ds["flash_lon"].values
-            all_flash_lats.append(flash_lat)
-            all_flash_lons.append(flash_lon)
+            all_lats.append(ds["flash_lat"].values)
+            all_lons.append(ds["flash_lon"].values)
+            all_energies.append(ds["flash_energy"].values)  # Joules, auto-decoded
 
-    # Flatten all arrays into single list
-    all_flash_lats = np.concatenate(all_flash_lats)
-    all_flash_lons = np.concatenate(all_flash_lons)
+    lats = np.concatenate(all_lats)
+    lons = np.concatenate(all_lons)
+    energies = np.concatenate(all_energies)
+    del all_lats, all_lons, all_energies
+    gc.collect()
 
-    flash_count = len(all_flash_lats)
+    flash_count = len(lats)
     logger.info("Loaded %d flashes from %d GLM files", flash_count, len(glm_file_paths))
 
-    # 2. Create grid bins
     lon_bins = np.arange(
         grid_bounds["minx"], grid_bounds["maxx"] + grid_resolution, grid_resolution
     )
@@ -135,37 +154,30 @@ def compute_flash_extent_density(  # pylint: disable=too-many-locals
         grid_bounds["miny"], grid_bounds["maxy"] + grid_resolution, grid_resolution
     )
 
-    # 3. Bin flashes into grid cells (2D histogram)
-    # Note: histogram2d expects (x, y) order but returns (y, x) shaped array
-    flash_counts, _, _ = np.histogram2d(
-        all_flash_lats, all_flash_lons, bins=[lat_bins, lon_bins]
+    # FED: count flashes per cell
+    fed_counts, _, _ = np.histogram2d(lats, lons, bins=[lat_bins, lon_bins])
+
+    # TOE: sum energy per cell (same bins, one extra histogram call)
+    toe_energy, _, _ = np.histogram2d(
+        lats, lons, bins=[lat_bins, lon_bins], weights=energies
     )
 
-    # Free memory
-    del all_flash_lats, all_flash_lons
+    del lats, lons, energies
     gc.collect()
 
-    # 4. Create xarray DataArray with proper coordinates
     lon_centers = (lon_bins[:-1] + lon_bins[1:]) / 2
     lat_centers = (lat_bins[:-1] + lat_bins[1:]) / 2
 
-    fed_array = xr.DataArray(
-        flash_counts,
-        dims=["y", "x"],
-        coords={"x": lon_centers, "y": lat_centers},
-        name="Flash_Extent_Density",
+    fed_array = _make_grid_array(
+        fed_counts, lat_centers, lon_centers, "Flash_Extent_Density"
     )
-
-    # 5. Set CRS and spatial dims
-    fed_array.rio.write_crs("EPSG:4326", inplace=True)
-    fed_array.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
-
-    # 6. Replace zeros with NaN for transparency (avoid clutter on map)
-    fed_array = xr.where(fed_array > 0, fed_array, np.nan)
+    toe_array = _make_grid_array(
+        toe_energy, lat_centers, lon_centers, "Total_Optical_Energy"
+    )
 
     if flash_count == 0:
         logger.info(
-            "Computed FED grid: %d x %d cells, no flashes — transparent tiles will be generated",
+            "Computed GLM grids: %d x %d cells, no flashes — transparent tiles will be generated",
             len(lat_centers),
             len(lon_centers),
         )
@@ -176,7 +188,23 @@ def compute_flash_extent_density(  # pylint: disable=too-many-locals
             len(lon_centers),
             float(np.nanmax(fed_array.values)),
         )
+        logger.info(
+            "Computed TOE grid: max energy: %.3e J/cell",
+            float(np.nanmax(toe_array.values)),
+        )
 
+    return fed_array, toe_array
+
+
+def compute_flash_extent_density(
+    glm_file_paths: list[Path], grid_bounds: dict, grid_resolution: float = 0.02
+) -> xr.DataArray:
+    """Compute Flash Extent Density from GLM-L2-LCFA files.
+
+    Thin wrapper around compute_glm_grids that returns only the FED grid.
+    Kept for backward compatibility.
+    """
+    fed_array, _ = compute_glm_grids(glm_file_paths, grid_bounds, grid_resolution)
     return fed_array
 
 
