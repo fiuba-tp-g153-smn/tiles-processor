@@ -16,3 +16,4 @@ benchmark_results/
 data_minio/
 .vscode
 data_seaweedfs/
+sftpgo/

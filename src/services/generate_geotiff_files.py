@@ -42,7 +42,7 @@ from services.processing_steps import build_rgba_data_array, normalize_and_color
 logger = logging.getLogger(__name__)
 
 
-def _interpolate_palette(
+def _interpolate_palette(  # pylint: disable=too-many-locals
     control_points: list[tuple[int, int, int, int]],
 ) -> list[str]:
     """Build a 256-entry hex palette by linearly interpolating between control points.
@@ -634,19 +634,19 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
     VISIBLE_PALETTE = [f"#{i:02x}{i:02x}{i:02x}" for i in range(256)]
 
     # Palette for GLM Flash Extent Density (FED)
-    # Black → Dark Blue → Blue → Light Blue → Green → Yellow → Orange → Red → White
     # Range: 0–256 flashes per grid cell
+    # Ticks: 1, 2, 4, 8, 16, 32, 64, 128, 256
     FED_PALETTE = _interpolate_palette(
         [
-            (0, 0, 0, 0),  # Black (no flashes)
-            (1, 0, 0, 80),  # Dark navy
-            (64, 0, 0, 255),  # Blue
-            (96, 0, 191, 255),  # Light blue
-            (128, 0, 255, 0),  # Green
-            (160, 255, 255, 0),  # Yellow
-            (192, 255, 128, 0),  # Orange
-            (224, 255, 0, 0),  # Red
-            (255, 255, 255, 255),  # White (extreme)
+            (0, 0, 0, 139),  # 1 flash (Index 0): Dark navy
+            (1, 0, 0, 255),  # 2 flashes (Index 1): Blue
+            (3, 0, 191, 255),  # 4 flashes (Index 3): Light blue
+            (7, 0, 255, 0),  # 8 flashes (Index 7): Green
+            (15, 173, 255, 47),  # 16 flashes (Index 15): Green-yellow
+            (31, 255, 255, 0),  # 32 flashes (Index 31): Yellow
+            (63, 255, 165, 0),  # 64 flashes (Index 63): Orange
+            (127, 255, 0, 0),  # 128 flashes (Index 127): Red
+            (255, 255, 255, 255),  # 256 flashes (Index 255): White
         ]
     )
 
@@ -654,17 +654,18 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
     LIGHTNING_PALETTE = FED_PALETTE
 
     # Palette for GLM Total Optical Energy (TOE)
-    # Dark Purple → Dark Blue → Blue → Pink → Orange → Bright Yellow → White
-    # Range: 0–1500 fJ (1.5 × 10⁻¹² J) per grid cell
+    # Range: 0–1500 fJ per grid cell
+    # Ticks: 1, 5, 10, 25, 50, 100, 500, 1500 fJ
     TOE_PALETTE = _interpolate_palette(
         [
-            (0, 30, 0, 60),  # Dark purple
-            (40, 0, 0, 150),  # Dark blue
-            (85, 0, 100, 255),  # Blue
-            (130, 255, 80, 200),  # Pink / magenta
-            (175, 255, 100, 0),  # Orange
-            (215, 255, 255, 0),  # Bright yellow
-            (255, 255, 255, 255),  # White
+            (0, 75, 0, 130),  # 1-5 fJ (Index 0): Dark purple
+            (1, 0, 0, 128),  # 10 fJ (Index 1): Dark blue
+            (4, 0, 0, 255),  # 25 fJ (Index 4): Blue
+            (8, 255, 105, 180),  # 50 fJ (Index 8): Hot Pink
+            (17, 255, 0, 255),  # 100 fJ (Index 17): Magenta
+            (85, 255, 165, 0),  # 500 fJ (Index 85): Orange
+            (170, 255, 255, 0),  # 1000 fJ (Index 170): Bright yellow
+            (255, 255, 255, 255),  # 1500 fJ (Index 255): White
         ]
     )
 
