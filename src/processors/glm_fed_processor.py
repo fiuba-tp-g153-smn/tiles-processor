@@ -116,7 +116,7 @@ class GlmFedProcessor(ImageProcessor):
             self._cleanup_directory(work_dir)
             gc.collect()
 
-    async def _generate_and_upload(  # pylint: disable=too-many-locals
+    async def _generate_and_upload(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
         self,
         product_data,
         geotiff_dir,

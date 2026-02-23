@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import rasterio
 from rasterio.transform import from_bounds
-from rasterio.crs import CRS
+from rasterio.crs import CRS  # pylint: disable=no-name-in-module
 import matplotlib.colors as mcolors
 
 from config import Config
@@ -29,7 +29,7 @@ from models.radar_config import (
     get_radar_product_config,
     RadarProductConfig,
 )
-from processors.base_processor import ImageProcessor, ShutdownRequested
+from processors.base_processor import ImageProcessor
 
 logger = getLogger(__name__)
 
@@ -53,7 +53,9 @@ class RadarProcessor(ImageProcessor):
         super().__init__(config)
         self._s3_client = create_s3_client(config)
 
-    async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
+    async def process(  # pylint: disable=too-many-locals
+        self, downloaded_file_path: str, work_unit: WorkUnit
+    ) -> None:
         """Execute the full radar processing pipeline."""
         logger.info(
             "[RADAR] Starting processing for %s",
@@ -122,7 +124,10 @@ class RadarProcessor(ImageProcessor):
                 # Path format: radar/{radar_id}/{product}/{timestamp}_elev{N}/
                 # This matches the producer's tileset detection logic
                 self._check_shutdown()
-                s3_prefix = f"radar/{parsed['radar_id']}/{parsed['variable']}/{parsed['timestamp']}_elev{sweep_idx}"
+                s3_prefix = (
+                    f"radar/{parsed['radar_id']}/{parsed['variable']}/"
+                    f"{parsed['timestamp']}_elev{sweep_idx}"
+                )
                 await self._upload_tiles(tiles_dir, s3_prefix)
 
                 logger.info(
@@ -177,12 +182,12 @@ class RadarProcessor(ImageProcessor):
         )
         return grid
 
-    def _grid_to_geotiff(
+    def _grid_to_geotiff(  # pylint: disable=too-many-locals
         self,
         grid,
         output_path: Path,
         product_config: RadarProductConfig,
-        variable: str,
+        variable: str,  # pylint: disable=unused-argument
     ) -> None:
         """Save grid as colorized RGBA GeoTIFF."""
         logger.info("[RADAR] Creating GeoTIFF: %s", output_path.name)

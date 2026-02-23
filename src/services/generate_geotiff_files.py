@@ -639,7 +639,7 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
     FED_PALETTE = _interpolate_palette(
         [
             (0, 0, 0, 0),  # Black (no flashes)
-            (32, 0, 0, 80),  # Dark navy
+            (1, 0, 0, 80),  # Dark navy
             (64, 0, 0, 255),  # Blue
             (96, 0, 191, 255),  # Light blue
             (128, 0, 255, 0),  # Green

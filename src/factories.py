@@ -1,6 +1,7 @@
 """Factory functions for constructing shared infrastructure objects from config."""
 
 from pathlib import Path
+from typing import Optional
 
 from clients.rabbitmq_client import RabbitMQClient
 from clients.s3_client import S3Client
@@ -15,15 +16,15 @@ from models.band_config import BAND_CONFIGS
 from models.radar_config import RADAR_PRODUCT_CONFIGS
 
 
-def create_data_source_registry(config: Config = None) -> DataSourceRegistry:
+def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRegistry:
     """Create and populate the data source registry with all known sources."""
     registry = DataSourceRegistry()
 
     # Products computed as by-products of another source's processor (no separate download)
-    _COMBINED_PRODUCTS = {"glm_toe"}
+    combined_products = {"glm_toe"}
 
     for _band_id, band_config in BAND_CONFIGS.items():
-        if band_config.band_id in _COMBINED_PRODUCTS:
+        if band_config.band_id in combined_products:
             continue
         if band_config.band_id.startswith("glm_"):
             # Register GLM sources (lightning products)
