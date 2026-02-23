@@ -167,7 +167,7 @@ class TestDuplicatePrevention:
         progress_tracker.mark_completed(images[0].image_id, "band_2")
         # And its tiles now exist in seaweedfs
         stem = Path(images[0].image_id).stem
-        tileset_prefix = f"band_2/tiles/{stem}_tiles/"
+        tileset_prefix = f"band_2/tiles/{stem}/"
         producer._s3_client.list_prefixes = AsyncMock(return_value=[tileset_prefix])
 
         # Second run: images[0] covered by seaweedfs, images[1-2] still in-progress

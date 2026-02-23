@@ -253,9 +253,10 @@ class TestWindowCompletenessFilter:
     @pytest.mark.asyncio
     async def test_timezone_handling(self, glm_source):
         """
-        Test that UTC-aware current_time works correctly with naive window_start.
+        Test that UTC-aware current_time works correctly with UTC-aware window_start.
 
-        This verifies the .replace(tzinfo=None) timezone stripping works properly.
+        window_start is parsed as UTC-aware from NOAA filenames; current_time is
+        also UTC-aware, so the comparison is always aware-to-aware.
         """
         # Setup: Current time is UTC-aware
         current_time = datetime(2026, 2, 13, 12, 15, 0, tzinfo=UTC)
@@ -342,17 +343,23 @@ class TestWindowGrouping:
         # Should have 3 windows: 12:00, 12:10, 12:20
         assert len(windows) == 3, "Should group into 3 ten-minute windows"
 
-        # Check window start times
+        # Check window start times (UTC-aware, matching NOAA filename timestamps)
         window_starts = sorted([w[0] for w in windows])
         expected_starts = [
-            datetime(2026, 2, 13, 12, 0, 0),
-            datetime(2026, 2, 13, 12, 10, 0),
-            datetime(2026, 2, 13, 12, 20, 0),
+            datetime(2026, 2, 13, 12, 0, 0, tzinfo=UTC),
+            datetime(2026, 2, 13, 12, 10, 0, tzinfo=UTC),
+            datetime(2026, 2, 13, 12, 20, 0, tzinfo=UTC),
         ]
         assert window_starts == expected_starts, "Window start times should be correct"
 
         # Check file counts per window
         window_dict = {start: files for start, files in windows}
-        assert len(window_dict[datetime(2026, 2, 13, 12, 0, 0)]) == 10  # 12:00-12:09
-        assert len(window_dict[datetime(2026, 2, 13, 12, 10, 0)]) == 10  # 12:10-12:19
-        assert len(window_dict[datetime(2026, 2, 13, 12, 20, 0)]) == 5  # 12:20-12:24
+        assert (
+            len(window_dict[datetime(2026, 2, 13, 12, 0, 0, tzinfo=UTC)]) == 10
+        )  # 12:00-12:09
+        assert (
+            len(window_dict[datetime(2026, 2, 13, 12, 10, 0, tzinfo=UTC)]) == 10
+        )  # 12:10-12:19
+        assert (
+            len(window_dict[datetime(2026, 2, 13, 12, 20, 0, tzinfo=UTC)]) == 5
+        )  # 12:20-12:24

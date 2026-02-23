@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from data_sources.base import ImageInfo, DiscoveryConfig
@@ -42,7 +42,7 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
         super().__init__(
             band_config=band_config,
             product_path="GLM-L2-LCFA",
-            max_concurrent_downloads=8,
+            max_concurrent_downloads=self.MAX_CONCURRENT_DOWNLOADS,
         )
 
     @property
@@ -71,24 +71,26 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
         # Group files into 10-minute windows
         windows = self._group_into_windows(all_files)
 
-        # Sort by window start time (descending) and take latest N windows
+        # Sort by window start time (descending)
         windows.sort(key=lambda x: x[0], reverse=True)
-        candidate_windows = windows[: self.TARGET_WINDOWS]
 
         # Filter out incomplete windows (must have full duration elapsed)
-        target_windows = [
+        complete_windows = [
             (window_start, window_files)
-            for window_start, window_files in candidate_windows
+            for window_start, window_files in windows
             if window_start + timedelta(minutes=self.WINDOW_DURATION_MINUTES)
-            <= config.current_time.replace(tzinfo=None)
+            <= config.current_time
         ]
+
+        # Cap at TARGET_WINDOWS after filtering so we get up to N complete windows
+        target_windows = complete_windows[: self.TARGET_WINDOWS]
 
         logger.debug(
             "[%s] Filtered %d/%d windows (excluded %d incomplete windows)",
             self.source_id,
             len(target_windows),
-            len(candidate_windows),
-            len(candidate_windows) - len(target_windows),
+            len(windows),
+            len(windows) - len(complete_windows),
         )
 
         # Filter already processed
@@ -161,8 +163,8 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
                 minute = int(start_str[9:11])
                 second = int(start_str[11:13])
 
-                # Convert day-of-year to datetime
-                file_time = datetime(year, 1, 1) + timedelta(
+                # Convert day-of-year to datetime (UTC, matching NOAA filenames)
+                file_time = datetime(year, 1, 1, tzinfo=timezone.utc) + timedelta(
                     days=day_of_year - 1, hours=hour, minutes=minute, seconds=second
                 )
 

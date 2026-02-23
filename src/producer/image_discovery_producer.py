@@ -124,8 +124,9 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         # Get band_id from band_config or product_config (for radar)
         if hasattr(data_source, "band_config"):
             band_id = data_source.band_config.band_id
-            output_prefix = f"{band_id}/tiles"
-            existing_tilesets = await self._get_existing_tilesets(output_prefix)
+            existing_tilesets = await self._get_existing_tilesets(
+                data_source.band_config.s3_prefix
+            )
         elif hasattr(data_source, "product_config"):
             # Radar sources use product_id as band_id
             band_id = f"radar_{data_source.product_config.product_id}"
@@ -203,10 +204,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             tilesets = set()
             for prefix in prefixes:
                 tileset_name = prefix.rstrip("/").split("/")[-1]
-                # Remove _tiles suffix to get the base name
-                if tileset_name.endswith("_tiles"):
-                    base_name = tileset_name[:-6]  # Remove "_tiles"
-                    tilesets.add(base_name)
+                tilesets.add(tileset_name)
             return tilesets
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning("Error listing seaweedfs tilesets: %s", e)
