@@ -40,6 +40,7 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     container_name: tiles-processor-seaweedfs
+    stop_grace_period: 30s
     entrypoint: /bin/sh
     command: -c "sh /start.sh"
     ports:

@@ -73,7 +73,7 @@ WEED_PID=$!
 
 # Forward SIGTERM/INT to weed so it can flush and close cleanly.
 # (SIGKILL cannot be trapped — the kernel kills immediately.)
-trap 'echo "Shutting down SeaweedFS..."; kill -TERM "$WEED_PID" 2>/dev/null' TERM INT
+trap 'echo "Shutting down SeaweedFS..."; kill -TERM "$WEED_PID" 2>/dev/null; wait "$WEED_PID" 2>/dev/null; exit 0' TERM INT
 
 echo "Waiting for SeaweedFS master..."
 until wget -qO /dev/null http://seaweedfs:9333/cluster/status 2>/dev/null; do
