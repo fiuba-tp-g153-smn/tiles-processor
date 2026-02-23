@@ -186,9 +186,21 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
         return list(windows.items())
 
     def _create_window_id(self, window_start: datetime) -> str:
-        """Create a unique ID for a time window (timestamp only)."""
-        # Format: 20260521120000 (YYYYMMDDHHMMSS)
-        return window_start.strftime("%Y%m%d%H%M%S")
+        """Create a unique ID for a time window.
+
+        Matches the NOAA 14-char timestamp format used by ABI: YYYYdddHHMMSSs
+        where ddd is day-of-year (001-366) and s is tenths of second (always 0
+        for window starts, which are aligned to 10-minute boundaries).
+        """
+        day_of_year = window_start.timetuple().tm_yday
+        return (
+            f"{window_start.year}"
+            f"{day_of_year:03d}"
+            f"{window_start.hour:02d}"
+            f"{window_start.minute:02d}"
+            f"{window_start.second:02d}"
+            f"0"
+        )
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         """
