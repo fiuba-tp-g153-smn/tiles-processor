@@ -89,9 +89,9 @@ BAND_2_CONFIG = BandConfig(
 GLM_FED_CONFIG = BandConfig(
     band_id="glm_fed",
     file_pattern="GLM-L2-LCFA",
-    vmin=0.0,  # Flash count min
-    vmax=100.0,  # Flash count max (adjust after seeing real data)
-    palette_name="LIGHTNING_PALETTE",
+    vmin=0.0,
+    vmax=256.0,  # Flashes per grid cell (guide range: 0–256)
+    palette_name="FED_PALETTE",
     s3_prefix="glm_fed/tiles",
     product_name="GLM_Flash_Extent_Density",
 )
@@ -100,8 +100,8 @@ GLM_TOE_CONFIG = BandConfig(
     band_id="glm_toe",
     file_pattern="GLM-L2-LCFA",  # same source files as FED — no separate download
     vmin=0.0,
-    vmax=1e-9,  # 1 nJ/cell; calibrate after inspecting real-data logs
-    palette_name="LIGHTNING_PALETTE",
+    vmax=1.5e-12,  # 1500 fJ in Joules (guide range: 1–1500 fJ)
+    palette_name="TOE_PALETTE",
     s3_prefix="glm_toe/tiles",
     product_name="GLM_Total_Optical_Energy",
 )

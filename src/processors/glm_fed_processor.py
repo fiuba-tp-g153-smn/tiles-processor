@@ -30,7 +30,7 @@ class GlmFedProcessor(ImageProcessor):
     1. Load all GLM-L2-LCFA files in 10-min window (from directory, not single file)
     2. Extract flash lat/lon coordinates
     3. Bin into 0.02° grid (2D histogram)
-    4. Colorize with LIGHTNING_PALETTE
+    4. Colorize with FED_PALETTE (or TOE_PALETTE for the TOE pass)
     5. Generate GeoTIFF (already in EPSG:4326, no reprojection needed)
     6. Generate tiles with gdal2tiles
     7. Upload to seaweedfs
@@ -125,7 +125,9 @@ class GlmFedProcessor(ImageProcessor):
         band_config: BandConfig,
     ):
         """Generate GeoTIFF, tiles, and upload to S3 for the given product config."""
-        color_palette = GenerateGeoTIFFFilesService.LIGHTNING_PALETTE
+        color_palette = GenerateGeoTIFFFilesService.get_palette(
+            band_config.palette_name
+        )
 
         # 2. GeoTIFF Generation
         self._check_shutdown()
