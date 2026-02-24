@@ -234,6 +234,7 @@ def normalize_and_colorize(
     vmin: float,
     vmax: float,
     color_palette: list[str],
+    nan_alpha: int = 0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Normalize a DataArray to [0, 255] and map through a hex color palette.
 
@@ -242,16 +243,17 @@ def normalize_and_colorize(
         vmin: Value that maps to palette index 0.
         vmax: Value that maps to palette index 255.
         color_palette: List of 256 hex color strings (e.g. "#ff0000").
+        nan_alpha: Alpha value for NaN/masked pixels (default 0 = transparent).
 
     Returns:
         (red, green, blue, alpha) as uint8 ndarrays.
-        Alpha is 255 for valid pixels, 0 for NaN.
+        Alpha is 255 for valid pixels, nan_alpha for NaN.
     """
     arr = np.asarray(
         array.values if hasattr(array, "values") else array, dtype=np.float32
     )
     nan_mask = np.isnan(arr)
-    alpha = np.where(nan_mask, 0, 255).astype(np.uint8)
+    alpha = np.where(nan_mask, nan_alpha, 255).astype(np.uint8)
 
     normalized = (arr - vmin) / (vmax - vmin)
     normalized = np.clip(normalized, 0, 1)

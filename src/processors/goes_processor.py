@@ -44,6 +44,9 @@ class GoesProcessor(ImageProcessor):
     # Reprojection resolution in degrees (None = auto-compute from source)
     REPROJECT_RESOLUTION = None
 
+    # Alpha for NaN/masked pixels (0 = transparent); override in subclasses
+    NAN_ALPHA: int = 0
+
     def __init__(self, config: Config):
         super().__init__(config)
         self._s3_client = create_s3_client(config)
@@ -243,7 +246,9 @@ class GoesProcessor(ImageProcessor):
         # Normalize and Colorize
         coords_x = bt_clipped["x"]
         coords_y = bt_clipped["y"]
-        r, g, b, a = normalize_and_colorize(bt_clipped, vmin, vmax, color_palette)
+        r, g, b, a = normalize_and_colorize(
+            bt_clipped, vmin, vmax, color_palette, self.NAN_ALPHA
+        )
         del bt_clipped
         gc.collect()
 

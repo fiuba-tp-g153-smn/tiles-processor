@@ -43,6 +43,9 @@ class Band2Processor(GoesProcessor):
     # Fewer GDAL processes for tile generation to reduce CPU pressure
     GDAL_PROCESSES = 1
 
+    # Opaque black for nighttime — prevents transparent map bleed-through
+    NAN_ALPHA: int = 255
+
     @override
     def _apply_georeferencing(  # pylint: disable=too-many-locals
         self, netcdf_path: Path
@@ -139,13 +142,18 @@ class Band2Processor(GoesProcessor):
     @override
     def _compute_brightness_temperature(self, dataset: xr.Dataset) -> xr.DataArray:
         """
-        Compute reflectance factor for visible Band 2.
+        Compute reflectance factor for visible Band 2 with gamma correction.
 
         Band 2 measures reflected sunlight, not thermal emission.
-        The conversion is simply: reflectance = kappa0 * radiance
+        The conversion is: reflectance = kappa0 * radiance
 
-        Values outside [0.0, 1.2] are filtered as non-physical
-        (sensor artifacts, calibration errors).
+        Nighttime noise floor (< 0.005) is masked to NaN to prevent
+        sensor noise from appearing as speckle in dark areas and from
+        polluting the dynamic vmax percentile calculation.
+
+        Square-root gamma (γ = 0.5) is then applied to produce
+        perceptually uniform display values matching conventional
+        visible satellite imagery rendering.
         """
         radiance = dataset["Rad"]
         kappa0 = float(dataset["kappa0"].values)
@@ -156,12 +164,17 @@ class Band2Processor(GoesProcessor):
         del radiance
         gc.collect()
 
-        # Filter non-physical values
+        # Mask nighttime noise floor (< 0.005 = sensor noise, not real signal)
         reflectance = xr.where(
-            (reflectance >= 0.0) & (reflectance <= 1.2),
+            (reflectance >= 0.005) & (reflectance <= 1.2),
             reflectance,
             np.nan,
         )
+
+        # Square-root gamma correction (γ = 0.5)
+        # Converts linear physical reflectance to perceptually uniform display values.
+        # Max physical value: sqrt(1.2) ≈ 1.095
+        reflectance = reflectance**0.5
 
         reflectance.rio.write_crs(dataset.rio.crs, inplace=True)
         reflectance.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
@@ -184,25 +197,26 @@ class Band2Processor(GoesProcessor):
         Generate GeoTIFF with dynamic vmax based on percentile 95.
 
         Per SMN recommendation for visible channel:
-        The 95th percentile of reflectance is used to dynamically adjust
-        vmax so images don't appear too dark at sunrise/sunset.
+        The 95th percentile of gamma-corrected reflectance (sqrt domain) is used
+        to dynamically adjust vmax so images don't appear too dark at sunrise/sunset.
 
-        Formula:
+        Thresholds are in the gamma-corrected (sqrt) domain:
             perc = np.nanpercentile(data, 95)
-            if perc < 0.05:  vmax = 1.0   (nighttime / very dark)
-            elif perc > 0.7: vmax = 0.9   (bright daylight)
-            else:            vmax = perc + 0.2
+            if isnan(perc) or perc < 0.22:  vmax = 1.0   (nighttime / very dark)
+            elif perc > 0.84:               vmax = 0.95  (bright daylight)
+            else:                           vmax = min(perc + 0.10, 1.0)
         """
         # Compute dynamic vmax from the reflectance data
         valid_data = bt_data.values
         perc = float(np.nanpercentile(valid_data, 95))
 
-        if perc < 0.05:
-            dynamic_vmax = 1.0
-        elif perc > 0.7:
-            dynamic_vmax = 0.9
+        # Thresholds are in gamma-corrected (sqrt) domain
+        if np.isnan(perc) or perc < 0.22:
+            dynamic_vmax = 1.0  # mostly dark / terminator — use full range
+        elif perc > 0.84:
+            dynamic_vmax = 0.95  # bright daylight — cap just above physical max
         else:
-            dynamic_vmax = perc + 0.2
+            dynamic_vmax = min(perc + 0.10, 1.0)  # transition — add headroom
 
         logger.info(
             "Dynamic vmax for Band 2: percentile_95=%.4f, vmax=%.4f",
