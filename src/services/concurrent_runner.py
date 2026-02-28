@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Callable, TypeVar
+from typing import Callable, TypeVar, cast
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ async def run_concurrently(
         if isinstance(result, Exception):
             failed.append((name, result))
         else:
-            successful[name] = result
+            successful[name] = cast(R, result)
 
     if failed:
         for name, err in failed:

@@ -15,7 +15,7 @@ Processing differences from GoesProcessor:
   - Uses 1 GDAL process for tile generation (less CPU pressure)
 """
 
-from typing import override
+from typing import cast, override
 import gc
 import logging
 from pathlib import Path
@@ -100,11 +100,12 @@ class Band2Processor(GoesProcessor):
         # Downsample BEFORE CF decode - key memory optimization
         # coarsen().mean() on int16 uses float64 accumulator for precision
         original_shape = raw_da.shape
-        coarsened = raw_da.coarsen(  # pylint: disable=no-member
+        coarsen_obj = raw_da.coarsen(
             x=self.DOWNSAMPLE_FACTOR,
             y=self.DOWNSAMPLE_FACTOR,
             boundary="trim",
-        ).mean()
+        )
+        coarsened: xr.DataArray = cast(xr.DataArray, coarsen_obj.mean())  # type: ignore[attr-defined]  # pylint: disable=no-member
         del raw_da
         gc.collect()
 

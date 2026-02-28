@@ -49,6 +49,20 @@ class GlmFedProcessor(ImageProcessor):
         super().__init__(config)
         self._s3_client = create_s3_client(config)
 
+    def _setup_work_dirs(self, work_unit: WorkUnit) -> dict[str, Path]:
+        """Create and return all working subdirectories for FED, TOE, and MFA outputs."""
+        band_dir = self._get_band_dir(work_unit)
+        work_dir = self._ensure_dir(band_dir / work_unit.image_id)
+        return {
+            "work_dir": work_dir,
+            "fed_geotiff": self._ensure_dir(work_dir / "fed" / "geotiff"),
+            "fed_tiles": self._ensure_dir(work_dir / "fed" / "tiles"),
+            "toe_geotiff": self._ensure_dir(work_dir / "toe" / "geotiff"),
+            "toe_tiles": self._ensure_dir(work_dir / "toe" / "tiles"),
+            "mfa_geotiff": self._ensure_dir(work_dir / "mfa" / "geotiff"),
+            "mfa_tiles": self._ensure_dir(work_dir / "mfa" / "tiles"),
+        }
+
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute the GLM FED (and optionally TOE) processing pipeline."""
         logger.info("[GLM-FED/TOE/MFA] Starting processing for %s", work_unit.image_id)
@@ -59,14 +73,7 @@ class GlmFedProcessor(ImageProcessor):
             raise FileNotFoundError(f"GLM data directory not found: {data_dir}")
 
         # Setup work directory — FED, TOE, and MFA use separate subdirs to avoid name collisions
-        band_dir = self._get_band_dir(work_unit)
-        work_dir = self._ensure_dir(band_dir / work_unit.image_id)
-        fed_geotiff_dir = self._ensure_dir(work_dir / "fed" / "geotiff")
-        fed_tiles_dir = self._ensure_dir(work_dir / "fed" / "tiles")
-        toe_geotiff_dir = self._ensure_dir(work_dir / "toe" / "geotiff")
-        toe_tiles_dir = self._ensure_dir(work_dir / "toe" / "tiles")
-        mfa_geotiff_dir = self._ensure_dir(work_dir / "mfa" / "geotiff")
-        mfa_tiles_dir = self._ensure_dir(work_dir / "mfa" / "tiles")
+        dirs = self._setup_work_dirs(work_unit)
 
         try:
             self._check_shutdown()
@@ -89,8 +96,8 @@ class GlmFedProcessor(ImageProcessor):
             # 2. FED — always generated
             await self._generate_and_upload(
                 fed_data,
-                fed_geotiff_dir,
-                fed_tiles_dir,
+                dirs["fed_geotiff"],
+                dirs["fed_tiles"],
                 work_unit,
                 get_band_config("glm_fed"),
             )
@@ -108,8 +115,8 @@ class GlmFedProcessor(ImageProcessor):
                 )
                 await self._generate_and_upload(
                     toe_data,
-                    toe_geotiff_dir,
-                    toe_tiles_dir,
+                    dirs["toe_geotiff"],
+                    dirs["toe_tiles"],
                     work_unit,
                     get_band_config("glm_toe"),
                 )
@@ -120,8 +127,8 @@ class GlmFedProcessor(ImageProcessor):
             if self.config.ENABLE_GLM_MFA:
                 await self._generate_and_upload(
                     mfa_data,
-                    mfa_geotiff_dir,
-                    mfa_tiles_dir,
+                    dirs["mfa_geotiff"],
+                    dirs["mfa_tiles"],
                     work_unit,
                     get_band_config("glm_mfa"),
                 )
@@ -135,7 +142,7 @@ class GlmFedProcessor(ImageProcessor):
             logger.error("GLM processing failed for %s: %s", work_unit.image_id, e)
             raise
         finally:
-            self._cleanup_directory(work_dir)
+            self._cleanup_directory(dirs["work_dir"])
             gc.collect()
 
     async def _generate_and_upload(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments

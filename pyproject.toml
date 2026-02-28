@@ -47,6 +47,14 @@ init-hook = "import sys; sys.path.insert(0, 'src')"
 [tool.pylint.design]
 max-attributes = 30
 
+[tool.mypy]
+mypy_path = "src"
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["rasterio.*", "pyart.*", "pika.*", "apscheduler.*", "aioboto3.*", "botocore.*", "pytz", "pytz.*"]
+ignore_missing_imports = true
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

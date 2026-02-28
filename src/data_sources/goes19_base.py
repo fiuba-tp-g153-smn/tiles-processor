@@ -3,6 +3,7 @@
 import logging
 from abc import abstractmethod
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from clients.s3_client import S3Client
 from data_sources.base import DataSource
@@ -110,7 +111,7 @@ class Goes19BaseDataSource(DataSource):
         return f"{self._product_path}/{time.strftime('%Y/%j/%H')}"
 
     @abstractmethod
-    async def download(self, source_uri: str, dest_path) -> any:
+    async def download(self, source_uri: str, dest_path) -> Path:
         """
         Download data from NOAA's S3 bucket.
 

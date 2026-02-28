@@ -141,6 +141,9 @@ class Worker:  # pylint: disable=too-few-public-methods
 
         try:
             # Run the async handler in the shared event loop
+            if self._loop is None:
+                raise RuntimeError("Event loop is not initialized")
+
             self._loop.run_until_complete(self._handler.handle(work_unit))
 
             logger.info("Successfully processed %s", work_unit.image_id)

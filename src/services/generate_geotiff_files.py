@@ -706,7 +706,7 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
         brightness_temperatures: dict[str, xr.DataArray],
         output_dir: Path,
         config: Config,
-        color_palette: list[str] = None,
+        color_palette: list[str] | None = None,
         vmin: float = 183.15,
         vmax: float = 323.15,
         product_name: str = "Cloud_Tops",

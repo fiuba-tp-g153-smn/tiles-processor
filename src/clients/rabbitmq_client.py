@@ -6,6 +6,7 @@ import time
 from typing import Callable, Optional
 
 import pika
+from pika.exceptions import AMQPConnectionError
 from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import Basic, BasicProperties
 
@@ -91,7 +92,7 @@ class RabbitMQClient(MessageQueueClient):
                 self._setup_queues()
                 logger.info("Connected to RabbitMQ successfully")
                 return
-            except pika.exceptions.AMQPConnectionError as e:
+            except AMQPConnectionError as e:
                 logger.warning(
                     "Connection attempt %d/%d failed: %s", attempt + 1, max_retries, e
                 )
@@ -104,6 +105,9 @@ class RabbitMQClient(MessageQueueClient):
 
     def _setup_queues(self) -> None:
         """Declare queues and exchanges for the work queue system."""
+        if self._channel is None:
+            raise RuntimeError("RabbitMQ channel is not initialized")
+
         # Declare dead letter exchange
         self._channel.exchange_declare(
             exchange=self._dlx_name,
@@ -143,7 +147,7 @@ class RabbitMQClient(MessageQueueClient):
         stop_consuming on the connection's I/O loop. This causes
         start_consuming() to return after the current message finishes.
         """
-        if self._connection and self._connection.is_open:
+        if self._connection and self._connection.is_open and self._channel:
             self._connection.add_callback_threadsafe(self._channel.stop_consuming)
 
     def close(self) -> None:

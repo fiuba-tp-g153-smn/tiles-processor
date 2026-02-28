@@ -37,10 +37,10 @@ class S3Client:
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         bucket_name: str,
-        endpoint_url: str = None,
+        endpoint_url: str | None = None,
         max_concurrent_downloads: int = 6,
-        access_key: str = None,
-        secret_key: str = None,
+        access_key: str | None = None,
+        secret_key: str | None = None,
         secure: bool = False,
     ):
         """
@@ -202,7 +202,7 @@ class S3Client:
         relative_file_path: str,
         retries: int = 3,
         local_cache_dir: Path | None = None,
-    ) -> tuple:
+    ) -> tuple[str, bytes | None]:
         for attempt in range(retries):
             try:
                 async with self._semaphore:
@@ -242,14 +242,15 @@ class S3Client:
                     )
                     return relative_file_path, None
                 await asyncio.sleep(1)
+        return relative_file_path, None
 
     async def download_folder(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
         folder_path: str,
         file_pattern: str = "",
-        file_filter: Callable[[str], bool] = None,
+        file_filter: Callable[[str], bool] | None = None,
         local_cache_dir: Path | None = None,
-        skip_if: Callable[[str], bool] = None,
+        skip_if: Callable[[str], bool] | None = None,
     ) -> dict[str, bytes | None]:
         """
         Download files from a folder.
@@ -274,7 +275,7 @@ class S3Client:
         if file_filter is not None:
             file_paths = [fp for fp in file_paths if file_filter(fp)]
 
-        files = {}
+        files: dict[str, bytes | None] = {}
         files_to_download = []
 
         # Check skip_if first (e.g., if tiles already exist)
@@ -317,11 +318,13 @@ class S3Client:
                 )
                 for fp in files_to_download
             ]
-            results = await asyncio.gather(*tasks, return_exceptions=False)
+            results: list[tuple[str, bytes | None]] = list(
+                await asyncio.gather(*tasks, return_exceptions=False)
+            )
 
-            for file_path, content in results:
-                if content is not None:
-                    files[file_path] = content
+            for file_path, downloaded in results:
+                if downloaded is not None:
+                    files[file_path] = downloaded
 
         logger.info(
             "Download/Cache load completed: %d/%d files available",
