@@ -14,19 +14,36 @@
 
 set -e
 
+# Fail fast if any required env var is missing, before generating config files.
+: "${S3_ROOT_USER:?S3_ROOT_USER is required}"
+: "${S3_ROOT_PASSWORD:?S3_ROOT_PASSWORD is required}"
+: "${S3_TILES_DATA_BUCKET_NAME:?S3_TILES_DATA_BUCKET_NAME is required}"
+: "${S3_TILES_DATA_TILES_PROCESSOR_USER:?S3_TILES_DATA_TILES_PROCESSOR_USER is required}"
+: "${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD:?S3_TILES_DATA_TILES_PROCESSOR_PASSWORD is required}"
+: "${S3_TILES_DATA_DATA_SERVICE_USER:?S3_TILES_DATA_DATA_SERVICE_USER is required}"
+: "${S3_TILES_DATA_DATA_SERVICE_PASSWORD:?S3_TILES_DATA_DATA_SERVICE_PASSWORD is required}"
+
 mkdir -p /etc/seaweedfs
 
 echo "Generating /etc/seaweedfs/s3.json..."
 
-cat > /etc/seaweedfs/s3.json << EOF
+sed \
+  -e "s|__ROOT_USER__|${S3_ROOT_USER}|g" \
+  -e "s|__ROOT_PASSWORD__|${S3_ROOT_PASSWORD}|g" \
+  -e "s|__BUCKET__|${S3_TILES_DATA_BUCKET_NAME}|g" \
+  -e "s|__RW_USER__|${S3_TILES_DATA_TILES_PROCESSOR_USER}|g" \
+  -e "s|__RW_PASSWORD__|${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}|g" \
+  -e "s|__RO_USER__|${S3_TILES_DATA_DATA_SERVICE_USER}|g" \
+  -e "s|__RO_PASSWORD__|${S3_TILES_DATA_DATA_SERVICE_PASSWORD}|g" \
+  << 'EOF' > /etc/seaweedfs/s3.json
 {
   "identities": [
     {
       "name": "admin",
       "credentials": [
         {
-          "accessKey": "${S3_ROOT_USER}",
-          "secretKey": "${S3_ROOT_PASSWORD}"
+          "accessKey": "__ROOT_USER__",
+          "secretKey": "__ROOT_PASSWORD__"
         }
       ],
       "actions": ["Admin", "Read", "Write", "List", "Tagging"]
@@ -35,28 +52,28 @@ cat > /etc/seaweedfs/s3.json << EOF
       "name": "tiles-processor",
       "credentials": [
         {
-          "accessKey": "${S3_TILES_DATA_TILES_PROCESSOR_USER}",
-          "secretKey": "${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}"
+          "accessKey": "__RW_USER__",
+          "secretKey": "__RW_PASSWORD__"
         }
       ],
       "actions": [
-        "Read:${S3_TILES_DATA_BUCKET_NAME}",
-        "Write:${S3_TILES_DATA_BUCKET_NAME}",
-        "List:${S3_TILES_DATA_BUCKET_NAME}",
-        "Tagging:${S3_TILES_DATA_BUCKET_NAME}"
+        "Read:__BUCKET__",
+        "Write:__BUCKET__",
+        "List:__BUCKET__",
+        "Tagging:__BUCKET__"
       ]
     },
     {
       "name": "data-service",
       "credentials": [
         {
-          "accessKey": "${S3_TILES_DATA_DATA_SERVICE_USER}",
-          "secretKey": "${S3_TILES_DATA_DATA_SERVICE_PASSWORD}"
+          "accessKey": "__RO_USER__",
+          "secretKey": "__RO_PASSWORD__"
         }
       ],
       "actions": [
-        "Read:${S3_TILES_DATA_BUCKET_NAME}",
-        "List:${S3_TILES_DATA_BUCKET_NAME}"
+        "Read:__BUCKET__",
+        "List:__BUCKET__"
       ]
     }
   ]
@@ -66,6 +83,9 @@ EOF
 echo "Starting SeaweedFS (master + volume + filer + S3 gateway on :8333)..."
 weed server \
   -dir=/data \
+  -master.defaultReplication=000 \
+  -master.volumePreallocate=false \
+  -master.volumeSizeLimitMB=256 \
   -s3 \
   -s3.port=8333 \
   -s3.config=/etc/seaweedfs/s3.json &
@@ -76,13 +96,32 @@ WEED_PID=$!
 trap 'echo "Shutting down SeaweedFS..."; kill -TERM "$WEED_PID" 2>/dev/null; wait "$WEED_PID" 2>/dev/null; exit 0' TERM INT
 
 echo "Waiting for SeaweedFS master..."
+MAX_RETRIES=30
+RETRIES=0
 until wget -qO /dev/null http://seaweedfs:9333/cluster/status 2>/dev/null; do
+    RETRIES=$((RETRIES + 1))
+    if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
+        echo "SeaweedFS master did not become ready in time. Aborting."
+        kill -TERM "$WEED_PID" 2>/dev/null
+        exit 1
+    fi
     sleep 1
 done
 
-echo "Creating bucket ${S3_TILES_DATA_BUCKET_NAME}..."
-echo "s3.bucket.create -name ${S3_TILES_DATA_BUCKET_NAME}" \
-    | weed shell -master=localhost:9333 || true
+# Check if the bucket already exists before creating it, to avoid a noisy
+# error on container restarts when the /data volume is persisted.
+echo "Checking bucket ${S3_TILES_DATA_BUCKET_NAME}..."
+BUCKET_EXISTS=$(echo "s3.bucket.list" \
+    | weed shell -master=localhost:9333 2>/dev/null \
+    | grep -c "${S3_TILES_DATA_BUCKET_NAME}" || true)
+
+if [ "$BUCKET_EXISTS" -eq 0 ]; then
+    echo "Creating bucket ${S3_TILES_DATA_BUCKET_NAME}..."
+    echo "s3.bucket.create -name ${S3_TILES_DATA_BUCKET_NAME}" \
+        | weed shell -master=localhost:9333
+else
+    echo "Bucket ${S3_TILES_DATA_BUCKET_NAME} already exists, skipping."
+fi
 
 touch /tmp/seaweedfs_ready
 echo "SeaweedFS ready."
