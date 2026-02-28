@@ -13,7 +13,13 @@ from apscheduler.triggers.cron import CronTrigger
 from clients.message_queue_client import MessageQueueClient
 from clients.progress_tracker import ProgressTracker
 from config import Config
-from data_sources import DataSource, DataSourceRegistry, DiscoveryConfig
+from data_sources import (
+    DataSource,
+    DataSourceRegistry,
+    DiscoveryConfig,
+    RadarDataSource,
+)
+from data_sources.goes19_base import Goes19BaseDataSource
 from factories import (
     create_data_source_registry,
     create_s3_client,
@@ -122,12 +128,12 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
     ) -> int:
         """Discover and publish work units for a single data source."""
         # Get band_id from band_config or product_config (for radar)
-        if hasattr(data_source, "band_config"):
+        if isinstance(data_source, Goes19BaseDataSource):
             band_id = data_source.band_config.band_id
             existing_tilesets = await self._get_existing_tilesets(
                 data_source.band_config.s3_prefix
             )
-        elif hasattr(data_source, "product_config"):
+        elif isinstance(data_source, RadarDataSource):
             # Radar sources use product_id as band_id
             band_id = f"radar_{data_source.product_config.product_id}"
             product_id = data_source.product_config.product_id

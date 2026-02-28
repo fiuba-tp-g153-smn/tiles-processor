@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Callable
+from typing import Callable, cast
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,8 @@ class HealthRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_health(self):
         """Health check - verifies process is running and dependencies are healthy."""
-        if not self.server.check_readiness_callback:
+        server = cast("HealthServer", self.server)
+        if not server.check_readiness_callback:
             # If no callback registered, assume healthy
             self.send_response(200)
             self.send_header("Content-type", "application/json")
@@ -36,7 +37,7 @@ class HealthRequestHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            is_healthy, details = self.server.check_readiness_callback()
+            is_healthy, details = server.check_readiness_callback()
 
             if is_healthy:
                 self.send_response(200)
@@ -62,8 +63,8 @@ class HealthRequestHandler(BaseHTTPRequestHandler):
             )
 
     def log_message(
-        self, fmt, *args
-    ):  # pylint: disable=arguments-differ,arguments-renamed
+        self, format, *args  # pylint: disable=redefined-builtin
+    ):  # pylint: disable=arguments-differ
         """Suppress default HTTP logging to stdout to keep logs clean."""
 
 
