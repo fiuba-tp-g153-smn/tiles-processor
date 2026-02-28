@@ -18,13 +18,12 @@ repos:
         exclude: ^(scripts/|tests/)
         verbose: true
 
-
-  # - repo: local
-  #   hooks:
-  #     - id: mypy
-  #       name: "Static Type Checker (mypy)"
-  #       entry: mypy src
-  #       language: system
-  #       types: [python]
-  #       pass_filenames: false
-  #       verbose: true
+  - repo: local
+    hooks:
+      - id: mypy
+        name: "Static Type Checker (mypy)"
+        entry: mypy src
+        language: system
+        types: [python]
+        pass_filenames: false
+        verbose: true
