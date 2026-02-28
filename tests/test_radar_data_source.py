@@ -91,6 +91,30 @@ async def test_discover_images_respects_target_limit():
 
 
 @pytest.mark.asyncio
+async def test_discover_images_caps_per_radar_location():
+    # Two radar locations, each with more files than TARGET_IMAGES
+    limit = RadarDataSource.TARGET_IMAGES
+    rma1_files = [
+        f"/data/RMA1_0315_01_DBZH_20260114T{i:06d}Z.H5" for i in range(limit + 5)
+    ]
+    rma2_files = [
+        f"/data/RMA2_0315_01_DBZH_20260114T{i:06d}Z.H5" for i in range(limit + 5)
+    ]
+    source = RadarDataSource(DBZH_CONFIG, make_repo(rma1_files + rma2_files))
+    images = await source.discover_images(make_discovery_config())
+
+    rma1_results = [img for img in images if img.image_id.startswith("RMA1_")]
+    rma2_results = [img for img in images if img.image_id.startswith("RMA2_")]
+
+    assert len(rma1_results) == limit
+    assert len(rma2_results) == limit
+
+    # Verify most-recent files were kept (descending sort → highest timestamps)
+    rma1_ids = sorted([img.image_id for img in rma1_results], reverse=True)
+    assert rma1_ids == sorted(rma1_ids, reverse=True)
+
+
+@pytest.mark.asyncio
 async def test_download_delegates_to_repository(tmp_path):
     repo = AsyncMock()
     expected = tmp_path / "out.H5"

@@ -1,5 +1,6 @@
 """Weather Radar data source - discovers H5 files via a repository."""
 
+from collections import defaultdict
 from logging import getLogger
 from pathlib import Path
 
@@ -130,9 +131,15 @@ class RadarDataSource(DataSource):
                 )
             )
 
-        # Ordenar por timestamp descendente y tomar solo los más recientes
-        new_images.sort(key=lambda img: img.image_id, reverse=True)
-        target_images = new_images[: self.TARGET_IMAGES]
+        by_radar: dict[str, list[ImageInfo]] = defaultdict(list)
+        for img in new_images:
+            radar_id = img.image_id.split("_")[0]
+            by_radar[radar_id].append(img)
+
+        target_images = []
+        for images in by_radar.values():
+            images.sort(key=lambda img: img.image_id, reverse=True)
+            target_images.extend(images[: self.TARGET_IMAGES])
 
         logger.info(
             "[%s] Found %d new files, publishing %d (limit %d, from %d total H5 files)",

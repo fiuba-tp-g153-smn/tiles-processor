@@ -45,6 +45,7 @@ services:
     command: -c "sh /start.sh"
     ports:
       - "${S3_TILES_DATA_PORT}:8333"      # S3 API
+      - "8888:8888"      # Seaweedfs Filer Web UI
     environment:
       - S3_ROOT_USER=${S3_ROOT_USER}
       - S3_ROOT_PASSWORD=${S3_ROOT_PASSWORD}
