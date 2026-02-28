@@ -115,7 +115,8 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             return self._config.ENABLE_GLM_FED
         # Check for radar sources (radar_DBZH, radar_VRAD, etc.)
         if source_id.startswith("radar_"):
-            return self._config.ENABLE_RADAR
+            product_id = source_id.removeprefix("radar_")
+            return self._config.ENABLED_RADAR_PRODUCTS.get(product_id, False)
 
         # Default: enabled if registered
         return True

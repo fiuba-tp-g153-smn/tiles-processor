@@ -62,7 +62,11 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.ENABLE_GLM_FED: bool = settings["features"].get("enable_glm_fed", False)
         self.ENABLE_GLM_TOE: bool = settings["features"].get("enable_glm_toe", False)
         self.ENABLE_GLM_MFA: bool = settings["features"].get("enable_glm_mfa", False)
-        self.ENABLE_RADAR: bool = settings["features"].get("enable_radar", True)
+        _radar_product_ids = ["DBZH", "ZDR", "RHOHV", "KDP", "VRAD"]
+        self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
+            pid: settings["features"].get(f"enable_radar_{pid}", False)
+            for pid in _radar_product_ids
+        }
 
         # Radar Configuration
         # Path to directory containing .H5 radar files
@@ -125,7 +129,8 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("ENABLE_GLM_FED: %s", self.ENABLE_GLM_FED)
         logger.info("ENABLE_GLM_TOE: %s", self.ENABLE_GLM_TOE)
         logger.info("ENABLE_GLM_MFA: %s", self.ENABLE_GLM_MFA)
-        logger.info("ENABLE_RADAR: %s", self.ENABLE_RADAR)
+        for pid, enabled in self.ENABLED_RADAR_PRODUCTS.items():
+            logger.info("ENABLE_RADAR_%s: %s", pid, enabled)
         logger.info("RADAR_INPUT_DIR: %s", self.RADAR_INPUT_DIR)
         logger.info("DATA_DIR: %s", self.DATA_DIR)
         logger.info("TMP_DIR: %s", self.TMP_DIR)

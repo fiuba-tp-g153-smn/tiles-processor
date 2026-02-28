@@ -9,7 +9,11 @@
     "enable_glm_fed": false,
     "enable_glm_toe": false,
     "enable_glm_mfa": false,
-    "enable_radar": true
+    "enable_radar_DBZH": true,
+    "enable_radar_ZDR": false,
+    "enable_radar_RHOHV": false,
+    "enable_radar_KDP": false,
+    "enable_radar_VRAD": false
   },
   "bounds": {
     "minx": -110.0,
