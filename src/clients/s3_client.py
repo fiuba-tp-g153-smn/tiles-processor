@@ -9,7 +9,7 @@ Supports both:
 import asyncio
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import aioboto3
 from botocore import UNSIGNED
@@ -97,7 +97,7 @@ class S3Client:
 
     def _get_client_kwargs(self, authenticated: bool = False) -> dict:
         """Get kwargs for creating S3 client based on auth mode."""
-        kwargs = {"endpoint_url": self._endpoint_url}
+        kwargs: dict[str, Any] = {"endpoint_url": self._endpoint_url}
         if authenticated and self._access_key and self._secret_key:
             kwargs["aws_access_key_id"] = self._access_key
             kwargs["aws_secret_access_key"] = self._secret_key

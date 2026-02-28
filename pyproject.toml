@@ -40,6 +40,7 @@ mypy = "^1.19.1"
 pyrefly = "^0.51.1"
 requests = "^2.32.5"
 pre-commit = "^4.5.1"
+types-aioboto3 = "^15.5.0"
 
 [tool.pylint.main]
 init-hook = "import sys; sys.path.insert(0, 'src')"
@@ -52,7 +53,7 @@ mypy_path = "src"
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["rasterio.*", "pyart.*", "pika.*", "apscheduler.*", "aioboto3.*", "botocore.*", "pytz", "pytz.*"]
+module = ["rasterio.*", "pyart.*", "pika.*", "apscheduler.*", "pytz", "pytz.*"]
 ignore_missing_imports = true
 
 [build-system]
