@@ -12,6 +12,7 @@ from data_sources import (
     Goes19GlmDataSource,
     RadarDataSource,
 )
+from data_sources.radar_repository import LocalRadarFileRepository
 from models.band_config import BAND_CONFIGS
 from models.radar_config import RADAR_PRODUCT_CONFIGS
 
@@ -36,8 +37,9 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     # Register radar data sources for each product
     if config is not None:
         radar_input_dir = Path(config.RADAR_INPUT_DIR)
+        repository = LocalRadarFileRepository(radar_input_dir)
         for _product_id, product_config in RADAR_PRODUCT_CONFIGS.items():
-            registry.register(RadarDataSource(product_config, radar_input_dir))
+            registry.register(RadarDataSource(product_config, repository))
 
     return registry
 

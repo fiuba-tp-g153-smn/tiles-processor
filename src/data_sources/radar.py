@@ -1,10 +1,10 @@
-"""Weather Radar data source - discovers H5 files from local folder."""
+"""Weather Radar data source - discovers H5 files via a repository."""
 
-import shutil
 from logging import getLogger
 from pathlib import Path
 
 from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
+from data_sources.radar_repository import RadarFileRepository
 from models.radar_config import (
     RadarProductConfig,
     parse_radar_filename,
@@ -15,25 +15,15 @@ logger = getLogger(__name__)
 
 class RadarDataSource(DataSource):
     """
-    Data source for weather radar imagery from local folder.
+    Data source for weather radar imagery.
 
-    Reads .H5 files from a configured local directory (e.g., /data/radar_h5/).
+    Discovers .H5 files via a RadarFileRepository (local or remote).
     Files follow SINARAME naming convention:
         RMA1_0315_01_DBZH_20260114T170328Z.H5
 
     Each RadarDataSource instance is configured for a specific product
     (DBZH, VRAD, RHOHV, etc.) and only discovers files matching that product
     and the correct subvolume (01 for most, 02 for VRAD).
-
-    TODO: Cuando se disponga del bucket real de radares (SINARAME/SMN),
-    adaptar esta clase para:
-      1. Navegar la estructura de carpetas del bucket por radar_id
-         (ej: RMA1/, RMA12/, RMA3/, etc.) y luego por producto.
-      2. Descargar desde el bucket remoto en vez de copiar archivos locales.
-      3. Actualmente se leen TODOS los .H5 del directorio sin límite;
-         con el bucket real se deben tomar solo las últimas TARGET_IMAGES
-         (14) imágenes por producto, ordenadas por timestamp descendente.
-         14 = 12 necesarias + 2 de margen (análogo al satélite: 26 = 24 + 2).
     """
 
     # Cantidad máxima de imágenes a descubrir por ciclo por producto.
@@ -41,16 +31,18 @@ class RadarDataSource(DataSource):
     # Análogo a Goes19AbiDataSource.TARGET_IMAGES = 26 (24 + 2 margen).
     TARGET_IMAGES = 14
 
-    def __init__(self, product_config: RadarProductConfig, input_dir: Path):
+    def __init__(
+        self, product_config: RadarProductConfig, repository: RadarFileRepository
+    ):
         """
         Initialize Radar data source for a specific product.
 
         Args:
             product_config: Configuration for the radar product
-            input_dir: Path to directory containing .H5 files
+            repository: Repository for listing and downloading H5 files
         """
         self._product_config = product_config
-        self._input_dir = input_dir
+        self._repository = repository
 
     @property
     def source_id(self) -> str:
@@ -83,23 +75,18 @@ class RadarDataSource(DataSource):
         Returns:
             List of ImageInfo for files needing processing
         """
-        if not self._input_dir.exists():
-            logger.warning(
-                "[%s] Input directory does not exist: %s",
-                self.source_id,
-                self._input_dir,
-            )
-            return []
+        source_uris = await self._repository.list_files()
 
-        # Find all .H5 files
-        h5_files = sorted(self._input_dir.glob("*.H5"))
-        h5_files.extend(sorted(self._input_dir.glob("*.h5")))
+        if not source_uris:
+            logger.warning("[%s] No H5 files found by repository", self.source_id)
+            return []
 
         new_images = []
         product_id = self._product_config.product_id
         expected_subvolume = self._product_config.subvolume
 
-        for filepath in h5_files:
+        for source_uri in source_uris:
+            filepath = Path(source_uri)
             try:
                 parsed = parse_radar_filename(filepath.name)
             except ValueError as e:
@@ -136,7 +123,7 @@ class RadarDataSource(DataSource):
             new_images.append(
                 ImageInfo(
                     image_id=image_id,
-                    source_uri=str(filepath.absolute()),
+                    source_uri=source_uri,
                     data_source_id=self.source_id,
                     processor_id=self.processor_id,
                     output_prefix=self._product_config.s3_prefix,
@@ -153,7 +140,7 @@ class RadarDataSource(DataSource):
             len(new_images),
             len(target_images),
             self.TARGET_IMAGES,
-            len(h5_files),
+            len(source_uris),
         )
         return target_images
 
@@ -171,20 +158,12 @@ class RadarDataSource(DataSource):
         Returns:
             Path to the copied file (with .H5 extension).
         """
-        source_path = Path(source_uri)
-
-        if not source_path.exists():
-            raise FileNotFoundError(f"Radar file not found: {source_uri}")
-
-        # Ensure destination has .H5 extension
-        dest_with_ext = dest_path.with_suffix(".H5")
-        dest_with_ext.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, dest_with_ext)
+        dest_with_ext = await self._repository.download(source_uri, dest_path)
 
         logger.info(
-            "[%s] Copied %s to %s",
+            "[%s] Downloaded %s to %s",
             self.source_id,
-            source_path.name,
+            Path(source_uri).name,
             dest_with_ext,
         )
         return dest_with_ext
