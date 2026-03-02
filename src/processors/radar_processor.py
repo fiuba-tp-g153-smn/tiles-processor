@@ -272,7 +272,9 @@ class RadarProcessor(ImageProcessor):
             "-w",
             "none",
             f"--processes={self.GDAL_PROCESSES}",
+            "--xyz",
             "--tiledriver=WEBP",
+            "--webp-lossless",
             str(geotiff_path),
             str(tiles_dir),
         ]
