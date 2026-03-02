@@ -118,13 +118,13 @@ done
 # error on container restarts when the /data volume is persisted.
 echo "Checking bucket ${S3_TILES_DATA_BUCKET_NAME}..."
 BUCKET_EXISTS=$(echo "s3.bucket.list" \
-    | weed shell -master=localhost:9333 2>/dev/null \
+    | weed shell -master=seaweedfs:9333 2>/dev/null \
     | grep -c "${S3_TILES_DATA_BUCKET_NAME}" || true)
 
 if [ "$BUCKET_EXISTS" -eq 0 ]; then
     echo "Creating bucket ${S3_TILES_DATA_BUCKET_NAME}..."
     echo "s3.bucket.create -name ${S3_TILES_DATA_BUCKET_NAME}" \
-        | weed shell -master=localhost:9333
+        | weed shell -master=seaweedfs:9333
 else
     echo "Bucket ${S3_TILES_DATA_BUCKET_NAME} already exists, skipping."
 fi
