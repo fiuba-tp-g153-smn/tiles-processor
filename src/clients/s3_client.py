@@ -15,6 +15,8 @@ import aioboto3
 from botocore import UNSIGNED
 from botocore.config import Config as BotoConfig
 
+from clients.tile_upload_backend import TileUploadBackend
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,7 +43,7 @@ class S3Client:
         max_concurrent_downloads: int = 6,
         access_key: str | None = None,
         secret_key: str | None = None,
-        secure: bool = False,
+        tile_uploader_overwritten: TileUploadBackend | None = None,
     ):
         """
         Initialize S3 client.
@@ -52,7 +54,8 @@ class S3Client:
             max_concurrent_downloads: Maximum number of concurrent operations
             access_key: S3 access key (optional, for authenticated access)
             secret_key: S3 secret key (optional, for authenticated access)
-            secure: Use HTTPS (default: False for local S3)
+            tile_uploader_overwritten: Optional upload backend (e.g. SeaweedFsFilerUploader).
+                           When None, uploads use the standard S3 put_object call.
         """
         self._bucket_name = bucket_name
         self._endpoint_url = endpoint_url
@@ -61,7 +64,12 @@ class S3Client:
         self._session = aioboto3.Session()
         self._access_key = access_key
         self._secret_key = secret_key
-        self._secure = secure
+        self._tile_uploader_overwritten = tile_uploader_overwritten
+        self._backend_label = (
+            type(tile_uploader_overwritten).__name__
+            if tile_uploader_overwritten
+            else "S3"
+        )
 
     @classmethod
     def create_with_credentials(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -72,6 +80,7 @@ class S3Client:
         secret_key: str,
         secure: bool = False,
         max_concurrent_operations: int = 10,
+        tile_uploader_overwritten: TileUploadBackend | None = None,
     ) -> "S3Client":
         """
         Factory method to create an authenticated S3 client for S3.
@@ -83,6 +92,7 @@ class S3Client:
             secret_key: Secret key (password)
             secure: Use HTTPS (default: False)
             max_concurrent_operations: Max parallel operations
+            tile_uploader_overwritten: Optional upload backend (e.g. SeaweedFsFilerUploader).
         """
         protocol = "https" if secure else "http"
         endpoint_url = f"{protocol}://{endpoint}"
@@ -92,7 +102,7 @@ class S3Client:
             max_concurrent_downloads=max_concurrent_operations,
             access_key=access_key,
             secret_key=secret_key,
-            secure=secure,
+            tile_uploader_overwritten=tile_uploader_overwritten,
         )
 
     def _get_client_kwargs(self, authenticated: bool = False) -> dict:
@@ -417,8 +427,9 @@ class S3Client:
             return 0
 
         logger.info(
-            "Uploading %d files to s3://%s/%s",
+            "Uploading %d files via %s to %s/%s",
             len(files_to_upload),
+            self._backend_label,
             self._bucket_name,
             s3_prefix,
         )
@@ -442,7 +453,11 @@ class S3Client:
                 len(results),
             )
         else:
-            logger.info("Successfully uploaded %d files to S3", success_count)
+            logger.info(
+                "Successfully uploaded %d files via %s",
+                success_count,
+                self._backend_label,
+            )
 
         return success_count
 
@@ -454,18 +469,24 @@ class S3Client:
             return await self._upload_file(s3_client, file_path, s3_key)
 
     async def _upload_file(self, s3_client, file_path: Path, s3_key: str) -> bool:
-        """Upload a single file to S3."""
+        """Upload a single file, delegating to the tile uploader when configured."""
         try:
             content = await asyncio.to_thread(file_path.read_bytes)
             content_type = self._get_content_type(file_path)
 
-            await s3_client.put_object(
-                Bucket=self._bucket_name,
-                Key=s3_key,
-                Body=content,
-                ContentType=content_type,
-            )
-            logger.debug("Uploaded: %s", s3_key)
+            if self._tile_uploader_overwritten is not None:
+                await self._tile_uploader_overwritten.upload(
+                    s3_key, content, content_type
+                )
+            else:
+                await s3_client.put_object(
+                    Bucket=self._bucket_name,
+                    Key=s3_key,
+                    Body=content,
+                    ContentType=content_type,
+                )
+
+            logger.debug("Uploaded via %s: %s", self._backend_label, s3_key)
             return True
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to upload %s to %s: %s", file_path, s3_key, e)

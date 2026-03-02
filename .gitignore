@@ -15,4 +15,5 @@ benchmark_results/
 .agent
 .vscode
 data_s3/
+data_s3*/
 sftpgo/

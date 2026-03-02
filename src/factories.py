@@ -1,10 +1,14 @@
 """Factory functions for constructing shared infrastructure objects from config."""
 
+import logging
 from pathlib import Path
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 from clients.rabbitmq_client import RabbitMQClient
 from clients.s3_client import S3Client
+from clients.seaweedfs_filer_uploader import SeaweedFsFilerUploader
 from config import Config
 from data_sources import (
     DataSourceRegistry,
@@ -61,10 +65,28 @@ def create_rabbitmq_client(config: Config) -> RabbitMQClient:
 
 def create_s3_client(config: Config) -> S3Client:
     """Build an authenticated S3 client for tile storage."""
+    tile_uploader_overwritten = None
+    if config.SEAWEEDFS_MASTER_ENDPOINT:
+        tile_uploader_overwritten = SeaweedFsFilerUploader(
+            endpoint=config.SEAWEEDFS_MASTER_ENDPOINT,
+            bucket=config.S3_TILES_DATA_BUCKET_NAME,
+            ttl=config.SEAWEEDFS_TILE_TTL,
+            secure=config.S3_TILES_DATA_SECURE,
+        )
+        logger.info(
+            "S3 tile uploads overwritten with %s (endpoint=%s, ttl=%s)",
+            type(tile_uploader_overwritten).__name__,
+            config.SEAWEEDFS_MASTER_ENDPOINT,
+            config.SEAWEEDFS_TILE_TTL,
+        )
+    else:
+        logger.info("S3 tile uploads using standard S3 put_object")
+
     return S3Client.create_with_credentials(
         bucket_name=config.S3_TILES_DATA_BUCKET_NAME,
         endpoint=config.S3_TILES_DATA_ENDPOINT,
         access_key=config.S3_TILES_DATA_RW_ACCESS_KEY,
         secret_key=config.S3_TILES_DATA_RW_SECRET_KEY,
         secure=config.S3_TILES_DATA_SECURE,
+        tile_uploader_overwritten=tile_uploader_overwritten,
     )
