@@ -344,6 +344,7 @@ def run_gdal2tiles(
             "none",
             "--xyz",
             "--tiledriver=WEBP",
+            "--webp-lossless",
             f"--processes={processes}",
             str(geotiff_path),
             str(tmp_tiles_dir),

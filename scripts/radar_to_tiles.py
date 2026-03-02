@@ -220,7 +220,9 @@ def geotiff_to_tiles(geotiff_path: Path, tiles_dir: Path, zoom_levels: str = "4-
         "-w",
         "none",
         f"--processes={num_processes}",
+        "--xyz",
         "--tiledriver=WEBP",
+        "--webp-lossless",
         str(geotiff_path),
         str(tiles_dir),
     ]
