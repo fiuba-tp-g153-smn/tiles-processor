@@ -36,7 +36,7 @@ class SeaweedFsFilerUploader:
     async def upload(self, key: str, content: bytes, content_type: str) -> None:
         protocol = "https" if self._secure else "http"
         ttl_param = f"?ttl={self._ttl}" if self._ttl else ""
-        url = f"{protocol}://{self._endpoint}/{self._bucket}/{key}{ttl_param}"
+        url = f"{protocol}://{self._endpoint}/buckets/{self._bucket}/{key}{ttl_param}"
 
         def _put() -> None:
             response = requests.put(

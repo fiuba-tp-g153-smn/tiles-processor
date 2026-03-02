@@ -66,9 +66,9 @@ def create_rabbitmq_client(config: Config) -> RabbitMQClient:
 def create_s3_client(config: Config) -> S3Client:
     """Build an authenticated S3 client for tile storage."""
     tile_uploader_overwritten = None
-    if config.SEAWEEDFS_MASTER_ENDPOINT:
+    if config.SEAWEEDFS_FILER_ENDPOINT:
         tile_uploader_overwritten = SeaweedFsFilerUploader(
-            endpoint=config.SEAWEEDFS_MASTER_ENDPOINT,
+            endpoint=config.SEAWEEDFS_FILER_ENDPOINT,
             bucket=config.S3_TILES_DATA_BUCKET_NAME,
             ttl=config.SEAWEEDFS_TILE_TTL,
             secure=config.S3_TILES_DATA_SECURE,
@@ -76,7 +76,7 @@ def create_s3_client(config: Config) -> S3Client:
         logger.info(
             "S3 tile uploads overwritten with %s (endpoint=%s, ttl=%s)",
             type(tile_uploader_overwritten).__name__,
-            config.SEAWEEDFS_MASTER_ENDPOINT,
+            config.SEAWEEDFS_FILER_ENDPOINT,
             config.SEAWEEDFS_TILE_TTL,
         )
     else:
