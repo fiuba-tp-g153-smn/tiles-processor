@@ -203,7 +203,7 @@ def grid_to_rgba_geotiff(grid, output_path: Path, field_name: str, variable: str
     )
 
 
-def geotiff_to_tiles(geotiff_path: Path, tiles_dir: Path, zoom_levels: str = "4-10"):
+def geotiff_to_tiles(geotiff_path: Path, tiles_dir: Path, zoom_levels: str = "4-9"):
     """Genera tiles XYZ desde GeoTIFF usando gdal2tiles."""
     print(f"  Generando tiles en: {tiles_dir}")
 

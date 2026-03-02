@@ -45,7 +45,7 @@ class RadarProcessor(ImageProcessor):
     # Processing parameters
     GRID_RESOLUTION = 500  # meters per pixel
     MAX_RANGE = 240_000  # 240 km range
-    ZOOM_LEVELS = "4-10"
+    ZOOM_LEVELS = "4-9"
     GDAL_PROCESSES = 2
     SWEEPS = (0, 1, 2)  # Elevation indices to process
 
