@@ -152,8 +152,8 @@ class RadarProcessor(ImageProcessor):
             logger.info("[RADAR] Completed processing %s", work_unit.image_id)
 
         finally:
-            import time
-            time.sleep(60)
+            # import time
+            # time.sleep(60)
             if work_dir.exists():
                 shutil.rmtree(work_dir, ignore_errors=True)
 
