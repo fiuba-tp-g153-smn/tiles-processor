@@ -85,6 +85,12 @@ services:
     ports:
       - "23646:23646"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:23646/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # SeaweedFS Worker - executes maintenance jobs (vacuum, volume balance, etc.)
   seaweedfs-worker:
@@ -95,12 +101,19 @@ services:
       -c "chown seaweed:seaweed /worker-data &&
       su-exec seaweed weed worker
       -admin=seaweedfs-admin:23646
-      -workingDir=/worker-data"
+      -workingDir=/worker-data
+      -metricsPort=2112"
     depends_on:
       - seaweedfs-admin
     volumes:
       - seaweedfs_worker_data:/worker-data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:2112/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # Producer - discovers new images and publishes work units
   # Runs continuously with APScheduler (every 5 minutes)
