@@ -88,7 +88,7 @@ services:
       - "23646:23646"
     restart: unless-stopped
     volumes:
-      - seaweedfs_filerldb2:/data/filerldb2
+      - seaweedfs_filerldb2:/filerldb2
     healthcheck:
       test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:23646/"]
       interval: 15s
@@ -115,7 +115,7 @@ services:
       - seaweedfs-admin
     volumes:
       - seaweedfs_worker_data:/worker-data
-      - seaweedfs_filerldb2:/data/filerldb2
+      - seaweedfs_filerldb2:/filerldb2
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:2112/metrics"]
