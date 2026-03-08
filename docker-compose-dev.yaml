@@ -45,7 +45,9 @@ services:
     command: -c "sh /start.sh"
     ports:
       - "${S3_TILES_DATA_PORT}:8333"      # S3 API
-      - "8888:8888"      # Seaweedfs Filer Web UI
+      - "8888:8888"      # Seaweedfs Filer
+      - "9333:9333"      # Seaweedfs Master
+      # - "9340:9340"      # Seaweedfs Volume server
     environment:
       - S3_ROOT_USER=${S3_ROOT_USER}
       - S3_ROOT_PASSWORD=${S3_ROOT_PASSWORD}
@@ -54,6 +56,9 @@ services:
       - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
       - S3_TILES_DATA_DATA_SERVICE_USER=${S3_TILES_DATA_DATA_SERVICE_USER}
       - S3_TILES_DATA_DATA_SERVICE_PASSWORD=${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
+      - SEAWEEDFS_METRICS_ADDRESS=${SEAWEEDFS_METRICS_ADDRESS}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data_s3:/data
       - ./scripts/seaweedfs_start.sh:/start.sh:ro
@@ -64,6 +69,40 @@ services:
       retries: 10
       start_period: 30s
       start_interval: 2s
+
+  # SeaweedFS Admin - cluster maintenance scheduler
+  seaweedfs-admin:
+    image: chrislusf/seaweedfs:latest
+    container_name: tiles-processor-dev-seaweedfs-admin
+    command: >-
+      admin
+      -master=seaweedfs:9333
+      -adminUser=${S3_ROOT_USER}
+      -adminPassword=${S3_ROOT_PASSWORD}
+      -readOnlyUser=${S3_TILES_DATA_DATA_SERVICE_USER}
+      -readOnlyPassword=${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    ports:
+      - "23646:23646"
+    restart: unless-stopped
+
+  # SeaweedFS Worker - executes maintenance jobs (vacuum, volume balance, etc.)
+  seaweedfs-worker:
+    image: chrislusf/seaweedfs:latest
+    container_name: tiles-processor-dev-seaweedfs-worker
+    entrypoint: /bin/sh
+    command: >-
+      -c "chown seaweed:seaweed /worker-data &&
+      su-exec seaweed weed worker
+      -admin=seaweedfs-admin:23646
+      -workingDir=/worker-data"
+    depends_on:
+      - seaweedfs-admin
+    volumes:
+      - seaweedfs_worker_dev_data:/worker-data
+    restart: unless-stopped
 
   # Producer - discovers new images and publishes work units
   # Runs continuously with APScheduler (every 5 minutes)
@@ -205,3 +244,4 @@ services:
 
 volumes:
   rabbitmq_dev_data:
+  seaweedfs_worker_dev_data:
