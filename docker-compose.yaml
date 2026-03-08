@@ -72,6 +72,7 @@ services:
   seaweedfs-admin:
     image: chrislusf/seaweedfs:latest
     container_name: tiles-processor-seaweedfs-admin
+    stop_grace_period: 10s
     command: >-
       admin
       -master=seaweedfs:9333
@@ -97,9 +98,13 @@ services:
     image: chrislusf/seaweedfs:latest
     container_name: tiles-processor-seaweedfs-worker
     entrypoint: /bin/sh
+    stop_grace_period: 10s
+    # >- folds multi-line YAML into a single string. chown fixes the root:root volume before privilege drop.
+    # exec replaces /bin/sh (PID 1) with weed worker so Docker's SIGTERM reaches it directly.
+    # su-exec drops from root -> seaweed user before running weed (needs root first for chown).
     command: >-
       -c "chown seaweed:seaweed /worker-data &&
-      su-exec seaweed weed worker
+      exec su-exec seaweed weed worker
       -admin=seaweedfs-admin:23646
       -workingDir=/worker-data
       -metricsPort=2112"
