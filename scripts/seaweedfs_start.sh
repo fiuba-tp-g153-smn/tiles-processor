@@ -88,14 +88,13 @@ fi
 echo "Starting SeaweedFS (master + volume + filer + S3 gateway on :8333)..."
 weed server \
   -dir=/data \
-  -volume.index=leveldb \
-  -volume.max=10 \
-  -filer \
-  -master.garbageThreshold=0.1 \
-  -master.maxParallelVacuumPerServer=4 \
+  -master.garbageThreshold=0.01 \
   -master.defaultReplication=000 \
   -master.volumePreallocate=false \
-  -master.volumeSizeLimitMB=5000 \
+  -master.volumeSizeLimitMB=256 \
+  -volume.index=leveldb \
+  -volume.max=30 \
+  -filer \
   -s3 \
   -s3.port=8333 \
   -s3.allowEmptyFolder=false \
