@@ -59,6 +59,7 @@ services:
       - SEAWEEDFS_METRICS_ADDRESS=${SEAWEEDFS_METRICS_ADDRESS}
     volumes:
       - s3_data:/data
+      - seaweedfs_filerldb2:/data/filerldb2
       - ./scripts/seaweedfs_start.sh:/start.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/seaweedfs_ready && wget -qO /dev/null http://seaweedfs:9333/cluster/status"]
@@ -86,6 +87,8 @@ services:
     ports:
       - "23646:23646"
     restart: unless-stopped
+    volumes:
+      - seaweedfs_filerldb2:/data/filerldb2
     healthcheck:
       test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:23646/"]
       interval: 15s
@@ -112,6 +115,7 @@ services:
       - seaweedfs-admin
     volumes:
       - seaweedfs_worker_data:/worker-data
+      - seaweedfs_filerldb2:/data/filerldb2
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:2112/metrics"]
@@ -260,3 +264,4 @@ volumes:
   s3_data:
   rabbitmq_data:
   seaweedfs_worker_data:
+  seaweedfs_filerldb2:

@@ -61,6 +61,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./data_s3:/data
+      - ./data_s3/data/filerldb2:/data/filerldb2
       - ./scripts/seaweedfs_start.sh:/start.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/seaweedfs_ready && wget -qO /dev/null http://seaweedfs:9333/cluster/status"]
@@ -88,6 +89,8 @@ services:
     ports:
       - "23646:23646"
     restart: unless-stopped
+    volumes:
+      - ./data_s3/data/filerldb2:/data/filerldb2
     healthcheck:
       test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:23646/"]
       interval: 15s
@@ -114,6 +117,7 @@ services:
       - seaweedfs-admin
     volumes:
       - seaweedfs_worker_dev_data:/worker-data
+      - ./data_s3/data/filerldb2:/data/filerldb2
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:2112/metrics"]

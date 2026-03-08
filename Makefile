@@ -23,6 +23,7 @@ clean:
 	docker volume rm tiles-processor_rabbitmq_dev_data || true
 	docker volume rm tiles-processor_seaweedfs_worker_data || true
 	docker volume rm tiles-processor_seaweedfs_worker_dev_data || true
+	docker volume rm tiles-processor_seaweedfs_filerldb2 || true
 
 precommit:
 	pre-commit run --all-files
