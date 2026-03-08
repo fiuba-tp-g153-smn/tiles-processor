@@ -85,7 +85,7 @@ if [ -n "${SEAWEEDFS_METRICS_ADDRESS:-}" ]; then
   METRICS_FLAG="-master.metrics.address=${SEAWEEDFS_METRICS_ADDRESS}"
 fi
 
-echo "Starting SeaweedFS (master + volume + filer + S3 gateway on :8333)..."
+echo "Starting SeaweedFS (master + volume + filer + S3 gateway)..."
 weed server \
   -dir=/data \
   -master.garbageThreshold=0.01 \
@@ -93,7 +93,7 @@ weed server \
   -master.volumePreallocate=false \
   -master.volumeSizeLimitMB=256 \
   -volume.index=leveldb \
-  -volume.max=30 \
+  -volume.max=60 \
   -filer \
   -s3 \
   -s3.port=8333 \
