@@ -81,17 +81,26 @@ sed \
 EOF
 
 METRICS_FLAG=""
-if [ -n "${SEAWEEDFS_METRICS_ADDRESS:-}" ]; then
-  METRICS_FLAG="-master.metrics.address=${SEAWEEDFS_METRICS_ADDRESS}"
+if [ -n "${SEAWEEDFS_METRICS_ADDRESS:-}" ] \
+  && [ -n "${PROMETHEUS_PUSHGATEWAY_HTTP_PROTO:-}" ] \
+  && [ -n "${PROMETHEUS_PUSHGATEWAY_USER:-}" ] \
+  && [ -n "${PROMETHEUS_PUSHGATEWAY_PASS:-}" ]; then
+  METRICS_FLAG="-master.metrics.address=${PROMETHEUS_PUSHGATEWAY_HTTP_PROTO}://${PROMETHEUS_PUSHGATEWAY_USER}:${PROMETHEUS_PUSHGATEWAY_PASS}@${SEAWEEDFS_METRICS_ADDRESS}"
+  echo "Metrics enabled: pushing to ${PROMETHEUS_PUSHGATEWAY_HTTP_PROTO}://${SEAWEEDFS_METRICS_ADDRESS}"
+else
+  echo "Metrics disabled: SEAWEEDFS_METRICS_ADDRESS or Pushgateway credentials not fully set."
 fi
 
 echo "Starting SeaweedFS (master + volume + filer + S3 gateway)..."
 weed server \
   -dir=/data \
+  -master \
   -master.garbageThreshold=0.01 \
   -master.defaultReplication=000 \
   -master.volumePreallocate=false \
   -master.volumeSizeLimitMB=256 \
+  -master.metrics.intervalSeconds=10 \
+  -volume \
   -volume.index=leveldb \
   -volume.max=60 \
   -filer \
