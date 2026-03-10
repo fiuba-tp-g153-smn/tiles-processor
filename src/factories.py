@@ -4,8 +4,6 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
-
 from clients.rabbitmq_client import RabbitMQClient
 from clients.s3_client import S3Client
 from clients.seaweedfs_filer_uploader import SeaweedFsFilerUploader
@@ -19,6 +17,8 @@ from data_sources import (
 from data_sources.radar_repository import LocalRadarFileRepository
 from models.band_config import BAND_CONFIGS
 from models.radar_config import RADAR_PRODUCT_CONFIGS
+
+logger = logging.getLogger(__name__)
 
 
 def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRegistry:

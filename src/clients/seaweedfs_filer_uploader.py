@@ -5,7 +5,7 @@ import asyncio
 import requests
 
 
-class SeaweedFsFilerUploader:
+class SeaweedFsFilerUploader:  # pylint: disable=too-few-public-methods
     """
     Uploads tiles to SeaweedFS via the Filer REST API.
 
@@ -34,6 +34,7 @@ class SeaweedFsFilerUploader:
         self._secure = secure
 
     async def upload(self, key: str, content: bytes, content_type: str) -> None:
+        """Upload a single tile to SeaweedFS via the Filer REST API."""
         protocol = "https" if self._secure else "http"
         ttl_param = f"?ttl={self._ttl}" if self._ttl else ""
         url = f"{protocol}://{self._endpoint}/buckets/{self._bucket}/{key}{ttl_param}"

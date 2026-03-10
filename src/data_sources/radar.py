@@ -83,8 +83,6 @@ class RadarDataSource(DataSource):
             return []
 
         new_images = []
-        product_id = self._product_config.product_id
-        expected_subvolume = self._product_config.subvolume
 
         for source_uri in source_uris:
             filepath = Path(source_uri)
@@ -95,7 +93,7 @@ class RadarDataSource(DataSource):
                 continue
 
             # Filter by product (DBZH, VRAD, RHOHV, etc.)
-            if parsed["variable"] != product_id:
+            if parsed["variable"] != self._product_config.product_id:
                 continue
 
             # Filtrar por subvolumen: cada producto define qué subvolumen usar
@@ -103,7 +101,7 @@ class RadarDataSource(DataSource):
             # Archivos con subvolumen distinto al esperado se descartan.
             # Ejemplo: RMA12_0315_02_DBZH_*.H5 se ignora porque DBZH
             # espera subvolume="01".
-            if parsed["subvolume"] != expected_subvolume:
+            if parsed["subvolume"] != self._product_config.subvolume:
                 continue
 
             # Build image_id: radar_id/variable/timestamp
