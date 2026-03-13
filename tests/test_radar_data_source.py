@@ -83,7 +83,7 @@ async def test_discover_images_empty_repo():
 
 @pytest.mark.asyncio
 async def test_discover_images_respects_target_limit():
-    # Generate 20 files — should return at most TARGET_IMAGES (14)
+    # Generate 20 files — should return at most TARGET_IMAGES (12)
     files = [f"/data/RMA1_0315_01_DBZH_20260114T{i:06d}Z.H5" for i in range(20)]
     source = RadarDataSource(DBZH_CONFIG, make_repo(files))
     images = await source.discover_images(make_discovery_config())

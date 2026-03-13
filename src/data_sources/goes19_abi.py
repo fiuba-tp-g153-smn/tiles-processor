@@ -22,7 +22,7 @@ class Goes19AbiDataSource(Goes19BaseDataSource):
     """
 
     # Discovery parameters
-    TARGET_IMAGES = 26  # 4+ hours at 10-min intervals
+    TARGET_IMAGES = 24  # ~4 hours at 10-min intervals
 
     def __init__(self, band_config: BandConfig):
         """

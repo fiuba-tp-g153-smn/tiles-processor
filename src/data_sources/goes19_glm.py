@@ -28,7 +28,7 @@ class Goes19GlmDataSource(Goes19BaseDataSource):
     - We'll download all L2-LCFA files within that window during processing
     """
 
-    TARGET_WINDOWS = 26  # 4+ hours of 10-min windows
+    TARGET_WINDOWS = 24  # ~4 hours of 10-min windows
     WINDOW_DURATION_MINUTES = 10
     MAX_CONCURRENT_DOWNLOADS = 10  # Parallel downloads per window
 

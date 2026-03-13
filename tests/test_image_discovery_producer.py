@@ -111,7 +111,7 @@ class TestDuplicatePrevention:
 
         for band_id in bands:
             band_config = BAND_CONFIGS[band_id]
-            images = _make_images(band_config, count=26)
+            images = _make_images(band_config, count=24)
             registry.register(FakeDataSource(band_config, images))
 
         producer = ImageDiscoveryProducer.__new__(ImageDiscoveryProducer)
@@ -122,7 +122,7 @@ class TestDuplicatePrevention:
         producer._s3_client = AsyncMock()
         producer._s3_client.list_prefixes = AsyncMock(return_value=[])
 
-        # First run: should publish 78 work units (26 per band)
+        # First run: should publish 78 work units (24 per band)
         first_count = await producer.discover_and_publish()
         assert first_count == 78
         assert mq_client.publish.call_count == 78

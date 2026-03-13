@@ -28,9 +28,9 @@ class RadarDataSource(DataSource):
     """
 
     # Cantidad máxima de imágenes a descubrir por ciclo por producto.
-    # 12 imágenes necesarias + 2 de margen = 14 (cada ~5 min, cubre ~70 min).
+    # 12 imágenes necesarias = 12 (cada ~5 min, cubre ~70 min).
     # Análogo a Goes19AbiDataSource.TARGET_IMAGES = 26 (24 + 2 margen).
-    TARGET_IMAGES = 14
+    TARGET_IMAGES = 12
 
     def __init__(
         self, product_config: RadarProductConfig, repository: RadarFileRepository
