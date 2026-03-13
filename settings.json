@@ -1,6 +1,6 @@
 {
   "timezone": "America/Argentina/Buenos_Aires",
-  "tile_retention_days": 1,
+  "tile_retention_days": 30,
   "radar_input_dir": "/app/data/radar_h5",
   "features": {
     "enable_band_13":  true,
