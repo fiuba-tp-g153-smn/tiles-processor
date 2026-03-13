@@ -122,10 +122,10 @@ class TestDuplicatePrevention:
         producer._s3_client = AsyncMock()
         producer._s3_client.list_prefixes = AsyncMock(return_value=[])
 
-        # First run: should publish 78 work units (24 per band)
+        # First run: should publish 72 work units (24 per band)
         first_count = await producer.discover_and_publish()
-        assert first_count == 78
-        assert mq_client.publish.call_count == 78
+        assert first_count == 72
+        assert mq_client.publish.call_count == 72
 
         mq_client.reset_mock()
 
