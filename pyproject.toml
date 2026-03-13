@@ -43,6 +43,7 @@ pyrefly = "^0.51.1"
 pre-commit = "^4.5.1"
 types-aioboto3 = "^15.5.0"
 types-pika-ts = "^1.3.0.20250914"
+types-pytz = "^2026.1.1.20260304"
 
 [tool.pylint.main]
 init-hook = "import sys; sys.path.insert(0, 'src')"

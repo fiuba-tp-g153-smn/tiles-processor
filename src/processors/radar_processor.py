@@ -28,8 +28,8 @@ from config import Config
 from factories import create_s3_client
 from models.work_unit import WorkUnit
 from models.radar_config import parse_radar_filename
-from processors.base_processor import ImageProcessor
 from models.radar_palettes import get_palette, mask_radar_data
+from processors.base_processor import ImageProcessor
 
 logger = getLogger(__name__)
 
@@ -119,9 +119,7 @@ class RadarProcessor(ImageProcessor):
 
                 # Create GeoTIFF from polar data
                 geotiff_path = sweep_dir / f"{sweep_id}.tif"
-                self._polar_to_geotiff(
-                    polar_data, radar, sweep_idx, geotiff_path, palette
-                )
+                self._polar_to_geotiff(polar_data, geotiff_path, palette)
 
                 del polar_data
                 gc.collect()
@@ -258,8 +256,6 @@ class RadarProcessor(ImageProcessor):
     def _polar_to_geotiff(  # pylint: disable=too-many-locals
         self,
         polar_data: dict,
-        radar,
-        sweep_idx: int,
         output_path: Path,
         palette,
     ) -> None:
@@ -332,7 +328,7 @@ class RadarProcessor(ImageProcessor):
             max_lat,
         )
 
-    def _polar_to_cartesian_grid(  # pylint: disable=too-many-locals
+    def _polar_to_cartesian_grid(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
         self,
         rgba_data: np.ndarray,
         ranges: np.ndarray,
@@ -391,7 +387,7 @@ class RadarProcessor(ImageProcessor):
 
         # Interpolate from polar data to cartesian grid
         # For each cartesian pixel, find nearest polar coordinate
-        nrays, ngates = rgba_data.shape[:2]
+        _, ngates = rgba_data.shape[:2]
 
         # Find indices in polar data
         range_idx = np.searchsorted(ranges, r_grid.ravel())

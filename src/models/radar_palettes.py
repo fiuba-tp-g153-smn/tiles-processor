@@ -3,8 +3,10 @@ Enhanced radar color palette configuration.
 Integrates SMN (Servicio Meteorológico Nacional) color palettes.
 """
 
+# pylint: disable=too-many-lines
+
 from dataclasses import dataclass
-from typing import Tuple, List
+from typing import Optional, Tuple, Union
 import numpy as np
 import matplotlib.colors as mcolors
 
@@ -22,6 +24,7 @@ class PaletteConfig:
         rgb_colors = [self._hex_to_rgb(c) for c in self.hex_colors]
         cmap = mcolors.ListedColormap(rgb_colors)
 
+        norm: Union[mcolors.BoundaryNorm, mcolors.Normalize]
         if self.use_boundary_norm:
             norm = mcolors.BoundaryNorm(boundaries=self.bounds, ncolors=len(rgb_colors))
         else:
@@ -33,7 +36,8 @@ class PaletteConfig:
     def _hex_to_rgb(hex_color: str) -> Tuple[float, float, float]:
         """Convert hex color to RGB tuple (0-1 range)."""
         hex_color = hex_color.lstrip("#")
-        return tuple(int(hex_color[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+        r, g, b = (int(hex_color[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+        return r, g, b
 
     @property
     def vmin(self) -> float:
@@ -1140,7 +1144,7 @@ def get_palette(product_id: str) -> PaletteConfig:
 # ============================================================================
 
 
-def get_data_mask_range(product_id: str) -> Tuple[float, float]:
+def get_data_mask_range(product_id: str) -> Tuple[Optional[float], Optional[float]]:
     """
     Get valid data range for masking outliers.
     Based on SMN's masking logic from ppi.py.
