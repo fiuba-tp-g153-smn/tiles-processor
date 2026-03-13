@@ -7,7 +7,7 @@
 services:
   # RabbitMQ message broker for the work queue
   rabbitmq:
-    image: rabbitmq:4.2.2-management
+    image: rabbitmq:4.2.4-management
     container_name: tiles-processor-rabbitmq
     ports:
       - "${RABBITMQ_PORT}:5672"      # AMQP protocol
@@ -38,7 +38,7 @@ services:
 
   # S3-compatible object storage
   seaweedfs:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs:4.17
     container_name: tiles-processor-dev-seaweedfs
     stop_grace_period: 30s
     entrypoint: /bin/sh
@@ -79,7 +79,7 @@ services:
 
   # SeaweedFS Admin - cluster maintenance scheduler
   seaweedfs-admin:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs:4.17
     container_name: tiles-processor-dev-seaweedfs-admin
     stop_grace_period: 10s
     command: >-
@@ -106,7 +106,7 @@ services:
 
   # SeaweedFS Worker - executes maintenance jobs (vacuum, volume balance, etc.)
   seaweedfs-worker:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs:4.17
     container_name: tiles-processor-dev-seaweedfs-worker
     entrypoint: /bin/sh
     stop_grace_period: 10s
