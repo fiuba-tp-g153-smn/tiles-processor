@@ -6,22 +6,22 @@ Distributed Python system for processing GOES-19 satellite data from NOAA S3 —
 
 ## Table of Contents
 
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Processing Architecture](#processing-architecture)
-  - [Diagram: General Data Flow](#general-data-flow-between-all-the-services)
-  - [Diagram: Main Flow](#tiles-processor-main-flow)
-  - [Diagram: In-Progress Check](#tiles-processor-in-progress-check)
-  - [Diagram: Dead Letter Flow](#tiles-processor-dead-letter-flow)
-  - [Workflow](#workflow)
-  - [Band Specifications](#band-specifications)
-  - [GLM Flash Extent Density Processing](#glm-flash-extent-density-fed-processing)
-  - [Recommended Execution Frequency](#recommended-execution-frequency)
-  - [File Management & Retention](#file-management--retention)
-- [S3 Storage Layout](#s3-storage-layout)
-- [Commands](#commands)
-- [Environment Variables](#environment-variables)
-- [Settings Configuration](#settings-configuration-settingsjson)
+1. [Features](#features)
+2. [Tech Stack](#tech-stack)
+3. [Processing Architecture](#processing-architecture)
+   1. [Diagram: General Data Flow](#general-data-flow-between-all-the-services)
+   2. [Diagram: Main Flow](#tiles-processor-main-flow)
+   3. [Diagram: In-Progress Check](#tiles-processor-in-progress-check)
+   4. [Diagram: Dead Letter Flow](#tiles-processor-dead-letter-flow)
+   5. [Workflow](#workflow)
+   6. [Band Specifications](#band-specifications)
+   7. [GLM Flash Extent Density Processing](#glm-flash-extent-density-fed-processing)
+   8. [Recommended Execution Frequency](#recommended-execution-frequency)
+   9. [File Management & Retention](#file-management--retention)
+4. [S3 Storage Layout](#s3-storage-layout)
+5. [Commands](#commands)
+6. [Environment Variables](#environment-variables)
+7. [Settings Configuration](#settings-configuration-settingsjson)
 
 ## Features
 
