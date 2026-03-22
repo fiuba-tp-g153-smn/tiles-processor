@@ -17,17 +17,20 @@ Processing pipeline:
 import gc
 import shutil
 import subprocess
+import uuid
 from logging import getLogger
 from pathlib import Path
 import numpy as np
 import rasterio
+import xarray as xr
 from rasterio.transform import from_bounds
 from rasterio.crs import CRS  # pylint: disable=no-name-in-module
 
 from config import Config
 from factories import create_s3_client
 from models.work_unit import WorkUnit
-from models.radar_config import parse_radar_filename
+from models.radar_config import get_radar_product_config, parse_radar_filename
+from processors.base_processor import ImageProcessor
 from models.radar_palettes import get_palette, mask_radar_data
 from processors.base_processor import ImageProcessor
 
@@ -72,6 +75,7 @@ class RadarProcessor(ImageProcessor):
         original_filename = Path(work_unit.source_uri).name
         parsed = parse_radar_filename(original_filename)
         product_id = parsed["variable"]
+        product_config = get_radar_product_config(product_id)
 
         # Setup work directories
         work_dir = Path(self.config.TMP_DIR) / "radar" / work_unit.image_id
@@ -117,9 +121,35 @@ class RadarProcessor(ImageProcessor):
                     radar, sweep_idx, field_name, product_id
                 )
 
-                # Create GeoTIFF from polar data
+                # Compute cartesian mapping once (shared between COG and GeoTIFF)
+                mapping = self._compute_cartesian_mapping(
+                    polar_data["ranges"],
+                    polar_data["azimuths"],
+                    polar_data["radar_lat"],
+                    polar_data["radar_lon"],
+                )
+                range_idx, azimuth_idx, outside_range, bounds, grid_size = mapping
+
+                # Create COG (raw float32 field values) before colorizing
+                cog_path = sweep_dir / f"{sweep_id}_cog.tif"
+                self._save_polar_cog(
+                    polar_data["data"],
+                    range_idx,
+                    azimuth_idx,
+                    outside_range,
+                    bounds,
+                    grid_size,
+                    cog_path,
+                )
+
+                # Create GeoTIFF (RGBA, colorized) using the same mapping
                 geotiff_path = sweep_dir / f"{sweep_id}.tif"
-                self._polar_to_geotiff(polar_data, geotiff_path, palette)
+                self._polar_to_geotiff_with_mapping(
+                    polar_data,
+                    mapping,
+                    geotiff_path,
+                    palette,
+                )
 
                 del polar_data
                 gc.collect()
@@ -129,13 +159,28 @@ class RadarProcessor(ImageProcessor):
                 tiles_dir = sweep_dir / "tiles"
                 self._generate_tiles(geotiff_path, tiles_dir)
 
-                # Upload to S3
+                # Upload tiles to S3
                 self._check_shutdown()
+                elevation_id = f"elev{sweep_idx}"
                 s3_prefix = (
-                    f"radar/{parsed['radar_id']}/{parsed['variable']}/"
-                    f"{parsed['timestamp']}_elev{sweep_idx}"
+                    f"{product_config.s3_tiles_prefix}/{parsed['radar_id']}/{parsed['variable']}/"
+                    f"{elevation_id}/{parsed['timestamp']}"
                 )
                 await self._upload_tiles(tiles_dir, s3_prefix)
+
+                # Upload COG to storage
+                self._check_shutdown()
+                cog_key = (
+                    f"{product_config.s3_cog_prefix}/{parsed['radar_id']}/{parsed['variable']}/"
+                    f"{elevation_id}/{parsed['timestamp']}.tif"
+                )
+                cog_uploaded = await self._s3_client.upload_file(cog_key, cog_path)
+                if not cog_uploaded:
+                    logger.warning(
+                        "[RADAR] COG upload failed for %s (key=%s); continuing",
+                        work_unit.image_id,
+                        cog_key,
+                    )
 
                 logger.info(
                     "[RADAR] Completed sweep %d → %s",
@@ -253,56 +298,143 @@ class RadarProcessor(ImageProcessor):
             "radar_lon": radar_lon,
         }
 
-    def _polar_to_geotiff(  # pylint: disable=too-many-locals
+    def _compute_cartesian_mapping(  # pylint: disable=too-many-locals
+        self,
+        ranges: np.ndarray,
+        azimuths: np.ndarray,
+        radar_lat: float,
+        radar_lon: float,
+    ) -> tuple:
+        """Compute cartesian grid indices shared between COG and GeoTIFF generation.
+
+        Returns:
+            (range_idx, azimuth_idx, outside_range, bounds, grid_size) where:
+            - range_idx: flattened indices into the range dimension
+            - azimuth_idx: flattened indices into the azimuth dimension
+            - outside_range: flattened boolean mask (True = outside radar range)
+            - bounds: (min_lon, max_lon, min_lat, max_lat)
+            - grid_size: side length of the square cartesian grid
+        """
+        max_range_m = ranges.max()
+        max_range_deg_lat = (max_range_m / 1000.0) / 111.0
+        max_range_deg_lon = (max_range_m / 1000.0) / (111.0 * abs(np.cos(np.radians(radar_lat))))
+
+        min_lon = radar_lon - max_range_deg_lon
+        max_lon = radar_lon + max_range_deg_lon
+        min_lat = radar_lat - max_range_deg_lat
+        max_lat = radar_lat + max_range_deg_lat
+
+        range_res = ranges[1] - ranges[0] if len(ranges) > 1 else 1000
+        pixels_per_range = int(2 * max_range_m / range_res)
+        grid_size = min(2000, max(1000, pixels_per_range))
+
+        logger.info(
+            "[RADAR] Creating %dx%d grid for %.0f km range",
+            grid_size, grid_size, max_range_m / 1000
+        )
+
+        lons = np.linspace(min_lon, max_lon, grid_size)
+        lats = np.linspace(min_lat, max_lat, grid_size)
+        lon_grid, lat_grid = np.meshgrid(lons, lats)
+
+        dx = (lon_grid - radar_lon) * 111000 * np.cos(np.radians(radar_lat))
+        dy = (lat_grid - radar_lat) * 111000
+
+        r_grid = np.sqrt(dx**2 + dy**2)
+        theta_grid = np.degrees(np.arctan2(dx, dy)) % 360
+
+        range_idx = np.searchsorted(ranges, r_grid.ravel())
+        range_idx = np.clip(range_idx, 0, len(ranges) - 1)
+
+        azimuth_idx = np.zeros_like(theta_grid.ravel(), dtype=int)
+        for i, theta in enumerate(theta_grid.ravel()):
+            diff = np.abs(azimuths - theta)
+            diff = np.minimum(diff, 360 - diff)
+            azimuth_idx[i] = np.argmin(diff)
+
+        outside_range = r_grid.ravel() > max_range_m
+        bounds = (min_lon, max_lon, min_lat, max_lat)
+        return range_idx, azimuth_idx, outside_range, bounds, grid_size
+
+    def _save_polar_cog(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        field_data: np.ma.MaskedArray,
+        range_idx: np.ndarray,
+        azimuth_idx: np.ndarray,
+        outside_range: np.ndarray,
+        bounds: tuple,
+        grid_size: int,
+        output_path: Path,
+    ) -> None:
+        """Project raw float32 field values to cartesian grid and save as COG."""
+        import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
+
+        values = field_data[azimuth_idx, range_idx].astype(np.float32)
+        if np.ma.is_masked(values):
+            values = np.ma.filled(values, fill_value=np.nan)
+
+        grid_float = values.reshape(grid_size, grid_size)
+        grid_float[outside_range.reshape(grid_size, grid_size)] = np.nan
+
+        min_lon, max_lon, min_lat, max_lat = bounds
+        lons = np.linspace(min_lon, max_lon, grid_size)
+        lats = np.linspace(min_lat, max_lat, grid_size)
+
+        da = xr.DataArray(
+            np.flipud(grid_float),
+            dims=["y", "x"],
+            coords={"x": lons, "y": lats[::-1]},
+        )
+        da.rio.write_crs("EPSG:4326", inplace=True)
+        da.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+        da.rio.write_nodata(np.nan, inplace=True)
+
+        tmp_path = output_path.parent / f"{uuid.uuid4()}.tif"
+        try:
+            da.rio.to_raster(tmp_path, driver="COG", compress="DEFLATE", predictor=3)
+            tmp_path.rename(output_path)
+            logger.info("[RADAR] COG written: %s", output_path.name)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+    def _polar_to_geotiff_with_mapping(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
         polar_data: dict,
+        mapping: tuple,
         output_path: Path,
         palette,
     ) -> None:
-        """
-        Convert polar radar data to georeferenced RGBA GeoTIFF.
-
-        This method creates a cartesian grid and properly georeferences it,
-        similar to the approach in main.py but outputting GeoTIFF instead of PNG.
-        """
+        """Colorize polar data and project to cartesian RGBA GeoTIFF using precomputed mapping."""
         logger.info("[RADAR] Creating GeoTIFF: %s", output_path.name)
 
         data = polar_data["data"]
-        ranges = polar_data["ranges"]
-        azimuths = polar_data["azimuths"]
-        radar_lat = polar_data["radar_lat"]
-        radar_lon = polar_data["radar_lon"]
+        range_idx, azimuth_idx, outside_range, bounds, grid_size = mapping
 
-        # Create colormap and normalization
         cmap, norm = palette.create_colormap()
-
-        # Normalize data and apply colormap
         normalized = norm(data)
         rgba = cmap(normalized)
         rgba_uint8 = (rgba * 255).astype(np.uint8)
 
-        # Set alpha channel: opaque for valid data, transparent for masked
         rgba_uint8[:, :, 3] = 255
         if np.ma.is_masked(data):
             rgba_uint8[data.mask, 3] = 0
 
-        # Also make data below minimum value transparent
         below_min = data < palette.vmin
         rgba_uint8[below_min, 3] = 0
 
-        # Convert polar to cartesian coordinates
-        # This creates a grid in lat/lon space
-        grid_data, bounds = self._polar_to_cartesian_grid(
-            rgba_uint8, ranges, azimuths, radar_lat, radar_lon
-        )
+        grid_rgba = np.zeros((grid_size, grid_size, 4), dtype=np.uint8)
 
-        nrows, ncols = grid_data.shape[:2]
+        for band in range(4):
+            values = rgba_uint8[:, :, band][azimuth_idx, range_idx]
+            grid_rgba[:, :, band] = values.reshape(grid_size, grid_size)
+
+        grid_rgba[outside_range.reshape(grid_size, grid_size), 3] = 0
+
         min_lon, max_lon, min_lat, max_lat = bounds
-
-        # Create geotransform
+        nrows, ncols = grid_rgba.shape[:2]
         transform = from_bounds(min_lon, min_lat, max_lon, max_lat, ncols, nrows)
 
-        # Write GeoTIFF
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with rasterio.open(
             output_path,
@@ -317,8 +449,7 @@ class RadarProcessor(ImageProcessor):
             compress="lzw",
         ) as dst:
             for i in range(4):
-                # Flip vertically for proper georeferencing
-                dst.write(np.flipud(grid_data[:, :, i]), i + 1)
+                dst.write(np.flipud(grid_rgba[:, :, i]), i + 1)
 
         logger.info(
             "[RADAR] GeoTIFF created: %.2f°-%.2f° lon, %.2f°-%.2f° lat",
@@ -327,90 +458,6 @@ class RadarProcessor(ImageProcessor):
             min_lat,
             max_lat,
         )
-
-    def _polar_to_cartesian_grid(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
-        self,
-        rgba_data: np.ndarray,
-        ranges: np.ndarray,
-        azimuths: np.ndarray,
-        radar_lat: float,
-        radar_lon: float,
-    ) -> tuple:
-        """
-        Convert polar data to cartesian grid in geographic coordinates.
-
-        Returns:
-            - grid_data: (height, width, 4) RGBA array
-            - bounds: (min_lon, max_lon, min_lat, max_lat)
-        """
-        # Calculate grid bounds based on actual radar range
-        max_range_m = ranges.max()
-        max_range_deg_lat = (max_range_m / 1000.0) / 111.0
-        max_range_deg_lon = (max_range_m / 1000.0) / (
-            111.0 * abs(np.cos(np.radians(radar_lat)))
-        )
-
-        min_lon = radar_lon - max_range_deg_lon
-        max_lon = radar_lon + max_range_deg_lon
-        min_lat = radar_lat - max_range_deg_lat
-        max_lat = radar_lat + max_range_deg_lat
-
-        # Create output grid
-        # Use resolution based on range resolution
-        range_res = ranges[1] - ranges[0] if len(ranges) > 1 else 1000
-        pixels_per_range = int(2 * max_range_m / range_res)
-        grid_size = min(2000, max(1000, pixels_per_range))
-
-        logger.info(
-            "[RADAR] Creating %dx%d grid for %.0f km range",
-            grid_size,
-            grid_size,
-            max_range_m / 1000,
-        )
-
-        # Create coordinate grids
-        lons = np.linspace(min_lon, max_lon, grid_size)
-        lats = np.linspace(min_lat, max_lat, grid_size)
-        lon_grid, lat_grid = np.meshgrid(lons, lats)
-
-        # Convert geographic coordinates to radar-relative coordinates
-        # Simple flat-earth approximation (sufficient for radar range)
-        dx = (lon_grid - radar_lon) * 111000 * np.cos(np.radians(radar_lat))
-        dy = (lat_grid - radar_lat) * 111000
-
-        # Convert to polar
-        r_grid = np.sqrt(dx**2 + dy**2)
-        theta_grid = np.degrees(np.arctan2(dx, dy)) % 360
-
-        # Create output grid
-        grid_rgba = np.zeros((grid_size, grid_size, 4), dtype=np.uint8)
-
-        # Interpolate from polar data to cartesian grid
-        # For each cartesian pixel, find nearest polar coordinate
-        _, ngates = rgba_data.shape[:2]
-
-        # Find indices in polar data
-        range_idx = np.searchsorted(ranges, r_grid.ravel())
-        range_idx = np.clip(range_idx, 0, ngates - 1)
-
-        # Azimuth matching (find nearest ray)
-        azimuth_idx = np.zeros_like(theta_grid.ravel(), dtype=int)
-        for i, theta in enumerate(theta_grid.ravel()):
-            # Find nearest azimuth
-            diff = np.abs(azimuths - theta)
-            diff = np.minimum(diff, 360 - diff)  # Handle wraparound
-            azimuth_idx[i] = np.argmin(diff)
-
-        # Extract values from polar data
-        for band in range(4):
-            values = rgba_data[:, :, band][azimuth_idx, range_idx]
-            grid_rgba[:, :, band] = values.reshape(grid_size, grid_size)
-
-        # Mask values outside radar range
-        outside_range = r_grid > ranges.max()
-        grid_rgba[outside_range, 3] = 0  # Transparent
-
-        return grid_rgba, (min_lon, max_lon, min_lat, max_lat)
 
     def _generate_tiles(self, geotiff_path: Path, tiles_dir: Path) -> None:
         """Generate XYZ tiles using gdal2tiles."""

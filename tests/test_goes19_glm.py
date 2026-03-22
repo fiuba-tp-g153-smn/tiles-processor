@@ -20,7 +20,7 @@ def band_config():
     """Create a mock band config for GLM."""
     config = MagicMock(spec=BandConfig)
     config.band_id = "glm_fed"
-    config.s3_prefix = "glm-fed"
+    config.s3_tiles_prefix = "tiles/glm_fed"
     return config
 
 

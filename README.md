@@ -186,16 +186,31 @@ OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
 
 ```
 tiles-data/                              # Bucket name (configurable)
-├── band_13/tiles/{tileset_id}_tiles/{z}/{x}/{y}.webp
-├── band_9/tiles/{tileset_id}_tiles/{z}/{x}/{y}.webp
-├── band_2/tiles/{tileset_id}_tiles/{z}/{x}/{y}.webp
-└── glm_fed/tiles/GLM_FED_s{YYYYJJJHHMMSS}_tiles/{z}/{x}/{y}.webp
+├── tiles/
+│   ├── band_13/
+│   │   └── {tileset_id}_tiles/          # One directory per processed image
+│   │       └── {z}/{x}/{y}.webp         # XYZ tile structure (z=3-7)
+│   ├── band_9/
+│   │   └── {tileset_id}_tiles/
+│   │       └── {z}/{x}/{y}.webp
+│   ├── band_2/
+│   │   └── {tileset_id}_tiles/
+│   │       └── {z}/{x}/{y}.webp
+│   ├── glm_fed/
+│   │   └── GLM_FED_s{YYYYJJJHHMMSS}_tiles/  # 10-minute window tilesets
+│   │       └── {z}/{x}/{y}.webp
+│   └── radar/
+│       └── {radar_id}/{variable}/elev{N}/{timestamp}/
+│           └── {z}/{x}/{y}.webp
+└── cog/
+  ├── {band_id}/{image_id}.tif
+  └── radar/{radar_id}/{variable}/elev{N}/{timestamp}.tif
 ```
 
 **Tileset naming:**
 
-- ABI: based on source filename (e.g., `OR_ABI-L1b-RadF-M6C13_G19_s20260440350212_..._tiles`)
-- GLM: based on window start (e.g., `GLM_FED_s20260431200000_tiles` = 2026, day 43, 12:00:00 UTC)
+- **ABI Bands**: Based on source filename (e.g., `OR_ABI-L1b-RadF-M6C13_G19_s20260440350212_..._tiles`)
+- **GLM FED**: Based on window start time (e.g., `GLM_FED_s20260431200000_tiles` = 2026, day 43, 12:00:00 UTC)
 
 ## Commands
 

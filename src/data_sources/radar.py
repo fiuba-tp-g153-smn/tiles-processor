@@ -125,7 +125,7 @@ class RadarDataSource(DataSource):
                     source_uri=source_uri,
                     data_source_id=self.source_id,
                     processor_id=self.processor_id,
-                    output_prefix=self._product_config.s3_prefix,
+                    output_prefix=self._product_config.s3_tiles_prefix,
                 )
             )
 

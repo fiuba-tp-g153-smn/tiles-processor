@@ -406,7 +406,7 @@ class S3Client:
 
         Args:
             local_dir: Local directory path to upload
-            s3_prefix: S3 key prefix (e.g., "band_13/tiles/tileset_tiles")
+            s3_prefix: S3 key prefix (e.g., "tiles/band_13/tileset_id")
 
         Returns:
             Number of files uploaded
@@ -492,12 +492,31 @@ class S3Client:
             logger.error("Failed to upload %s to %s: %s", file_path, s3_key, e)
             return False
 
+    async def upload_file(self, key: str, file_path: Path) -> bool:
+        """Upload a single local file and return whether the upload succeeded.
+
+        Uses the same backend selection as directory uploads: if
+        ``tile_uploader_overwritten`` is configured it will be used, otherwise this
+        falls back to S3 ``put_object``.
+
+        Args:
+            key: Destination object key (e.g., "cog/band_13/image.tif").
+            file_path: Local path of the file to upload.
+
+        Returns:
+            ``True`` when upload succeeds, ``False`` when it fails.
+        """
+        async with self._session.client(
+            "s3", **self._get_client_kwargs(authenticated=True)
+        ) as s3_client:
+            return await self._upload_file(s3_client, file_path, key)
+
     async def delete_prefix(self, s3_prefix: str) -> int:
         """
         Delete all objects under a given S3 prefix.
 
         Args:
-            s3_prefix: S3 key prefix to delete (e.g., "band_13/tiles/old_tileset")
+            s3_prefix: S3 key prefix to delete (e.g., "tiles/band_13/old_tileset")
 
         Returns:
             Number of objects deleted

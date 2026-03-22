@@ -314,6 +314,36 @@ def build_rgba_data_array(
     return rgb
 
 
+def save_as_cog(data: xr.DataArray, output_dir: Path, image_id: str) -> Path:
+    """Save an already-reprojected DataArray as a Cloud Optimized GeoTIFF (COG).
+
+    Expects data that is already in the target CRS and clipped to the desired bounds.
+    Overviews are embedded automatically by the COG driver.
+
+    Args:
+        data: Georeferenced DataArray (float32, any CRS).
+        output_dir: Directory where the COG file will be written.
+        image_id: Base name for the output file (without extension).
+
+    Returns:
+        Path to the written COG file.
+    """
+    import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
+
+    output_path = output_dir / f"{image_id}_cog.tif"
+    tmp_path = output_dir / f"{uuid.uuid4()}.tif"
+
+    try:
+        data.rio.to_raster(tmp_path, driver="COG", compress="DEFLATE", predictor=3)
+        tmp_path.rename(output_path)
+        logger.info("COG written: %s", output_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    return output_path
+
+
 def run_gdal2tiles(
     geotiff_path: Path,
     output_dir: Path,

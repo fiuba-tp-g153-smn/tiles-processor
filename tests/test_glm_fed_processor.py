@@ -165,7 +165,7 @@ class TestZeroFlashWindowPipeline:
             source_uri="test://unused",
             data_source_id="goes19_glm",
             processor_id="glm_fed",
-            output_prefix="glm_fed/tiles",
+            output_prefix="tiles/glm_fed",
             bounds=self._SMALL_BOUNDS,
             band_id="glm_fed",
         )
@@ -215,7 +215,7 @@ class TestZeroFlashWindowPipeline:
             source_uri="test://unused",
             data_source_id="goes19_glm",
             processor_id="glm_fed",
-            output_prefix="glm_fed/tiles",
+            output_prefix="tiles/glm_fed",
             bounds=self._SMALL_BOUNDS,
             band_id="glm_fed",
         )

@@ -10,7 +10,7 @@ on the small 5424x5424 result.
 Processing differences from GoesProcessor:
   - Loads raw int16 (mask_and_scale=False), downsamples, then CF-decodes
   - Computes reflectance factor instead of brightness temperature
-  - Dynamic vmax from 95th percentile (SMN recommendation)
+  - Dynamic vmax from 95th percentile on clipped region (SMN recommendation)
   - Uses grayscale VISIBLE_PALETTE
   - Uses 1 GDAL process for tile generation (less CPU pressure)
 """
@@ -183,23 +183,14 @@ class Band2Processor(GoesProcessor):
         return reflectance
 
     @override
-    def _generate_geotiff(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        self,
-        bt_data: xr.DataArray,
-        output_dir: Path,
-        image_id: str,
-        bounds: dict,
-        vmin: float,
-        vmax: float,
-        product_name: str,
-        color_palette: list,
-    ) -> Path:
-        """
-        Generate GeoTIFF with dynamic vmax based on percentile 95.
+    def _get_vmax(self, reprojected_data: xr.DataArray, vmax_config: float) -> float:
+        """Compute dynamic vmax from the 95th percentile of the clipped region.
 
         Per SMN recommendation for visible channel:
         The 95th percentile of gamma-corrected reflectance (sqrt domain) is used
         to dynamically adjust vmax so images don't appear too dark at sunrise/sunset.
+        Computing on already-clipped data (Argentina bounds) is more representative
+        than using the full satellite disk.
 
         Thresholds are in the gamma-corrected (sqrt) domain:
             perc = np.nanpercentile(data, 95)
@@ -207,11 +198,8 @@ class Band2Processor(GoesProcessor):
             elif perc > 0.84:               vmax = 0.95  (bright daylight)
             else:                           vmax = min(perc + 0.10, 1.0)
         """
-        # Compute dynamic vmax from the reflectance data
-        valid_data = bt_data.values
-        perc = float(np.nanpercentile(valid_data, 95))
+        perc = float(np.nanpercentile(reprojected_data.values, 95))
 
-        # Thresholds are in gamma-corrected (sqrt) domain
         if np.isnan(perc) or perc < 0.22:
             dynamic_vmax = 1.0  # mostly dark / terminator — use full range
         elif perc > 0.84:
@@ -224,14 +212,4 @@ class Band2Processor(GoesProcessor):
             perc,
             dynamic_vmax,
         )
-
-        return super()._generate_geotiff(
-            bt_data,
-            output_dir,
-            image_id,
-            bounds,
-            vmin,
-            dynamic_vmax,
-            product_name,
-            color_palette,
-        )
+        return dynamic_vmax

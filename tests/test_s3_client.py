@@ -10,6 +10,19 @@ import pytest
 from clients.s3_client import S3Client
 
 
+class _AsyncClientContext:
+    """Async context manager wrapper for a mocked S3 client."""
+
+    def __init__(self, client):
+        self._client = client
+
+    async def __aenter__(self):
+        return self._client
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 class TestS3ClientDownloadFile:
     """Tests for S3Client.download_single_file method."""
 
@@ -444,3 +457,76 @@ class TestS3ClientGetFolderFilePaths:
 
             assert len(result) == 1
             assert "folder/C13_G19_file.nc" in result
+
+
+class TestS3ClientUploadFile:
+    """Tests for S3Client.upload_file method."""
+
+    @pytest.mark.asyncio
+    async def test_upload_file_uses_overridden_backend_and_returns_true(self, tmp_path):
+        """upload_file should delegate to _upload_file and honor backend override."""
+        file_path = tmp_path / "sample.tif"
+        file_path.write_bytes(b"abc")
+
+        override_backend = AsyncMock()
+        s3_client = S3Client(
+            bucket_name="tiles-data",
+            endpoint_url="http://s3:9000",
+            access_key="user",
+            secret_key="pass",
+            tile_uploader_overwritten=override_backend,
+        )
+
+        boto_client = AsyncMock()
+        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+
+        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
+
+        assert uploaded is True
+        override_backend.upload.assert_awaited_once()
+        boto_client.put_object.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_upload_file_returns_false_on_backend_failure(self, tmp_path):
+        """upload_file should not raise and should return False on upload errors."""
+        file_path = tmp_path / "sample.tif"
+        file_path.write_bytes(b"abc")
+
+        override_backend = AsyncMock()
+        override_backend.upload.side_effect = RuntimeError("boom")
+
+        s3_client = S3Client(
+            bucket_name="tiles-data",
+            endpoint_url="http://s3:9000",
+            access_key="user",
+            secret_key="pass",
+            tile_uploader_overwritten=override_backend,
+        )
+
+        boto_client = AsyncMock()
+        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+
+        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
+
+        assert uploaded is False
+
+    @pytest.mark.asyncio
+    async def test_upload_file_success_without_overridden_backend(self, tmp_path):
+        """upload_file should use boto put_object when no override backend is configured."""
+        file_path = tmp_path / "sample.tif"
+        file_path.write_bytes(b"abc")
+
+        s3_client = S3Client(
+            bucket_name="tiles-data",
+            endpoint_url="http://s3:9000",
+            access_key="user",
+            secret_key="pass",
+        )
+
+        boto_client = AsyncMock()
+        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+
+        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
+
+        assert uploaded is True
+        boto_client.put_object.assert_awaited_once()
