@@ -90,7 +90,7 @@ def _make_images(band_config: BandConfig, count: int) -> list[ImageInfo]:
                 source_uri=f"ABI-L1b-RadF/2025/038/12/{filename}",
                 data_source_id=f"goes19_abi_{band_config.band_id}",
                 processor_id=f"goes_{band_config.band_id}",
-                output_prefix=band_config.s3_prefix,
+                    output_prefix=band_config.s3_tiles_prefix,
             )
         )
     return images
@@ -167,7 +167,7 @@ class TestDuplicatePrevention:
         progress_tracker.mark_completed(images[0].image_id, "band_2")
         # And its tiles now exist in S3
         stem = Path(images[0].image_id).stem
-        tileset_prefix = f"band_2/tiles/{stem}/"
+        tileset_prefix = f"tiles/band_2/{stem}/"
         producer._s3_client.list_prefixes = AsyncMock(return_value=[tileset_prefix])
 
         # Second run: images[0] covered by S3, images[1-2] still in-progress
@@ -210,7 +210,7 @@ class TestDuplicatePrevention:
             source_uri="ABI-L1b-RadF/2025/038/12/OR_ABI-L1b-RadF-M6C02_G19_s2025038NEW0.nc",
             data_source_id="goes19_abi_band_2",
             processor_id="goes_band_2",
-            output_prefix=band_config.s3_prefix,
+            output_prefix=band_config.s3_tiles_prefix,
         )
         source._images = initial_images + [new_image]
 

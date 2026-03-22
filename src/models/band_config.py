@@ -17,7 +17,8 @@ class BandConfig:
         vmin: Minimum temperature for normalization (Kelvin)
         vmax: Maximum temperature for normalization (Kelvin)
         palette_name: Name of the color palette to use
-        s3_prefix: S3 key prefix for storing tiles
+        s3_tiles_prefix: S3 key prefix for storing tiles
+        s3_cog_prefix: S3 key prefix for storing COG files
         product_name: Name for the output product metadata
     """
 
@@ -26,7 +27,8 @@ class BandConfig:
     vmin: float
     vmax: float
     palette_name: str
-    s3_prefix: str
+    s3_tiles_prefix: str
+    s3_cog_prefix: str
     product_name: str
 
     def to_dict(self) -> dict:
@@ -37,7 +39,8 @@ class BandConfig:
             "vmin": self.vmin,
             "vmax": self.vmax,
             "palette_name": self.palette_name,
-            "s3_prefix": self.s3_prefix,
+            "s3_tiles_prefix": self.s3_tiles_prefix,
+            "s3_cog_prefix": self.s3_cog_prefix,
             "product_name": self.product_name,
         }
 
@@ -50,7 +53,8 @@ class BandConfig:
             vmin=data["vmin"],
             vmax=data["vmax"],
             palette_name=data["palette_name"],
-            s3_prefix=data["s3_prefix"],
+            s3_tiles_prefix=data["s3_tiles_prefix"],
+            s3_cog_prefix=data["s3_cog_prefix"],
             product_name=data["product_name"],
         )
 
@@ -62,7 +66,8 @@ BAND_13_CONFIG = BandConfig(
     vmin=183.15,  # -90°C in Kelvin
     vmax=323.15,  # +50°C in Kelvin
     palette_name="CLOUD_TOPS_PALETTE",
-    s3_prefix="band_13/tiles",
+    s3_tiles_prefix="tiles/band_13",
+    s3_cog_prefix="cog/band_13",
     product_name="Cloud_Tops",
 )
 
@@ -72,7 +77,8 @@ BAND_9_CONFIG = BandConfig(
     vmin=161.0,  # -112.15°C in Kelvin
     vmax=330.0,  # +56.85°C in Kelvin
     palette_name="WATER_VAPOR_PALETTE",
-    s3_prefix="band_9/tiles",
+    s3_tiles_prefix="tiles/band_9",
+    s3_cog_prefix="cog/band_9",
     product_name="Water_Vapor",
 )
 
@@ -82,7 +88,8 @@ BAND_2_CONFIG = BandConfig(
     vmin=0.0,  # Reflectance factor min
     vmax=1.0,  # Reflectance factor max
     palette_name="VISIBLE_PALETTE",
-    s3_prefix="band_2/tiles",
+    s3_tiles_prefix="tiles/band_2",
+    s3_cog_prefix="cog/band_2",
     product_name="Visible",
 )
 
@@ -92,7 +99,8 @@ GLM_FED_CONFIG = BandConfig(
     vmin=0.0,
     vmax=256.0,  # Flashes per grid cell (guide range: 0–256)
     palette_name="FED_PALETTE",
-    s3_prefix="glm_fed/tiles",
+    s3_tiles_prefix="tiles/glm_fed",
+    s3_cog_prefix="cog/glm_fed",
     product_name="GLM_Flash_Extent_Density",
 )
 
@@ -102,7 +110,8 @@ GLM_TOE_CONFIG = BandConfig(
     vmin=0.0,
     vmax=1.5e-12,  # 1500 fJ in Joules (guide range: 1–1500 fJ)
     palette_name="TOE_PALETTE",
-    s3_prefix="glm_toe/tiles",
+    s3_tiles_prefix="tiles/glm_toe",
+    s3_cog_prefix="cog/glm_toe",
     product_name="GLM_Total_Optical_Energy",
 )
 
@@ -112,7 +121,8 @@ GLM_MFA_CONFIG = BandConfig(
     vmin=0.0,
     vmax=3000.0,  # km² operational cap
     palette_name="MFA_PALETTE",
-    s3_prefix="glm_mfa/tiles",
+    s3_tiles_prefix="tiles/glm_mfa",
+    s3_cog_prefix="cog/glm_mfa",
     product_name="GLM_Minimum_Flash_Area",
 )
 

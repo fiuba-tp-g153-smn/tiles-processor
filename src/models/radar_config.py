@@ -17,7 +17,8 @@ class RadarProductConfig:
         product_id: Identifier (e.g., "DBZH", "VRAD", "RHOHV")
         field_name: PyART field name for the variable
         subvolume: Which subvolume to process ("01" or "02")
-        s3_prefix: S3 key prefix for storing tiles
+        s3_tiles_prefix: S3 key prefix for storing tiles
+        s3_cog_prefix: S3 key prefix for storing COG files
         unit: Display unit for the variable
         long_name: Descriptive name
     """
@@ -25,7 +26,8 @@ class RadarProductConfig:
     product_id: str
     field_name: str
     subvolume: str
-    s3_prefix: str
+    s3_tiles_prefix: str
+    s3_cog_prefix: str
     unit: str = ""
     long_name: str = ""
 
@@ -35,7 +37,8 @@ class RadarProductConfig:
             "product_id": self.product_id,
             "field_name": self.field_name,
             "subvolume": self.subvolume,
-            "s3_prefix": self.s3_prefix,
+            "s3_tiles_prefix": self.s3_tiles_prefix,
+            "s3_cog_prefix": self.s3_cog_prefix,
             "unit": self.unit,
             "long_name": self.long_name,
         }
@@ -48,7 +51,8 @@ DBZH_CONFIG = RadarProductConfig(
     product_id="DBZH",
     field_name="reflectivity",
     subvolume="01",
-    s3_prefix="radar",
+    s3_tiles_prefix="tiles/radar",
+    s3_cog_prefix="cog/radar",
     unit="dBZ",
     long_name="Horizontal Reflectivity",
 )
@@ -57,7 +61,8 @@ ZH_CONFIG = RadarProductConfig(
     product_id="ZH",
     field_name="reflectivity",
     subvolume="01",
-    s3_prefix="radar",
+    s3_tiles_prefix="tiles/radar",
+    s3_cog_prefix="cog/radar",
     unit="dBZ",
     long_name="Reflectivity",
 )
@@ -66,7 +71,8 @@ TH_CONFIG = RadarProductConfig(
     product_id="TH",
     field_name="total_power",
     subvolume="01",
-    s3_prefix="radar",
+    s3_tiles_prefix="tiles/radar",
+    s3_cog_prefix="cog/radar",
     unit="dBZ",
     long_name="Total Power",
 )
@@ -75,7 +81,8 @@ VRAD_CONFIG = RadarProductConfig(
     product_id="VRAD",
     field_name="velocity",
     subvolume="02",  # VRAD uses volume 02
-    s3_prefix="radar",
+    s3_tiles_prefix="tiles/radar",
+    s3_cog_prefix="cog/radar",
     unit="m/s",
     long_name="Radial Velocity",
 )
@@ -84,7 +91,8 @@ WRAD_CONFIG = RadarProductConfig(
     product_id="WRAD",
     field_name="spectrum_width",
     subvolume="02",
-    s3_prefix="radar",
+    s3_tiles_prefix="tiles/radar",
+    s3_cog_prefix="cog/radar",
     unit="m/s",
     long_name="Spectrum Width",
 )
@@ -93,7 +101,8 @@ RHOHV_CONFIG = RadarProductConfig(
     product_id="RHOHV",
     field_name="cross_correlation_ratio",
     subvolume="01",
-    s3_prefix="radar",
+    s3_tiles_prefix="tiles/radar",
+    s3_cog_prefix="cog/radar",
     unit="",
     long_name="Cross-correlation Coefficient",
 )
@@ -102,7 +111,8 @@ ZDR_CONFIG = RadarProductConfig(
     product_id="ZDR",
     field_name="differential_reflectivity",
     subvolume="01",
-    s3_prefix="radar",
+    s3_tiles_prefix="tiles/radar",
+    s3_cog_prefix="cog/radar",
     unit="dB",
     long_name="Differential Reflectivity",
 )
@@ -111,7 +121,8 @@ KDP_CONFIG = RadarProductConfig(
     product_id="KDP",
     field_name="specific_differential_phase",
     subvolume="01",
-    s3_prefix="radar",
+    s3_tiles_prefix="tiles/radar",
+    s3_cog_prefix="cog/radar",
     unit="°/km",
     long_name="Specific Differential Phase",
 )
@@ -120,7 +131,8 @@ PHIDP_CONFIG = RadarProductConfig(
     product_id="PHIDP",
     field_name="differential_phase",
     subvolume="01",
-    s3_prefix="radar",
+    s3_tiles_prefix="tiles/radar",
+    s3_cog_prefix="cog/radar",
     unit="°",
     long_name="Differential Phase",
 )

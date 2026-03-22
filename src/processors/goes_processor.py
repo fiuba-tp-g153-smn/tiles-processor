@@ -2,7 +2,7 @@
 Shared GOES processor logic.
 
 This class implements the full pipeline for GOES satellite imagery:
-Download -> Georeference -> Brightness Temp -> GeoTIFF -> Tiles -> Upload
+Download -> Georeference -> Brightness Temp -> Reproject -> COG + GeoTIFF -> Tiles -> Upload
 """
 
 import asyncio
@@ -25,6 +25,7 @@ from services.processing_steps import (
     compute_brightness_temperature,
     normalize_and_colorize,
     run_gdal2tiles,
+    save_as_cog,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,7 +116,7 @@ class GoesProcessor(ImageProcessor):
         return None, bt_data
 
     async def _generate_and_upload(self, bt_data, geotiff_dir, tiles_dir, work_unit):
-        """Generate GeoTIFF, tiles, and upload to S3."""
+        """Reproject, generate COG + GeoTIFF + tiles, and upload to S3."""
         band_config = work_unit.band_config
 
         # Determine palette
@@ -126,22 +127,37 @@ class GoesProcessor(ImageProcessor):
         else:
             color_palette = GenerateGeoTIFFFilesService.CLOUD_TOPS_PALETTE
 
-        # 3. GeoTIFF Generation
+        # 3a. Reproject + clip (shared between COG and GeoTIFF — done only once)
         self._check_shutdown()
-        logger.info("Step 3: GeoTIFF Generation")
+        logger.info("Step 3a: Reproject and clip to bounds")
+        reprojected = await asyncio.to_thread(
+            self._reproject_and_clip, bt_data, work_unit.bounds
+        )
+        del bt_data
+        gc.collect()
+
+        # 3b. COG — raw float32 scientific data, no colorization
+        self._check_shutdown()
+        logger.info("Step 3b: COG generation")
+        cog_path = await asyncio.to_thread(
+            save_as_cog, reprojected, geotiff_dir, work_unit.image_id
+        )
+
+        # 3c. GeoTIFF RGBA — dynamic vmax hook allows Band2Processor to override
+        self._check_shutdown()
+        logger.info("Step 3c: GeoTIFF generation")
+        vmax = self._get_vmax(reprojected, band_config.vmax)
         geotiff_path = await asyncio.to_thread(
-            self._generate_geotiff,
-            bt_data,
+            self._colorize_and_save,
+            reprojected,
             geotiff_dir,
             work_unit.image_id,
-            work_unit.bounds,
             band_config.vmin,
-            band_config.vmax,
+            vmax,
             band_config.product_name,
             color_palette,
         )
-
-        del bt_data
+        del reprojected
         gc.collect()
 
         # 4. Tile Generation
@@ -151,20 +167,32 @@ class GoesProcessor(ImageProcessor):
             self._generate_tiles, geotiff_path, tiles_dir
         )
 
-        # 5. Upload to S3
+        # 5. Upload tiles to S3
         # pylint: disable=duplicate-code
         self._check_shutdown()
-        logger.info("Step 5: Upload to S3")
-        s3_prefix = f"{band_config.s3_prefix}/{geotiff_path.stem}"
-
+        logger.info("Step 5: Upload tiles to S3")
+        s3_prefix = f"{band_config.s3_tiles_prefix}/{geotiff_path.stem}"
         await self._s3_client.ensure_bucket_exists()
         await self._s3_client.upload_directory(tiles_output_dir, s3_prefix)
+
+        # 5b. Upload COG to storage
+        self._check_shutdown()
+        logger.info("Step 5b: Upload COG to S3")
+        cog_key = f"{band_config.s3_cog_prefix}/{work_unit.image_id}.tif"
+        cog_uploaded = await self._s3_client.upload_file(cog_key, cog_path)
+        if not cog_uploaded:
+            logger.warning(
+                "COG upload failed for %s (key=%s); continuing with tiles only",
+                work_unit.image_id,
+                cog_key,
+            )
 
         logger.info("Processing complete: %s", s3_prefix)
 
         # Cleanup intermediate files
         self._cleanup_file(geotiff_path)
         self._cleanup_directory(tiles_output_dir)
+        self._cleanup_file(cog_path)
         gc.collect()
         # pylint: enable=duplicate-code
 
@@ -184,35 +212,21 @@ class GoesProcessor(ImageProcessor):
         """
         return compute_brightness_temperature(dataset)
 
-    def _generate_geotiff(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-        self,
-        bt_data: xr.DataArray,
-        output_dir: Path,
-        image_id: str,
-        bounds: dict,
-        vmin: float,
-        vmax: float,
-        product_name: str,
-        color_palette: list,
-    ) -> Path:
-        """Generate a colorized RGBA GeoTIFF."""
-        logger.info("Generating GeoTIFF for %s", image_id)
-        logger.debug("Bounds: %s", bounds)
-        logger.debug("Input data shape: %s", bt_data.shape)
+    def _reproject_and_clip(self, bt_data: xr.DataArray, bounds: dict) -> xr.DataArray:
+        """Reproject to EPSG:4326 and clip to geographic bounds.
 
-        # Clean attributes
+        This step is shared between COG and GeoTIFF generation to avoid
+        computing the reprojection twice.
+        """
         if "grid_mapping" in bt_data.attrs:
             del bt_data.attrs["grid_mapping"]
 
-        # Reproject
         logger.debug("Reprojecting to EPSG:4326...")
-        bt_reproj = bt_data.rio.reproject(
+        reproj = bt_data.rio.reproject(
             "EPSG:4326", resolution=self.REPROJECT_RESOLUTION
         )
-        bt_reproj.rio.write_nodata(np.nan, inplace=True)
-        logger.debug("Reprojected shape: %s", bt_reproj.shape)
+        reproj.rio.write_nodata(np.nan, inplace=True)
 
-        # Clip to bounds
         logger.debug(
             "Clipping to bounds: minx=%s, miny=%s, maxx=%s, maxy=%s",
             bounds["minx"],
@@ -220,44 +234,61 @@ class GoesProcessor(ImageProcessor):
             bounds["maxx"],
             bounds["maxy"],
         )
-        bt_clipped = bt_reproj.rio.clip_box(
+        clipped = reproj.rio.clip_box(
             minx=bounds["minx"],
             miny=bounds["miny"],
             maxx=bounds["maxx"],
             maxy=bounds["maxy"],
         )
-        logger.info(
-            "Clipped data shape: %s (y=%d, x=%d)",
-            bt_clipped.shape,
-            bt_clipped.shape[0],
-            bt_clipped.shape[1],
-        )
+        del reproj
+        gc.collect()
 
-        # Warn if clipped data is very small
-        if bt_clipped.shape[0] < 100 or bt_clipped.shape[1] < 100:
+        logger.info(
+            "Reprojected+clipped shape: %s (y=%d, x=%d)",
+            clipped.shape,
+            clipped.shape[0],
+            clipped.shape[1],
+        )
+        if clipped.shape[0] < 100 or clipped.shape[1] < 100:
             logger.warning(
                 "Clipped data is small (%s), this may result in missing zoom levels",
-                bt_clipped.shape,
+                clipped.shape,
             )
+        return clipped
 
-        del bt_reproj
-        gc.collect()
+    def _get_vmax(self, reprojected_data: xr.DataArray, vmax_config: float) -> float:
+        """Return the vmax for colorization.
 
-        # Normalize and Colorize
-        coords_x = bt_clipped["x"]
-        coords_y = bt_clipped["y"]
+        Override in subclasses (e.g. Band2Processor) for dynamic vmax computation.
+        """
+        return vmax_config
+
+    def _colorize_and_save(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        data: xr.DataArray,
+        output_dir: Path,
+        image_id: str,
+        vmin: float,
+        vmax: float,
+        product_name: str,
+        color_palette: list,
+    ) -> Path:
+        """Colorize already-reprojected data and save as RGBA GeoTIFF."""
+        logger.info("Colorizing and saving GeoTIFF for %s", image_id)
+
+        coords_x = data["x"]
+        coords_y = data["y"]
+
         r, g, b, a = normalize_and_colorize(
-            bt_clipped, vmin, vmax, color_palette, self.NAN_ALPHA
+            data, vmin, vmax, color_palette, self.NAN_ALPHA
         )
-        del bt_clipped
+        del data
         gc.collect()
 
-        # Create RGBA
         rgb = build_rgba_data_array(r, g, b, a, coords_x, coords_y, product_name)
         del r, g, b, a
         gc.collect()
 
-        # Save
         output_path = output_dir / f"{image_id}.tif"
         tmp_path = output_dir / f"{uuid.uuid4()}.tif"
 

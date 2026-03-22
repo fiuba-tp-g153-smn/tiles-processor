@@ -132,7 +132,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         if isinstance(data_source, Goes19BaseDataSource):
             band_id = data_source.band_config.band_id
             existing_tilesets = await self._get_existing_tilesets(
-                data_source.band_config.s3_prefix
+                data_source.band_config.s3_tiles_prefix
             )
         elif isinstance(data_source, RadarDataSource):
             # Radar sources use product_id as band_id
@@ -142,7 +142,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             existing_tilesets = await self._get_radar_existing_tilesets(product_id)
         else:
             band_id = data_source.source_id
-            output_prefix = f"{band_id}/tiles"
+            output_prefix = f"tiles/{band_id}"
             existing_tilesets = await self._get_existing_tilesets(output_prefix)
 
         # Get existing tilesets in S3
@@ -221,29 +221,32 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         """
         Get existing radar tilesets across all radar IDs for a specific product.
 
-        Path structure: radar/{radar_id}/{product}/{timestamp}_elev{N}/
+        Path structure: tiles/radar/{radar_id}/{product}/{elev}/{timestamp}/
         Returns image_ids like: RMA1_DBZH_20260114T170328Z
         """
         tilesets = set()
         try:
-            # List radar IDs: radar/RMA1/, radar/RMA12/, etc.
-            radar_ids = await self._s3_client.list_prefixes("radar/", delimiter="/")
+            # List radar IDs: tiles/radar/RMA1/, tiles/radar/RMA12/, etc.
+            radar_ids = await self._s3_client.list_prefixes(
+                "tiles/radar/", delimiter="/"
+            )
             for radar_id_prefix in radar_ids:
-                # radar_id_prefix = "radar/RMA1/"
+                # radar_id_prefix = "tiles/radar/RMA1/"
                 radar_id = radar_id_prefix.rstrip("/").split("/")[-1]
-                # Build product path: radar/RMA1/DBZH/
+                # Build product path: tiles/radar/RMA1/DBZH/
                 product_prefix = f"{radar_id_prefix}{product_id}/"
-                # List tilesets in this radar/product combination
-                prefixes = await self._s3_client.list_prefixes(
+                # List elevation prefixes in this radar/product combination
+                elevation_prefixes = await self._s3_client.list_prefixes(
                     product_prefix, delimiter="/"
                 )
-                for prefix in prefixes:
-                    # prefix = "radar/RMA1/DBZH/20260114T170328Z_elev0/"
-                    folder_name = prefix.rstrip("/").split("/")[-1]
-                    # Extract timestamp from "20260114T170328Z_elev0"
-                    if "_elev" in folder_name:
-                        timestamp = folder_name.split("_elev")[0]
-                        # Reconstruct image_id: RMA1_DBZH_20260114T170328Z
+                for elevation_prefix in elevation_prefixes:
+                    # elevation_prefix = "tiles/radar/RMA1/DBZH/elev0/"
+                    timestamp_prefixes = await self._s3_client.list_prefixes(
+                        elevation_prefix, delimiter="/"
+                    )
+                    for timestamp_prefix in timestamp_prefixes:
+                        # timestamp_prefix = "tiles/radar/RMA1/DBZH/elev0/20260114T170328Z/"
+                        timestamp = timestamp_prefix.rstrip("/").split("/")[-1]
                         image_id = f"{radar_id}_{product_id}_{timestamp}"
                         tilesets.add(image_id)
         except Exception as e:  # pylint: disable=broad-exception-caught

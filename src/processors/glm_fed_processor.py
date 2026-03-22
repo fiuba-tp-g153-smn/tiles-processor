@@ -18,6 +18,7 @@ from services.processing_steps import (
     fill_missing_tiles,
     normalize_and_colorize,
     run_gdal2tiles,
+    save_as_cog,
 )
 
 logger = logging.getLogger(__name__)
@@ -153,14 +154,22 @@ class GlmFedProcessor(ImageProcessor):
         work_unit: WorkUnit,
         band_config: BandConfig,
     ):
-        """Generate GeoTIFF, tiles, and upload to S3 for the given product config."""
+        """Generate COG + GeoTIFF + tiles, and upload to S3 for the given product config."""
         color_palette = GenerateGeoTIFFFilesService.get_palette(
             band_config.palette_name
         )
 
-        # 2. GeoTIFF Generation
+        # 2a. COG — raw float32 data (product_data already in EPSG:4326, no reproject needed)
         self._check_shutdown()
-        logger.info("Step 2: GeoTIFF Generation")
+        logger.info("Step 2a: COG generation")
+        cog_path = await asyncio.to_thread(
+            save_as_cog, product_data, geotiff_dir, work_unit.image_id
+        )
+        cog_key = f"{band_config.s3_cog_prefix}/{work_unit.image_id}.tif"
+
+        # 2b. GeoTIFF Generation
+        self._check_shutdown()
+        logger.info("Step 2b: GeoTIFF Generation")
 
         # Normalize and colorize
         r, g, b, a = normalize_and_colorize(
@@ -220,21 +229,33 @@ class GlmFedProcessor(ImageProcessor):
             self.ZOOM_LEVELS,
         )
 
-        # 4. Upload to S3
+        # 4. Upload tiles to S3
         # pylint: disable=duplicate-code
         self._check_shutdown()
-        logger.info("Step 4: Upload to S3")
-        s3_prefix = f"{band_config.s3_prefix}/{geotiff_path.stem}"
+        logger.info("Step 4: Upload tiles to S3")
+        s3_prefix = f"{band_config.s3_tiles_prefix}/{geotiff_path.stem}"
 
         await self._s3_client.ensure_bucket_exists()
         self._check_shutdown()
         await self._s3_client.upload_directory(tiles_output_dir, s3_prefix)
+
+        # 4b. Upload COG to storage
+        self._check_shutdown()
+        logger.info("Step 4b: Upload COG to S3")
+        cog_uploaded = await self._s3_client.upload_file(cog_key, cog_path)
+        if not cog_uploaded:
+            logger.warning(
+                "COG upload failed for %s (key=%s); continuing with tiles only",
+                work_unit.image_id,
+                cog_key,
+            )
 
         logger.info("Processing complete: %s", s3_prefix)
 
         # Cleanup intermediate files
         self._cleanup_file(geotiff_path)
         self._cleanup_directory(tiles_output_dir)
+        self._cleanup_file(cog_path)
         gc.collect()
         # pylint: enable=duplicate-code
 
