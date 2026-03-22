@@ -49,7 +49,10 @@ class TestGoesProcessor:
             processor._cleanup_file = MagicMock()
             processor._cleanup_directory = MagicMock()
 
-            with patch("processors.goes_processor.save_as_cog", return_value=Path("/tmp/out_cog.tif")):
+            with patch(
+                "processors.goes_processor.save_as_cog",
+                return_value=Path("/tmp/out_cog.tif"),
+            ):
                 # Create work unit using new format
                 work_unit = WorkUnit.create(
                     image_id="img1.nc",

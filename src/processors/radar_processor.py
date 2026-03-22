@@ -317,7 +317,9 @@ class RadarProcessor(ImageProcessor):
         """
         max_range_m = ranges.max()
         max_range_deg_lat = (max_range_m / 1000.0) / 111.0
-        max_range_deg_lon = (max_range_m / 1000.0) / (111.0 * abs(np.cos(np.radians(radar_lat))))
+        max_range_deg_lon = (max_range_m / 1000.0) / (
+            111.0 * abs(np.cos(np.radians(radar_lat)))
+        )
 
         min_lon = radar_lon - max_range_deg_lon
         max_lon = radar_lon + max_range_deg_lon
@@ -330,7 +332,9 @@ class RadarProcessor(ImageProcessor):
 
         logger.info(
             "[RADAR] Creating %dx%d grid for %.0f km range",
-            grid_size, grid_size, max_range_m / 1000
+            grid_size,
+            grid_size,
+            max_range_m / 1000,
         )
 
         lons = np.linspace(min_lon, max_lon, grid_size)

@@ -47,6 +47,7 @@ services:
       - "${S3_TILES_DATA_PORT}:8333"      # S3 API
       - "8888:8888"      # Seaweedfs Filer
       - "9333:9333"      # Seaweedfs Master
+      - "23646:23646"    # Seaweedfs Admin
       # - "9340:9340"      # Seaweedfs Volume server
     environment:
       - S3_ROOT_USER=${S3_ROOT_USER}
@@ -76,61 +77,6 @@ services:
       retries: 10
       start_period: 30s
       start_interval: 2s
-
-  # SeaweedFS Admin - cluster maintenance scheduler
-  seaweedfs-admin:
-    image: chrislusf/seaweedfs:4.17
-    container_name: tiles-processor-dev-seaweedfs-admin
-    stop_grace_period: 10s
-    command: >-
-      admin
-      -master=seaweedfs:9333
-      -adminUser=${S3_ROOT_USER}
-      -adminPassword=${S3_ROOT_PASSWORD}
-      -readOnlyUser=${S3_TILES_DATA_DATA_SERVICE_USER}
-      -readOnlyPassword=${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
-    depends_on:
-      seaweedfs:
-        condition: service_healthy
-    ports:
-      - "23646:23646"
-    restart: unless-stopped
-    volumes:
-      - ./data_s3/data/filerldb2:/filerldb2
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:23646/"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  # SeaweedFS Worker - executes maintenance jobs (vacuum, volume balance, etc.)
-  seaweedfs-worker:
-    image: chrislusf/seaweedfs:4.17
-    container_name: tiles-processor-dev-seaweedfs-worker
-    entrypoint: /bin/sh
-    stop_grace_period: 10s
-    # >- folds multi-line YAML into a single string. chown fixes the root:root volume before privilege drop.
-    # exec replaces /bin/sh (PID 1) with weed worker so Docker's SIGTERM reaches it directly.
-    # su-exec drops from root -> seaweed user before running weed (needs root first for chown).
-    command: >-
-      -c "chown seaweed:seaweed /worker-data &&
-      exec su-exec seaweed weed worker
-      -admin=seaweedfs-admin:23646
-      -workingDir=/worker-data
-      -metricsPort=2112"
-    depends_on:
-      - seaweedfs-admin
-    volumes:
-      - seaweedfs_worker_dev_data:/worker-data
-      - ./data_s3/data/filerldb2:/filerldb2
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:2112/metrics"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
 
   # Producer - discovers new images and publishes work units
   # Runs continuously with APScheduler (every 5 minutes)
@@ -272,4 +218,3 @@ services:
 
 volumes:
   rabbitmq_dev_data:
-  seaweedfs_worker_dev_data:

@@ -90,7 +90,7 @@ def _make_images(band_config: BandConfig, count: int) -> list[ImageInfo]:
                 source_uri=f"ABI-L1b-RadF/2025/038/12/{filename}",
                 data_source_id=f"goes19_abi_{band_config.band_id}",
                 processor_id=f"goes_{band_config.band_id}",
-                    output_prefix=band_config.s3_tiles_prefix,
+                output_prefix=band_config.s3_tiles_prefix,
             )
         )
     return images

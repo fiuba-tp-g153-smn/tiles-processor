@@ -132,9 +132,15 @@ weed server \
   $METRICS_FLAG &
 WEED_PID=$!
 
-# Forward SIGTERM/INT to weed so it can flush and close cleanly.
+# Forward SIGTERM/INT to the server and wait for it to exit cleanly.
 # (SIGKILL cannot be trapped — the kernel kills immediately.)
-trap 'echo "Shutting down SeaweedFS..."; kill -TERM "$WEED_PID" 2>/dev/null; wait "$WEED_PID" 2>/dev/null; exit 0' TERM INT
+# This trap is replaced below once admin and worker are started.
+trap '
+  echo "Shutting down SeaweedFS..."
+  kill -TERM "$WEED_PID" 2>/dev/null
+  wait "$WEED_PID" 2>/dev/null
+  exit 0
+' TERM INT
 
 echo "Waiting for SeaweedFS master..."
 MAX_RETRIES=30
@@ -180,4 +186,33 @@ fi
 touch /tmp/seaweedfs_ready
 echo "SeaweedFS ready."
 
-wait $WEED_PID
+echo "Starting SeaweedFS admin scheduler..."
+weed admin \
+  -master=localhost:9333 \
+  -adminUser="${S3_ROOT_USER}" \
+  -adminPassword="${S3_ROOT_PASSWORD}" \
+  -readOnlyUser="${S3_TILES_DATA_DATA_SERVICE_USER}" \
+  -readOnlyPassword="${S3_TILES_DATA_DATA_SERVICE_PASSWORD}" &
+ADMIN_PID=$!
+
+echo "Starting SeaweedFS maintenance worker..."
+mkdir -p /data/worker-data
+weed worker \
+  -admin=localhost:23646 \
+  -workingDir=/data/worker-data \
+  -metricsPort=2112 &
+WORKER_PID=$!
+
+# Replace the initial trap now that all PIDs are known.
+trap '
+  echo "Shutting down SeaweedFS..."
+  kill -TERM "$ADMIN_PID"  2>/dev/null
+  kill -TERM "$WORKER_PID" 2>/dev/null
+  kill -TERM "$WEED_PID"   2>/dev/null
+  wait "$ADMIN_PID"  2>/dev/null
+  wait "$WORKER_PID" 2>/dev/null
+  wait "$WEED_PID"   2>/dev/null
+  exit 0
+' TERM INT
+
+wait $WEED_PID $ADMIN_PID $WORKER_PID

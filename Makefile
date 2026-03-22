@@ -21,8 +21,6 @@ clean:
 	docker volume rm tiles-processor_tiles_data || true
 	docker volume rm tiles-processor_rabbitmq_data || true
 	docker volume rm tiles-processor_rabbitmq_dev_data || true
-	docker volume rm tiles-processor_seaweedfs_worker_data || true
-	docker volume rm tiles-processor_seaweedfs_worker_dev_data || true
 	docker volume rm tiles-processor_seaweedfs_filerldb2 || true
 
 precommit:
