@@ -40,3 +40,21 @@ class TestCreateS3Client:
                 create_s3_client(config_with_filer)
                 _, kwargs = mock_uploader_cls.call_args
                 assert kwargs["ttl"] == config_with_filer.SEAWEEDFS_TILE_TTL
+
+    def test_explicit_ttl_string_passes_through(self, config_with_filer):
+        """An explicit TTL string (e.g. from SEAWEEDFS_RADAR_TILE_TTL) is forwarded as-is."""
+        with patch("factories.S3Client.create_with_credentials") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("factories.SeaweedFsFilerUploader") as mock_uploader_cls:
+                create_s3_client(config_with_filer, with_ttl="168h")
+                _, kwargs = mock_uploader_cls.call_args
+                assert kwargs["ttl"] == "168h"
+
+    def test_with_ttl_none_passes_none(self, config_with_filer):
+        """None disables TTL — used when SEAWEEDFS_RADAR_TILE_TTL is unset."""
+        with patch("factories.S3Client.create_with_credentials") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("factories.SeaweedFsFilerUploader") as mock_uploader_cls:
+                create_s3_client(config_with_filer, with_ttl=None)
+                _, kwargs = mock_uploader_cls.call_args
+                assert kwargs["ttl"] is None

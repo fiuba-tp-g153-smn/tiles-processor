@@ -56,7 +56,9 @@ class RadarProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._s3_client = create_s3_client(config, with_ttl=False)
+        self._s3_client = create_s3_client(
+            config, with_ttl=config.SEAWEEDFS_RADAR_TILE_TTL
+        )
 
     async def process(  # pylint: disable=too-many-locals
         self, downloaded_file_path: str, work_unit: WorkUnit

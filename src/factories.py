@@ -63,11 +63,25 @@ def create_rabbitmq_client(config: Config) -> RabbitMQClient:
     return client
 
 
-def create_s3_client(config: Config, *, with_ttl: bool = True) -> S3Client:
-    """Build an authenticated S3 client for tile storage."""
+def create_s3_client(config: Config, *, with_ttl: str | None | bool = True) -> S3Client:
+    """Build an authenticated S3 client for tile storage.
+
+    Args:
+        config: Application configuration.
+        with_ttl: Controls the TTL passed to SeaweedFS.
+            True  → use config.SEAWEEDFS_TILE_TTL (default for GOES/GLM)
+            False → no TTL (kept for backward compatibility)
+            str   → explicit TTL string (e.g. "168h" for radar)
+            None  → no TTL (e.g. when SEAWEEDFS_RADAR_TILE_TTL is unset)
+    """
     tile_uploader_overwritten = None
     if config.SEAWEEDFS_FILER_ENDPOINT:
-        ttl = config.SEAWEEDFS_TILE_TTL if with_ttl else None
+        if with_ttl is True:
+            ttl = config.SEAWEEDFS_TILE_TTL
+        elif with_ttl is False:
+            ttl = None
+        else:
+            ttl = with_ttl  # explicit str or None
         tile_uploader_overwritten = SeaweedFsFilerUploader(
             endpoint=config.SEAWEEDFS_FILER_ENDPOINT,
             bucket=config.S3_TILES_DATA_BUCKET_NAME,

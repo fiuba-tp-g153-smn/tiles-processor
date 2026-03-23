@@ -104,6 +104,24 @@ class TestConfig:
             with pytest.raises(FileNotFoundError, match="Settings file not found"):
                 Config(settings_path=missing_path)
 
+    def test_config_seaweedfs_radar_tile_ttl_from_env(
+        self, temp_settings_file, env_vars
+    ):
+        """SEAWEEDFS_RADAR_TILE_TTL is read from the environment variable."""
+        with mock.patch.dict(
+            os.environ, {**env_vars, "SEAWEEDFS_RADAR_TILE_TTL": "168h"}, clear=True
+        ):
+            config = Config(settings_path=temp_settings_file)
+            assert config.SEAWEEDFS_RADAR_TILE_TTL == "168h"
+
+    def test_config_seaweedfs_radar_tile_ttl_defaults_to_none(
+        self, temp_settings_file, env_vars
+    ):
+        """SEAWEEDFS_RADAR_TILE_TTL is None when the env var is not set."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            assert config.SEAWEEDFS_RADAR_TILE_TTL is None
+
     def test_get_bounds_returns_dict(self, temp_settings_file, env_vars):
         """Test that get_bounds returns correct dictionary."""
         with mock.patch.dict(os.environ, env_vars, clear=True):

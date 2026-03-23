@@ -82,6 +82,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             "SEAWEEDFS_FILER_ENDPOINT"
         )
         self.SEAWEEDFS_TILE_TTL: str | None = os.getenv("SEAWEEDFS_TILE_TTL", "1m")
+        self.SEAWEEDFS_RADAR_TILE_TTL: str | None = os.getenv(
+            "SEAWEEDFS_RADAR_TILE_TTL"
+        )
 
         # Health Check
         self.HEALTH_PORT: int = int(os.getenv("HEALTH_PORT", "8080"))
@@ -149,6 +152,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("S3_TILES_DATA_SECURE: %s", self.S3_TILES_DATA_SECURE)
         logger.info("SEAWEEDFS_FILER_ENDPOINT: %s", self.SEAWEEDFS_FILER_ENDPOINT)
         logger.info("SEAWEEDFS_TILE_TTL: %s", self.SEAWEEDFS_TILE_TTL)
+        logger.info("SEAWEEDFS_RADAR_TILE_TTL: %s", self.SEAWEEDFS_RADAR_TILE_TTL)
         logger.info("RABBITMQ_HOST: %s", self.RABBITMQ_HOST)
         logger.info("RABBITMQ_PORT: %s", self.RABBITMQ_PORT)
         logger.info("RABBITMQ_QUEUE: %s", self.RABBITMQ_QUEUE)
