@@ -56,6 +56,10 @@ ARG DATA_DIR
 ENV LOG_LEVEL=$LOG_LEVEL
 ENV DATA_DIR=$DATA_DIR
 
+EXPOSE 8888
+EXPOSE 9333
+EXPOSE 23646
+
 # Options: process_band_13, process_band_9 or scheduler
 CMD ["python3", "src/main.py", "process_band_13"]
 
