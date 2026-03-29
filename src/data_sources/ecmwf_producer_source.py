@@ -5,6 +5,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import requests
+
 from clients.s3_client import S3Client
 from data_sources.base import DataSource, DiscoveryConfig, ImageInfo
 from models.ecmwf_config import (
@@ -16,6 +18,11 @@ from models.ecmwf_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ForecastNotAvailableError(Exception):
+    """Raised when a forecast candidate is not yet published on ECMWF Open Data (HTTP 404)."""
+
 
 _FORECAST_BASE_HOURS = (0, 12)  # UTC hours at which ECMWF issues forecasts
 _STEPS = list(range(PERIOD_HOURS, 145, PERIOD_HOURS))  # [3, 6, ..., 144]
@@ -115,14 +122,21 @@ class EcmwfProducerDataSource(DataSource):
         )
 
         client = Client()
-        client.retrieve(
-            date=forecast_time.strftime("%Y-%m-%d"),
-            time=forecast_time.hour,
-            step=_STEPS,
-            type="fc",
-            param=[self._product_config.parameter],
-            target=str(target),
-        )
+        try:
+            client.retrieve(
+                date=forecast_time.strftime("%Y-%m-%d"),
+                time=forecast_time.hour,
+                step=_STEPS,
+                type="fc",
+                param=[self._product_config.parameter],
+                target=str(target),
+            )
+        except requests.exceptions.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                raise ForecastNotAvailableError(
+                    f"Forecast not yet available on ECMWF Open Data: {forecast_time.strftime('%Y-%m-%d %H:%M UTC')}"
+                ) from exc
+            raise
 
         logger.info("[ECMWF] GRIB downloaded: %s (%.1f MB)", target, target.stat().st_size / 1e6)
         return target

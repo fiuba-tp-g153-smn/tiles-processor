@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from clients.message_queue_client import MessageQueueClient
+from data_sources.ecmwf_producer_source import ForecastNotAvailableError
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from factories import (
@@ -150,6 +151,11 @@ class Worker:  # pylint: disable=too-few-public-methods
 
             logger.info("Successfully processed %s", work_unit.image_id)
             return True  # Acknowledge
+
+        except ForecastNotAvailableError as e:
+            logger.warning("Forecast not yet available, skipping %s: %s", work_unit.image_id, e)
+            self._handler.release_progress(work_unit)
+            return True  # Acknowledge without retry; producer will re-enqueue next cycle
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             if not self._running:

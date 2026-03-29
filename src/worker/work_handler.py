@@ -121,6 +121,10 @@ class WorkHandler:
             # Cleanup entire per-image work directory (raw + any subprocess leftovers)
             self._cleanup_directory(work_dir)
 
+    def release_progress(self, work_unit: WorkUnit) -> None:
+        """Remove a work unit from the progress tracker so it can be rediscovered."""
+        self._progress_tracker.mark_completed(work_unit.image_id, work_unit.band_id)
+
     def abort(self) -> None:
         """Terminate the subprocess process group for graceful shutdown."""
         if not self._current_process or self._current_process.poll() is not None:
