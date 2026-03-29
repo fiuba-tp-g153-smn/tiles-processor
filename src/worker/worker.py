@@ -14,6 +14,8 @@ from factories import (
     create_rabbitmq_client,
     create_s3_client,
 )
+from worker.ecmwf_grib_downloader import EcmwfGribDownloader
+from models.ecmwf_config import ECMWF_TP_CONFIG
 from models.work_unit import WorkUnit
 from worker.work_handler import WorkHandler
 from health_server import HealthCheckServer
@@ -208,11 +210,23 @@ def run_worker(config: Config) -> None:
     tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"
     progress_tracker = ProgressTracker(tracker_path)
 
+    # Build inline processors (run in main process, need MQ access)
+    inline_processors = {}
+    if config.ENABLE_ECMWF_PRECIPITATION:
+        ecmwf_s3 = create_s3_client(config, with_ttl=False)
+        inline_processors["ecmwf_grib_download"] = EcmwfGribDownloader(
+            product_config=ECMWF_TP_CONFIG,
+            s3_client=ecmwf_s3,
+            bounds=config.get_bounds(),
+        )
+
     # Create work handler with dependencies
     handler = WorkHandler(
         config=config,
         progress_tracker=progress_tracker,
         data_source_registry=data_source_registry,
+        mq_client=mq_client,
+        inline_processors=inline_processors,
     )
 
     # Create and start worker

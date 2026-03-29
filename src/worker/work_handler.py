@@ -11,10 +11,12 @@ from pathlib import Path
 from threading import Thread
 from time import perf_counter
 
+from clients.message_queue_client import MessageQueueClient
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from data_sources import DataSourceRegistry
 from models.work_unit import WorkUnit
+from worker.inline_processor import InlineProcessor
 
 logger = getLogger(__name__)
 
@@ -40,10 +42,14 @@ class WorkHandler:
         config: Config,
         progress_tracker: ProgressTracker,
         data_source_registry: DataSourceRegistry,
+        mq_client: MessageQueueClient | None = None,
+        inline_processors: dict[str, InlineProcessor] | None = None,
     ):
         self._config = config
         self._progress_tracker = progress_tracker
         self._data_source_registry = data_source_registry
+        self._mq_client = mq_client
+        self._inline_processors: dict[str, InlineProcessor] = inline_processors or {}
         self._base_dir = Path(config.TMP_DIR)
         self._current_process: subprocess.Popen | None = None
 
@@ -76,14 +82,24 @@ class WorkHandler:
             local_path = await data_source.download(work_unit.source_uri, local_path)
             download_time = perf_counter() - download_start
 
-            # Step 2: Process in subprocess (heavy libraries isolated)
+            # Step 2: Process — inline (no subprocess) or in subprocess
             process_start = perf_counter()
-            logger.info(
-                "[HANDLER] Processing %s in subprocess (processor: %s)",
-                work_unit.image_id,
-                work_unit.processor_id,
-            )
-            self._run_processing_subprocess(work_unit, str(local_path))
+            if work_unit.processor_id in self._inline_processors:
+                logger.info(
+                    "[HANDLER] Processing %s inline (processor: %s)",
+                    work_unit.image_id,
+                    work_unit.processor_id,
+                )
+                await self._inline_processors[work_unit.processor_id].process(
+                    str(local_path), work_unit, self._mq_client
+                )
+            else:
+                logger.info(
+                    "[HANDLER] Processing %s in subprocess (processor: %s)",
+                    work_unit.image_id,
+                    work_unit.processor_id,
+                )
+                self._run_processing_subprocess(work_unit, str(local_path))
             process_time = perf_counter() - process_start
 
             # Step 3: Mark as completed in SQLite

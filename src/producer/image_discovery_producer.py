@@ -118,6 +118,10 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             product_id = source_id.removeprefix("radar_")
             return self._config.ENABLED_RADAR_PRODUCTS.get(product_id, False)
 
+        # ECMWF sources
+        if source_id == "ecmwf_tp_producer":
+            return self._config.ENABLE_ECMWF_PRECIPITATION
+
         # Default: enabled if registered
         return True
 

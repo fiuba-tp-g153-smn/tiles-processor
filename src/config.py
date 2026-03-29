@@ -62,6 +62,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.ENABLE_GLM_FED: bool = settings["features"].get("enable_glm_fed", False)
         self.ENABLE_GLM_TOE: bool = settings["features"].get("enable_glm_toe", False)
         self.ENABLE_GLM_MFA: bool = settings["features"].get("enable_glm_mfa", False)
+        self.ENABLE_ECMWF_PRECIPITATION: bool = settings["features"].get(
+            "enable_ecmwf_precipitation", False
+        )
         _radar_product_ids = ["DBZH", "ZDR", "RHOHV", "KDP", "VRAD"]
         self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
             pid: settings["features"].get(f"enable_radar_{pid}", False)
