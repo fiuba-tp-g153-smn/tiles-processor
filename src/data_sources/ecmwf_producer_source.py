@@ -4,6 +4,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from ecmwf.opendata import Client
 
 import requests
 
@@ -112,9 +113,6 @@ class EcmwfProducerDataSource(DataSource):
         Returns:
             Path to the downloaded .grib file.
         """
-        # pylint: disable=import-outside-toplevel
-        from ecmwf.opendata import Client
-
         forecast_time = datetime.fromisoformat(source_uri)
         target = dest_path.with_suffix(".grib")
         target.parent.mkdir(parents=True, exist_ok=True)

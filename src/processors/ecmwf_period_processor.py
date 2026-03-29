@@ -7,6 +7,7 @@ import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
+import pandas as pd
 
 import xarray as xr
 
@@ -96,7 +97,6 @@ class EcmwfPeriodProcessor(ImageProcessor):
         self, grib_path: Path, hour_start: int, hour_end: int, bounds: dict
     ) -> xr.DataArray:
         """Read GRIB, compute differential, reproject and clip."""
-        import pandas as pd  # pylint: disable=import-outside-toplevel
         import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
 
         logger.info("[ECMWF] Step 1: Reading GRIB %s", grib_path.name)
@@ -114,7 +114,7 @@ class EcmwfPeriodProcessor(ImageProcessor):
         else:
             tp_s = tp_var.sel(step=pd.Timedelta(hours=hour_start))
             tp_e = tp_var.sel(step=pd.Timedelta(hours=hour_end))
-            precip_diff = (tp_e - tp_s) * 1000.0  # metres → mm
+            precip_diff = (tp_e - tp_s) * 1000.0 # convert from meters to millimeters
 
         del tp_var, ds
         gc.collect()
