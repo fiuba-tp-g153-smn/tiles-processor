@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from clients.message_queue_client import MessageQueueClient
-from data_sources.ecmwf_producer_source import ForecastNotAvailableError
+from data_sources.ecmwf_producer_source import ForecastNotAvailableError, TransientDownloadError
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from factories import (
@@ -156,6 +156,12 @@ class Worker:  # pylint: disable=too-few-public-methods
             logger.warning("Forecast not yet available, skipping %s: %s", work_unit.image_id, e)
             self._handler.release_progress(work_unit)
             return True  # Acknowledge without retry; producer will re-enqueue next cycle
+
+        except TransientDownloadError as e:
+            logger.warning("Transient download error, requeuing %s: %s", work_unit.image_id, e)
+            self._handler.release_progress(work_unit)
+            client.publish(work_unit)
+            return True  # Acknowledge original; copy is back in the queue
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             if not self._running:

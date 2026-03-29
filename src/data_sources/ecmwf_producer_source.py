@@ -24,6 +24,10 @@ class ForecastNotAvailableError(Exception):
     """Raised when a forecast candidate is not yet published on ECMWF Open Data (HTTP 404)."""
 
 
+class TransientDownloadError(Exception):
+    """Raised on transient S3 errors (e.g. 503 Slow Down) to trigger requeue instead of blocking."""
+
+
 _FORECAST_BASE_HOURS = (0, 12)  # UTC hours at which ECMWF issues forecasts
 _STEPS = list(range(PERIOD_HOURS, 145, PERIOD_HOURS))  # [3, 6, ..., 144]
 
@@ -121,7 +125,19 @@ class EcmwfProducerDataSource(DataSource):
             target,
         )
 
-        client = Client()
+        client = Client(source="aws")
+
+        # Intercept 503 Slow Down BEFORE multiurl's internal retry loop
+        # (which waits 120s × 500 attempts). Raising a non-HTTPError exception
+        # bypasses multiurl's catch and lets us requeue the work unit immediately.
+        def _reject_slow_down(response, *args, **kwargs):  # pylint: disable=unused-argument
+            if response.status_code == 503:
+                raise TransientDownloadError(
+                    f"S3 rate limit (503 Slow Down) downloading {forecast_time.strftime('%Y-%m-%d %H:%M UTC')}"
+                )
+
+        client.session.hooks["response"].append(_reject_slow_down)
+
         try:
             client.retrieve(
                 date=forecast_time.strftime("%Y-%m-%d"),
