@@ -32,6 +32,8 @@ rasterio = "^1.4.3"
 matplotlib = "^3.10.0"
 requests = "^2.32.5"
 types-requests = "^2.32.4.20260107"
+ecmwf-opendata = "^0.3.12"
+cfgrib = "^0.9.15"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"

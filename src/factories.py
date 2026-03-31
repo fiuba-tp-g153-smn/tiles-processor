@@ -10,12 +10,15 @@ from clients.seaweedfs_filer_uploader import SeaweedFsFilerUploader
 from config import Config
 from data_sources import (
     DataSourceRegistry,
+    EcmwfPeriodDataSource,
+    EcmwfProducerDataSource,
     Goes19AbiDataSource,
     Goes19GlmDataSource,
     RadarDataSource,
 )
 from data_sources.radar_repository import LocalRadarFileRepository
 from models.band_config import BAND_CONFIGS
+from models.ecmwf_config import ECMWF_TP_CONFIG
 from models.radar_config import RADAR_PRODUCT_CONFIGS
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,12 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         repository = LocalRadarFileRepository(radar_input_dir)
         for _product_id, product_config in RADAR_PRODUCT_CONFIGS.items():
             registry.register(RadarDataSource(product_config, repository))
+
+    # Register ECMWF data sources (feature-flagged)
+    if config is not None and config.ENABLE_ECMWF_PRECIPITATION:
+        ecmwf_s3 = create_s3_client(config, with_ttl=False)
+        registry.register(EcmwfProducerDataSource(ECMWF_TP_CONFIG, ecmwf_s3))
+        registry.register(EcmwfPeriodDataSource(ECMWF_TP_CONFIG, ecmwf_s3))
 
     return registry
 

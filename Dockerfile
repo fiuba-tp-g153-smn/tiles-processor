@@ -30,6 +30,8 @@ RUN (poetry check --lock || poetry lock) && poetry install --without dev --no-ro
 ################################
 FROM ghcr.io/osgeo/gdal:ubuntu-small-latest-amd64 AS runner
 
+RUN apt-get update && apt-get install -y libeccodes0 && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy the virtual environment from the builder stage

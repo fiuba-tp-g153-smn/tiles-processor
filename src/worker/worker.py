@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from clients.message_queue_client import MessageQueueClient
+from data_sources.ecmwf_producer_source import ForecastNotAvailableError, TransientDownloadError
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from factories import (
@@ -14,6 +15,8 @@ from factories import (
     create_rabbitmq_client,
     create_s3_client,
 )
+from worker.ecmwf_grib_downloader import EcmwfGribDownloader
+from models.ecmwf_config import ECMWF_TP_CONFIG
 from models.work_unit import WorkUnit
 from worker.work_handler import WorkHandler
 from health_server import HealthCheckServer
@@ -149,6 +152,17 @@ class Worker:  # pylint: disable=too-few-public-methods
             logger.info("Successfully processed %s", work_unit.image_id)
             return True  # Acknowledge
 
+        except ForecastNotAvailableError as e:
+            logger.warning("Forecast not yet available, skipping %s: %s", work_unit.image_id, e)
+            self._handler.release_progress(work_unit)
+            return True  # Acknowledge without retry; producer will re-enqueue next cycle
+
+        except TransientDownloadError as e:
+            logger.warning("Transient download error, requeuing %s: %s", work_unit.image_id, e)
+            self._handler.release_progress(work_unit)
+            client.publish(work_unit)
+            return True  # Acknowledge original; copy is back in the queue
+
         except Exception as e:  # pylint: disable=broad-exception-caught
             if not self._running:
                 logger.info("Shutdown interrupted processing of %s", work_unit.image_id)
@@ -208,11 +222,23 @@ def run_worker(config: Config) -> None:
     tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"
     progress_tracker = ProgressTracker(tracker_path)
 
+    # Build inline processors (run in main process, need MQ access)
+    inline_processors = {}
+    if config.ENABLE_ECMWF_PRECIPITATION:
+        ecmwf_s3 = create_s3_client(config, with_ttl=False)
+        inline_processors["ecmwf_grib_download"] = EcmwfGribDownloader(
+            product_config=ECMWF_TP_CONFIG,
+            s3_client=ecmwf_s3,
+            bounds=config.get_bounds(),
+        )
+
     # Create work handler with dependencies
     handler = WorkHandler(
         config=config,
         progress_tracker=progress_tracker,
         data_source_registry=data_source_registry,
+        mq_client=mq_client,
+        inline_processors=inline_processors,
     )
 
     # Create and start worker
