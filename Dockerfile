@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
 # Install Poetry
 ENV POETRY_HOME="/opt/poetry"
 ENV PATH="$POETRY_HOME/bin:$PATH"
-RUN curl -sSL https://install.python-poetry.org | python3 -
+RUN curl -sSL https://install.python-poetry.org | POETRY_VERSION=2.3.2 python3 -
 RUN poetry config virtualenvs.in-project true
 
 WORKDIR /app
@@ -23,7 +23,7 @@ WORKDIR /app
 COPY pyproject.toml poetry.lock README.md ./
 
 # Install production dependencies into .venv
-RUN (poetry check --lock || poetry lock) && poetry install --without dev --no-root --no-ansi
+RUN (poetry check --lock || poetry lock) && poetry install --without dev --no-root --no-ansi --no-cache
 
 ################################
 # Stage 2: Runtime
