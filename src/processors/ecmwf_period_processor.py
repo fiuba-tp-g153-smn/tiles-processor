@@ -13,14 +13,19 @@ import xarray as xr
 
 from config import Config
 from factories import create_s3_client
-from models.ecmwf_config import ECMWF_TP_CONFIG, PRECIPITATION_PALETTE
+from models.ecmwf_config import (
+    ECMWF_TP_CONFIG,
+    PRECIPITATION_COLORS,
+    PRECIPITATION_THRESHOLDS,
+)
 from models.work_unit import WorkUnit
 from processors.base_processor import ImageProcessor
 from services.processing_steps import (
     build_rgba_data_array,
-    normalize_and_colorize,
+    fill_missing_tiles,
     run_gdal2tiles,
     save_as_cog,
+    threshold_colorize,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,6 +85,9 @@ class EcmwfPeriodProcessor(ImageProcessor):
         tiles_output_dir = await asyncio.to_thread(
             run_gdal2tiles, geotiff_path, tiles_dir, _ZOOM_LEVELS, _GDAL_PROCESSES
         )
+        await asyncio.to_thread(
+            fill_missing_tiles, tiles_output_dir, work_unit.bounds, _ZOOM_LEVELS
+        )
         self._check_shutdown()
 
         await self._upload(cog_path, tiles_output_dir, forecast_ts, work_unit)
@@ -107,14 +115,18 @@ class EcmwfPeriodProcessor(ImageProcessor):
         )
         tp_var = ds["tp"]
 
-        logger.info("[ECMWF] Step 2: Computing precipitation differential (hours %d-%d)", hour_start, hour_end)
+        logger.info(
+            "[ECMWF] Step 2: Computing precipitation differential (hours %d-%d)",
+            hour_start,
+            hour_end,
+        )
         if hour_start == 0:
             # step=0 not present; tp at step=3h is already the accumulation since t=0
             precip_diff = tp_var.sel(step=pd.Timedelta(hours=3)) * 1000.0
         else:
             tp_s = tp_var.sel(step=pd.Timedelta(hours=hour_start))
             tp_e = tp_var.sel(step=pd.Timedelta(hours=hour_end))
-            precip_diff = (tp_e - tp_s) * 1000.0 # convert from meters to millimeters
+            precip_diff = (tp_e - tp_s) * 1000.0  # convert from meters to millimeters
 
         del tp_var, ds
         gc.collect()
@@ -171,16 +183,16 @@ class EcmwfPeriodProcessor(ImageProcessor):
         coords_x = clipped["x"]
         coords_y = clipped["y"]
 
-        r, g, b, a = normalize_and_colorize(
+        r, g, b, a = threshold_colorize(
             clipped,
-            ECMWF_TP_CONFIG.vmin,
-            ECMWF_TP_CONFIG.vmax,
-            list(PRECIPITATION_PALETTE),
-            nan_alpha=0,
+            PRECIPITATION_THRESHOLDS,
+            PRECIPITATION_COLORS,
         )
         gc.collect()
 
-        rgba = build_rgba_data_array(r, g, b, a, coords_x, coords_y, "Total Precipitation")
+        rgba = build_rgba_data_array(
+            r, g, b, a, coords_x, coords_y, "Total Precipitation"
+        )
         del r, g, b, a
         gc.collect()
 
@@ -206,9 +218,7 @@ class EcmwfPeriodProcessor(ImageProcessor):
         work_unit: WorkUnit,
     ) -> None:
         """Upload COG and tiles to S3."""
-        cog_key = (
-            f"{ECMWF_TP_CONFIG.cog_prefix}/{forecast_ts}/{work_unit.image_id}.tif"
-        )
+        cog_key = f"{ECMWF_TP_CONFIG.cog_prefix}/{forecast_ts}/{work_unit.image_id}.tif"
         tiles_prefix = (
             f"{ECMWF_TP_CONFIG.tiles_prefix}/{forecast_ts}/{work_unit.image_id}"
         )
@@ -217,7 +227,9 @@ class EcmwfPeriodProcessor(ImageProcessor):
         logger.info("[ECMWF] Step 6a: Uploading COG → %s", cog_key)
         uploaded = await self._s3_client.upload_file(cog_key, cog_path)
         if not uploaded:
-            logger.warning("[ECMWF] COG upload failed for %s; continuing", work_unit.image_id)
+            logger.warning(
+                "[ECMWF] COG upload failed for %s; continuing", work_unit.image_id
+            )
 
         self._check_shutdown()
         logger.info("[ECMWF] Step 6b: Uploading tiles → %s", tiles_prefix)

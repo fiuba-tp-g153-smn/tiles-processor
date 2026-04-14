@@ -65,7 +65,5 @@ class EcmwfPeriodDataSource(DataSource):
 
         logger.info("[ECMWF] Downloading GRIB from S3: %s → %s", grib_s3_key, target)
         await self._s3_client.download_to_file(grib_s3_key, target)
-        logger.info(
-            "[ECMWF] GRIB downloaded (%.1f MB)", target.stat().st_size / 1e6
-        )
+        logger.info("[ECMWF] GRIB downloaded (%.1f MB)", target.stat().st_size / 1e6)
         return target

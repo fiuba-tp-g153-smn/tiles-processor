@@ -2,20 +2,20 @@
 
 from dataclasses import dataclass
 
-from models.ecmwf_palettes import PRECIPITATION_PALETTE
+from models.ecmwf_palettes import PRECIPITATION_COLORS, PRECIPITATION_THRESHOLDS
 
 
 @dataclass(frozen=True, slots=True)
 class EcmwfProductConfig:
     """Immutable configuration for an ECMWF-derived product."""
 
-    parameter: str       # ECMWF short name, e.g. "tp"
-    vmin: float          # Minimum display value (in product units after conversion)
-    vmax: float          # Maximum display value
-    palette_name: str    # Logical palette identifier
-    grib_prefix: str     # S3 prefix for cached GRIB files
-    cog_prefix: str      # S3 prefix for COG outputs
-    tiles_prefix: str    # S3 prefix for tile outputs
+    parameter: str  # ECMWF short name, e.g. "tp"
+    vmin: float  # Minimum display value (in product units after conversion)
+    vmax: float  # Maximum display value
+    palette_name: str  # Logical palette identifier
+    grib_prefix: str  # S3 prefix for cached GRIB files
+    cog_prefix: str  # S3 prefix for COG outputs
+    tiles_prefix: str  # S3 prefix for tile outputs
 
 
 ECMWF_TP_CONFIG = EcmwfProductConfig(
@@ -29,7 +29,7 @@ ECMWF_TP_CONFIG = EcmwfProductConfig(
 )
 
 # Forecast scheduling constants
-MAX_LOOKBACK_HOURS: int = 48       # Hours to look back when searching for forecasts
-FORECAST_HOURS: int = 144          # Total length of each forecast (6 days)
-PERIOD_HOURS: int = 3              # Duration of each processing period
-FORECASTS_TO_MAINTAIN: int = 3     # Number of recent forecasts to keep active
+MAX_LOOKBACK_HOURS: int = 48  # Hours to look back when searching for forecasts
+FORECAST_HOURS: int = 144  # Total length of each forecast (6 days)
+PERIOD_HOURS: int = 3  # Duration of each processing period
+FORECASTS_TO_MAINTAIN: int = 3  # Number of recent forecasts to keep active

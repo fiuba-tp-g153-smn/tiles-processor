@@ -18,7 +18,9 @@ from worker.inline_processor import InlineProcessor
 
 logger = logging.getLogger(__name__)
 
-_FORECAST_STEPS = list(range(PERIOD_HOURS, FORECAST_HOURS + 1, PERIOD_HOURS))  # [3,6,...,144]
+_FORECAST_STEPS = list(
+    range(PERIOD_HOURS, FORECAST_HOURS + 1, PERIOD_HOURS)
+)  # [3,6,...,144]
 
 
 class EcmwfGribDownloader(InlineProcessor):
@@ -86,14 +88,16 @@ class EcmwfGribDownloader(InlineProcessor):
 
             period_unit = WorkUnit.create(
                 image_id=period_ts,
-                source_uri=json.dumps({
-                    "grib_path": grib_s3_key,
-                    "forecast_time": forecast_time.isoformat(),
-                    "period_start": period_start.isoformat(),
-                    "period_end": period_end.isoformat(),
-                    "hour_start": hour_start,
-                    "hour_end": hour_end,
-                }),
+                source_uri=json.dumps(
+                    {
+                        "grib_path": grib_s3_key,
+                        "forecast_time": forecast_time.isoformat(),
+                        "period_start": period_start.isoformat(),
+                        "period_end": period_end.isoformat(),
+                        "hour_start": hour_start,
+                        "hour_end": hour_end,
+                    }
+                ),
                 data_source_id="ecmwf_tp_period",
                 processor_id="ecmwf_period_processor",
                 output_prefix=f"{self._product_config.tiles_prefix}/{forecast_ts}",
@@ -104,7 +108,9 @@ class EcmwfGribDownloader(InlineProcessor):
             enqueued += 1
 
         logger.info(
-            "[ECMWF] Enqueued %d period work units for forecast %s", enqueued, forecast_ts
+            "[ECMWF] Enqueued %d period work units for forecast %s",
+            enqueued,
+            forecast_ts,
         )
 
     # ------------------------------------------------------------------

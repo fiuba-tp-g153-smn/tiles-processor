@@ -86,7 +86,9 @@ class EcmwfProducerDataSource(DataSource):
                 continue
 
             if forecast_ts in config.in_progress_images:
-                logger.debug("[ECMWF] GRIB download already in progress: %s", forecast_ts)
+                logger.debug(
+                    "[ECMWF] GRIB download already in progress: %s", forecast_ts
+                )
                 continue
 
             new_images.append(
@@ -128,7 +130,9 @@ class EcmwfProducerDataSource(DataSource):
         # Intercept 503 Slow Down BEFORE multiurl's internal retry loop
         # (which waits 120s × 500 attempts). Raising a non-HTTPError exception
         # bypasses multiurl's catch and lets us requeue the work unit immediately.
-        def _reject_slow_down(response, *args, **kwargs):  # pylint: disable=unused-argument
+        def _reject_slow_down(
+            response, *args, **kwargs
+        ):  # pylint: disable=unused-argument
             if response.status_code == 503:
                 raise TransientDownloadError(
                     f"S3 rate limit (503 Slow Down) downloading {forecast_time.strftime('%Y-%m-%d %H:%M UTC')}"
@@ -152,7 +156,9 @@ class EcmwfProducerDataSource(DataSource):
                 ) from exc
             raise
 
-        logger.info("[ECMWF] GRIB downloaded: %s (%.1f MB)", target, target.stat().st_size / 1e6)
+        logger.info(
+            "[ECMWF] GRIB downloaded: %s (%.1f MB)", target, target.stat().st_size / 1e6
+        )
         return target
 
     # ------------------------------------------------------------------

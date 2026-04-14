@@ -280,6 +280,54 @@ def normalize_and_colorize(
     return colored[..., 0], colored[..., 1], colored[..., 2], alpha
 
 
+def threshold_colorize(
+    array: xr.DataArray,
+    thresholds: tuple[float, ...],
+    colors: tuple[str, ...],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Map values to discrete colors based on thresholds.
+
+    Values below ``thresholds[0]`` and NaN pixels are fully transparent.
+    Values in ``[thresholds[i], thresholds[i+1])`` receive ``colors[i]``.
+    Values ``>= thresholds[-1]`` receive ``colors[-1]``.
+
+    Args:
+        array: Input data array.
+        thresholds: Ascending boundary values (length N).
+        colors: Hex color strings (length N).
+
+    Returns:
+        (red, green, blue, alpha) as uint8 ndarrays.
+    """
+    arr = np.asarray(
+        array.values if hasattr(array, "values") else array, dtype=np.float32
+    )
+    nan_mask = np.isnan(arr)
+    arr = np.nan_to_num(arr, nan=0.0)
+
+    bin_indexes = np.digitize(arr, thresholds, right=False)
+    del arr
+
+    transparent = nan_mask | (bin_indexes == 0)
+    alpha = np.where(transparent, 0, 255).astype(np.uint8)
+    del nan_mask, transparent
+
+    bin_indexes = np.clip(bin_indexes, 0, len(colors)).astype(np.uint8)
+
+    rgb_lut = np.zeros((len(colors) + 1, 3), dtype=np.uint8)
+    for i, hex_color in enumerate(colors):
+        h = hex_color.lstrip("#")
+        rgb_lut[i + 1, 0] = int(h[0:2], 16)
+        rgb_lut[i + 1, 1] = int(h[2:4], 16)
+        rgb_lut[i + 1, 2] = int(h[4:6], 16)
+
+    colored = rgb_lut[bin_indexes]
+    del bin_indexes
+    gc.collect()
+
+    return colored[..., 0], colored[..., 1], colored[..., 2], alpha
+
+
 # pylint: disable=too-many-arguments, too-many-positional-arguments
 def build_rgba_data_array(
     r: np.ndarray,
