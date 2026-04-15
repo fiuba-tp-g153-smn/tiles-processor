@@ -58,7 +58,18 @@ mypy_path = "src"
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["rasterio.*", "pyart.*", "apscheduler.*"]
+module = [
+    "rasterio.*",
+    "pyart.*",
+    "apscheduler.*",
+    "pika",
+    "pika.*",
+    "ecmwf",
+    "ecmwf.*",
+    "pandas",
+    "pytz",
+    "requests",
+]
 ignore_missing_imports = true
 
 [build-system]
