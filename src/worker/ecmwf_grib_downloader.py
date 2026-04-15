@@ -121,6 +121,7 @@ class EcmwfGribDownloader(InlineProcessor):
         self, local_path: str, grib_s3_key: str, forecast_ts: str
     ) -> None:
         """Upload GRIB to S3 unless it already exists (idempotency)."""
+        assert self._s3_client is not None
         existing = await self._s3_client.list_files(
             f"{self._product_config.grib_prefix}/", f"{forecast_ts}.grib"
         )
@@ -136,6 +137,7 @@ class EcmwfGribDownloader(InlineProcessor):
 
     async def _list_existing_cog_keys(self, forecast_ts: str) -> set[str]:
         """Return the set of COG keys already generated for this forecast."""
+        assert self._s3_client is not None
         try:
             keys = await self._s3_client.list_files(
                 f"{self._product_config.cog_prefix}/{forecast_ts}/", ".tif"

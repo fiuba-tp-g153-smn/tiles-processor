@@ -90,6 +90,7 @@ class WorkHandler:
                     work_unit.image_id,
                     work_unit.processor_id,
                 )
+                assert self._mq_client is not None
                 await self._inline_processors[work_unit.processor_id].process(
                     str(local_path), work_unit, self._mq_client
                 )

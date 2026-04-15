@@ -544,7 +544,8 @@ class S3Client:
             for i in range(0, len(objects_to_delete), 1000):
                 batch = objects_to_delete[i : i + 1000]
                 await s3_client.delete_objects(
-                    Bucket=self._bucket_name, Delete={"Objects": batch}
+                    Bucket=self._bucket_name,
+                    Delete={"Objects": batch},  # type: ignore[typeddict-item]
                 )
                 deleted_count += len(batch)
 
@@ -632,7 +633,8 @@ class S3Client:
                 }
 
                 await s3_client.put_bucket_lifecycle_configuration(
-                    Bucket=self._bucket_name, LifecycleConfiguration=lifecycle_config
+                    Bucket=self._bucket_name,
+                    LifecycleConfiguration=lifecycle_config,  # type: ignore[arg-type]
                 )
 
                 logger.info(

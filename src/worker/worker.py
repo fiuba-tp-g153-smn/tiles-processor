@@ -19,6 +19,7 @@ from factories import (
     create_s3_client,
 )
 from worker.ecmwf_grib_downloader import EcmwfGribDownloader
+from worker.inline_processor import InlineProcessor
 from models.ecmwf_config import ECMWF_TP_CONFIG
 from models.work_unit import WorkUnit
 from worker.work_handler import WorkHandler
@@ -232,7 +233,7 @@ def run_worker(config: Config) -> None:
     progress_tracker = ProgressTracker(tracker_path)
 
     # Build inline processors (run in main process, need MQ access)
-    inline_processors = {}
+    inline_processors: dict[str, InlineProcessor] = {}
     if config.ENABLE_ECMWF_PRECIPITATION:
         ecmwf_s3 = create_s3_client(config, with_ttl=False)
         inline_processors["ecmwf_grib_download"] = EcmwfGribDownloader(
