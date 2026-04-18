@@ -1,7 +1,7 @@
 ################################
 # Stage 1: Builder
 ################################
-FROM ghcr.io/osgeo/gdal:ubuntu-small-latest-amd64 AS builder
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.3-amd64 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -28,7 +28,7 @@ RUN (poetry check --lock || poetry lock) && poetry install --without dev --no-ro
 ################################
 # Stage 2: Runtime
 ################################
-FROM ghcr.io/osgeo/gdal:ubuntu-small-latest-amd64 AS runner
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.3-amd64 AS runner
 
 RUN apt-get update && apt-get install -y libeccodes0 && rm -rf /var/lib/apt/lists/*
 
