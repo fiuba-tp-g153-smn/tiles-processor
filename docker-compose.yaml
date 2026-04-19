@@ -38,9 +38,9 @@ services:
 
   # S3-compatible object storage
   seaweedfs:
-    image: chrislusf/seaweedfs:4.17
+    image: chrislusf/seaweedfs:4.20
     container_name: tiles-processor-seaweedfs
-    stop_grace_period: 30s
+    stop_grace_period: 60s
     entrypoint: /bin/sh
     command: -c "sh /start.sh"
     ports:
@@ -64,6 +64,7 @@ services:
       - PROMETHEUS_PUSHGATEWAY_HTTP_PROTO=${PROMETHEUS_PUSHGATEWAY_HTTP_PROTO}
       - PROMETHEUS_PUSHGATEWAY_USER=${PROMETHEUS_PUSHGATEWAY_USER}
       - PROMETHEUS_PUSHGATEWAY_PASS=${PROMETHEUS_PUSHGATEWAY_PASS}
+      - S3_BASEMAP_BUCKET_NAME=${S3_BASEMAP_BUCKET_NAME}
     volumes:
       - s3_data:/data
       - seaweedfs_filerldb2:/data/filerldb2
