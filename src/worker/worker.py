@@ -169,7 +169,11 @@ class Worker:  # pylint: disable=too-few-public-methods
             logger.warning(
                 "Transient download error, requeuing %s: %s", work_unit.image_id, e
             )
-            self._handler.release_progress(work_unit)
+            # Keep image_id marked in-progress so the producer's next cron tick
+            # does not re-discover the GRIB and enqueue a duplicate WorkUnit
+            # (which races with the requeued copy on the same work_dir).
+            # If all workers crash before the requeued copy is processed,
+            # ProgressTracker's TTL (JOB_TTL_MINUTES) eventually releases it.
             client.publish(work_unit)
             return True  # Acknowledge original; copy is back in the queue
 
