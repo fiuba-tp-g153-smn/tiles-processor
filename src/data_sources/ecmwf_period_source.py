@@ -13,14 +13,16 @@ logger = logging.getLogger(__name__)
 
 class EcmwfPeriodDataSource(DataSource):
     """
-    Data source for ECMWF period processing.
+    Data source for ECMWF centered-window processing.
 
-    EcmwfGribDownloader enqueues one WorkUnit per 3h period; this data source
-    handles the download step: it reads the grib_path from source_uri (JSON)
-    and downloads the cached GRIB from S3 to a local temp file.
+    EcmwfGribDownloader enqueues one WorkUnit per centered 6h accumulation
+    window; this data source handles the download step: it reads the grib_path
+    from source_uri (JSON) and downloads the cached GRIB from S3 to a local
+    temp file.
 
-    discover_images() always returns [] because periods are never discovered by
-    the producer — they are enqueued dynamically by EcmwfGribDownloader.
+    discover_images() always returns [] because centered windows are never
+    discovered by the producer — they are enqueued dynamically by
+    EcmwfGribDownloader.
     """
 
     def __init__(

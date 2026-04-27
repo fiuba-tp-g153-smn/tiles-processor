@@ -1,4 +1,4 @@
-"""ECMWF period processor: full subprocess pipeline for a single 3h period."""
+"""ECMWF period processor: full subprocess pipeline for a single centered 6h accumulation window."""
 
 import asyncio
 import gc
@@ -15,6 +15,7 @@ from config import Config
 from factories import create_s3_client
 from models.ecmwf_config import (
     ECMWF_TP_CONFIG,
+    PERIOD_HOURS,
     PRECIPITATION_COLORS,
     PRECIPITATION_THRESHOLDS,
 )
@@ -36,10 +37,10 @@ _GDAL_PROCESSES = 2
 
 class EcmwfPeriodProcessor(ImageProcessor):
     """
-    Subprocess processor for a single ECMWF 3h precipitation period.
+    Subprocess processor for a single ECMWF centered 6h precipitation window.
 
     Reads the cached GRIB, computes the precipitation differential for the
-    requested period, generates a COG (raw mm values) and colorized tiles,
+    centered window, generates a COG (raw mm values) and colorized tiles,
     then uploads both to S3/SeaweedFS.
     """
 
@@ -48,18 +49,20 @@ class EcmwfPeriodProcessor(ImageProcessor):
         self._s3_client = create_s3_client(config)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
-        """Execute the full period processing pipeline."""
+        """Execute the full processing pipeline for a centered 6h window."""
         meta = json.loads(work_unit.source_uri)
         forecast_time = datetime.fromisoformat(meta["forecast_time"])
-        hour_start: int = meta["hour_start"]
-        hour_end: int = meta["hour_end"]
+        hour_center: int = meta["hour_center"]
+        hour_start = hour_center - PERIOD_HOURS
+        hour_end = hour_center + PERIOD_HOURS
         forecast_ts = _fmt_ts(forecast_time)
 
         logger.info(
-            "[ECMWF] Processing period %s (hours %d-%d)",
+            "[ECMWF] Processing centered window %s (hours %d-%d, center %d)",
             work_unit.image_id,
             hour_start,
             hour_end,
+            hour_center,
         )
 
         grib_path = Path(downloaded_file_path)
@@ -121,8 +124,8 @@ class EcmwfPeriodProcessor(ImageProcessor):
             hour_end,
         )
         if hour_start == 0:
-            # step=0 not present; tp at step=3h is already the accumulation since t=0
-            precip_diff = tp_var.sel(step=pd.Timedelta(hours=3)) * 1000.0
+            # step=0 not present; tp is accumulated from t=0, so tp(hour_end) IS the window total
+            precip_diff = tp_var.sel(step=pd.Timedelta(hours=hour_end)) * 1000.0
         else:
             tp_s = tp_var.sel(step=pd.Timedelta(hours=hour_start))
             tp_e = tp_var.sel(step=pd.Timedelta(hours=hour_end))

@@ -1,4 +1,4 @@
-"""ECMWF GRIB downloader: inline processor that uploads the GRIB and enqueues period jobs."""
+"""ECMWF GRIB downloader: inline processor that uploads the GRIB and enqueues centered-window jobs."""
 
 import json
 import logging
@@ -18,21 +18,17 @@ from worker.inline_processor import InlineProcessor
 
 logger = logging.getLogger(__name__)
 
-_FORECAST_STEPS = list(
-    range(PERIOD_HOURS, FORECAST_HOURS + 1, PERIOD_HOURS)
-)  # [3,6,...,144]
-
 
 class EcmwfGribDownloader(InlineProcessor):
     """
     Inline processor that uploads the downloaded GRIB to S3 and enqueues
-    one WorkUnit per missing 3h period.
+    one WorkUnit per missing centered 6h accumulation window.
 
     Runs in the main worker process (no subprocess) because it needs access
     to the RabbitMQ client and does not use heavy scientific libraries.
 
     Idempotent: if the GRIB is already in S3 (retry scenario), the upload is
-    skipped and only missing periods are enqueued.
+    skipped and only missing centers are enqueued.
     """
 
     def __init__(
@@ -52,14 +48,14 @@ class EcmwfGribDownloader(InlineProcessor):
         mq_client: MessageQueueClient,
     ) -> None:
         """
-        Upload GRIB to S3 and enqueue period WorkUnits for missing periods.
+        Upload GRIB to S3 and enqueue centered-window WorkUnits for missing centers.
 
         Args:
             file_path: Local path to the downloaded .grib file.
             work_unit: WorkUnit for this GRIB download job.
                        work_unit.image_id == forecast timestamp (e.g. "20260217T0000Z").
                        work_unit.source_uri == forecast ISO datetime string.
-            mq_client: RabbitMQ client for publishing period work units.
+            mq_client: RabbitMQ client for publishing centered-window work units.
         """
         if self._s3_client is None:
             raise RuntimeError("EcmwfGribDownloader requires an S3 client")
@@ -71,31 +67,26 @@ class EcmwfGribDownloader(InlineProcessor):
         # Step 1: Upload GRIB (idempotent)
         await self._upload_grib_if_missing(file_path, grib_s3_key, forecast_ts)
 
-        # Step 2: Find missing periods and enqueue
+        # Step 2: Find missing centers and enqueue
         existing_cog_keys = await self._list_existing_cog_keys(forecast_ts)
         enqueued = 0
-        for hour_start, hour_end in _period_steps():
-            period_start = forecast_time + timedelta(hours=hour_start)
-            period_end = forecast_time + timedelta(hours=hour_end)
-            period_start_ts = _fmt_ts(period_start)
-            period_end_ts = _fmt_ts(period_end)
-            period_ts = f"{period_start_ts}-{period_end_ts}"
+        for hour_center in _center_hours():
+            center_time = forecast_time + timedelta(hours=hour_center)
+            center_ts = _fmt_ts(center_time)
 
-            cog_key = f"{self._product_config.cog_prefix}/{forecast_ts}/{period_ts}.tif"
+            cog_key = f"{self._product_config.cog_prefix}/{forecast_ts}/{center_ts}.tif"
             if cog_key in existing_cog_keys:
-                logger.debug("[ECMWF] Period already processed: %s", period_ts)
+                logger.debug("[ECMWF] Center already processed: %s", center_ts)
                 continue
 
-            period_unit = WorkUnit.create(
-                image_id=period_ts,
+            center_unit = WorkUnit.create(
+                image_id=center_ts,
                 source_uri=json.dumps(
                     {
                         "grib_path": grib_s3_key,
                         "forecast_time": forecast_time.isoformat(),
-                        "period_start": period_start.isoformat(),
-                        "period_end": period_end.isoformat(),
-                        "hour_start": hour_start,
-                        "hour_end": hour_end,
+                        "center_time": center_time.isoformat(),
+                        "hour_center": hour_center,
                     }
                 ),
                 data_source_id="ecmwf_tp_period",
@@ -104,11 +95,11 @@ class EcmwfGribDownloader(InlineProcessor):
                 bounds=self._bounds,
                 band_id="ecmwf_tp",
             )
-            mq_client.publish(period_unit)
+            mq_client.publish(center_unit)
             enqueued += 1
 
         logger.info(
-            "[ECMWF] Enqueued %d period work units for forecast %s",
+            "[ECMWF] Enqueued %d centered work units for forecast %s",
             enqueued,
             forecast_ts,
         )
@@ -148,9 +139,9 @@ class EcmwfGribDownloader(InlineProcessor):
             return set()
 
 
-def _period_steps() -> list[tuple[int, int]]:
-    """Return (hour_start, hour_end) pairs for all 48 periods."""
-    return [(h - PERIOD_HOURS, h) for h in _FORECAST_STEPS]
+def _center_hours() -> list[int]:
+    """Return centered timestamps T+3, T+6, ..., T+141 (47 values; T+144 dropped)."""
+    return list(range(PERIOD_HOURS, FORECAST_HOURS, PERIOD_HOURS))
 
 
 def _fmt_ts(dt: datetime) -> str:

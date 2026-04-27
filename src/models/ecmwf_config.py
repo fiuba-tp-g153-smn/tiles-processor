@@ -31,5 +31,6 @@ ECMWF_TP_CONFIG = EcmwfProductConfig(
 # Forecast scheduling constants
 MAX_LOOKBACK_HOURS: int = 48  # Hours to look back when searching for forecasts
 FORECAST_HOURS: int = 144  # Total length of each forecast (6 days)
-PERIOD_HOURS: int = 3  # Duration of each processing period
+PERIOD_HOURS: int = 3  # Cadence between centered timestamps and half-window offset
+ACCUMULATION_HOURS: int = 6  # Centered accumulation window (= 2 × PERIOD_HOURS)
 FORECASTS_TO_MAINTAIN: int = 3  # Number of recent forecasts to keep active
