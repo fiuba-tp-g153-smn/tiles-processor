@@ -65,6 +65,15 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.ENABLE_ECMWF_PRECIPITATION: bool = settings["features"].get(
             "enable_ecmwf_precipitation", False
         )
+        self.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE: bool = settings["features"].get(
+            "enable_ecmwf_mean_sea_level_pressure", False
+        )
+        self.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE: float = float(
+            settings.get("ecmwf_mslp_isobar_simplify_tolerance", 0.1)
+        )
+        self.ECMWF_MSLP_SMOOTHING_SIGMA: float = float(
+            settings.get("ecmwf_mslp_smoothing_sigma", 1.5)
+        )
         _radar_product_ids = ["DBZH", "ZDR", "RHOHV", "KDP", "VRAD"]
         self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
             pid: settings["features"].get(f"enable_radar_{pid}", False)
@@ -141,6 +150,16 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("ENABLE_GLM_FED: %s", self.ENABLE_GLM_FED)
         logger.info("ENABLE_GLM_TOE: %s", self.ENABLE_GLM_TOE)
         logger.info("ENABLE_GLM_MFA: %s", self.ENABLE_GLM_MFA)
+        logger.info("ENABLE_ECMWF_PRECIPITATION: %s", self.ENABLE_ECMWF_PRECIPITATION)
+        logger.info(
+            "ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE: %s",
+            self.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE,
+        )
+        logger.info(
+            "ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE: %s",
+            self.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE,
+        )
+        logger.info("ECMWF_MSLP_SMOOTHING_SIGMA: %s", self.ECMWF_MSLP_SMOOTHING_SIGMA)
         for pid, enabled in self.ENABLED_RADAR_PRODUCTS.items():
             logger.info("ENABLE_RADAR_%s: %s", pid, enabled)
         logger.info("RADAR_INPUT_DIR: %s", self.RADAR_INPUT_DIR)

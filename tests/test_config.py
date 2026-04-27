@@ -134,3 +134,33 @@ class TestConfig:
                 "maxx": -30.0,
                 "maxy": -15.0,
             }
+
+    def test_ecmwf_mslp_settings_default_when_absent(
+        self, temp_settings_file, env_vars
+    ):
+        """MSLP toggles use safe defaults when not present in settings.json."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            assert config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE is False
+            assert config.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE == 0.1
+            assert config.ECMWF_MSLP_SMOOTHING_SIGMA == 1.5
+
+    def test_ecmwf_mslp_settings_loaded_from_file(self, tmp_path, env_vars):
+        """All three MSLP settings are read from settings.json when present."""
+        settings = {
+            "timezone": "UTC",
+            "ecmwf_mslp_isobar_simplify_tolerance": 0.5,
+            "ecmwf_mslp_smoothing_sigma": 2.5,
+            "features": {
+                "enable_ecmwf_mean_sea_level_pressure": True,
+            },
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+        }
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(json.dumps(settings))
+
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=settings_path)
+            assert config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE is True
+            assert config.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE == 0.5
+            assert config.ECMWF_MSLP_SMOOTHING_SIGMA == 2.5

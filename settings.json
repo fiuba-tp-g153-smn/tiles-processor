@@ -2,6 +2,8 @@
   "timezone": "America/Argentina/Buenos_Aires",
   "tile_retention_days": 30,
   "radar_input_dir": "/app/data/radar_h5",
+  "ecmwf_mslp_isobar_simplify_tolerance": 0.1,
+  "ecmwf_mslp_smoothing_sigma": 1.5,
   "features": {
     "enable_band_13": true,
     "enable_band_9": true,
@@ -14,7 +16,8 @@
     "enable_radar_RHOHV": true,
     "enable_radar_KDP": true,
     "enable_radar_VRAD": true,
-    "enable_ecmwf_precipitation": true
+    "enable_ecmwf_precipitation": true,
+    "enable_ecmwf_mean_sea_level_pressure": true
   },
   "bounds": {
     "minx": -110.0,
