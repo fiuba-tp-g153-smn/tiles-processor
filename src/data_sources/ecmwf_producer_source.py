@@ -14,7 +14,7 @@ from models.ecmwf_config import (
     ECMWF_TP_CONFIG,
     FORECASTS_TO_MAINTAIN,
     MAX_LOOKBACK_HOURS,
-    PERIOD_HOURS,
+    STEP_HOURS,
     EcmwfProductConfig,
 )
 
@@ -30,7 +30,7 @@ class TransientDownloadError(Exception):
 
 
 _FORECAST_BASE_HOURS = (0, 12)  # UTC hours at which ECMWF issues forecasts
-_STEPS = list(range(PERIOD_HOURS, 145, PERIOD_HOURS))  # [3, 6, ..., 144]
+_STEPS = list(range(STEP_HOURS, 145, STEP_HOURS))  # [3, 6, ..., 144]
 
 
 class EcmwfProducerDataSource(DataSource):
@@ -54,11 +54,11 @@ class EcmwfProducerDataSource(DataSource):
 
     @property
     def source_id(self) -> str:
-        return "ecmwf_tp_producer"
+        return self._product_config.producer_data_source_id
 
     @property
     def processor_id(self) -> str:
-        return "ecmwf_grib_download"
+        return self._product_config.inline_processor_id
 
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
         """
@@ -67,14 +67,16 @@ class EcmwfProducerDataSource(DataSource):
         existing_tilesets from DiscoveryConfig is intentionally ignored;
         GRIB existence is checked directly via S3.
         """
+        prefix = f"[{self._product_config.log_prefix}]"
         candidate_times = self._get_candidate_forecast_times(config.current_time)
         logger.info(
-            "[ECMWF] Candidate forecast times: %s",
+            "%s Candidate forecast times: %s",
+            prefix,
             [t.strftime("%Y%m%dT%H%MZ") for t in candidate_times],
         )
 
         existing_grib_keys = await self._list_existing_grib_keys()
-        logger.info("[ECMWF] Existing GRIBs in S3: %d", len(existing_grib_keys))
+        logger.info("%s Existing GRIBs in S3: %d", prefix, len(existing_grib_keys))
 
         new_images = []
         for forecast_time in candidate_times:
@@ -82,12 +84,12 @@ class EcmwfProducerDataSource(DataSource):
             grib_key = f"{self._product_config.grib_prefix}/{forecast_ts}.grib"
 
             if grib_key in existing_grib_keys:
-                logger.debug("[ECMWF] GRIB already cached: %s", grib_key)
+                logger.debug("%s GRIB already cached: %s", prefix, grib_key)
                 continue
 
             if forecast_ts in config.in_progress_images:
                 logger.debug(
-                    "[ECMWF] GRIB download already in progress: %s", forecast_ts
+                    "%s GRIB download already in progress: %s", prefix, forecast_ts
                 )
                 continue
 
@@ -100,7 +102,7 @@ class EcmwfProducerDataSource(DataSource):
                     output_prefix=self._product_config.grib_prefix,
                 )
             )
-            logger.info("[ECMWF] Will download missing GRIB: %s", forecast_ts)
+            logger.info("%s Will download missing GRIB: %s", prefix, forecast_ts)
 
         return new_images
 
@@ -115,12 +117,14 @@ class EcmwfProducerDataSource(DataSource):
         Returns:
             Path to the downloaded .grib file.
         """
+        prefix = f"[{self._product_config.log_prefix}]"
         forecast_time = datetime.fromisoformat(source_uri)
         target = dest_path.with_suffix(".grib")
         target.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(
-            "[ECMWF] Downloading GRIB for %s to %s",
+            "%s Downloading GRIB for %s to %s",
+            prefix,
             forecast_time.strftime("%Y-%m-%d %H:%M UTC"),
             target,
         )
@@ -157,7 +161,10 @@ class EcmwfProducerDataSource(DataSource):
             raise
 
         logger.info(
-            "[ECMWF] GRIB downloaded: %s (%.1f MB)", target, target.stat().st_size / 1e6
+            "%s GRIB downloaded: %s (%.1f MB)",
+            prefix,
+            target,
+            target.stat().st_size / 1e6,
         )
         return target
 
@@ -189,7 +196,11 @@ class EcmwfProducerDataSource(DataSource):
             )
             return set(keys)
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning("[ECMWF] Could not list existing GRIBs: %s", exc)
+            logger.warning(
+                "[%s] Could not list existing GRIBs: %s",
+                self._product_config.log_prefix,
+                exc,
+            )
             return set()
 
 

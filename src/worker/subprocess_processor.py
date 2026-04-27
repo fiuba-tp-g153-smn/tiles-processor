@@ -42,8 +42,10 @@ def create_processor_registry():
         Band2Processor,
         GlmFedProcessor,
         RadarProcessor,
-        EcmwfPeriodProcessor,
+        EcmwfTotalPrecipitationProcessor,
+        EcmwfMslpProcessor,
     )
+    from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
 
     registry = ProcessorRegistry()
 
@@ -60,8 +62,9 @@ def create_processor_registry():
     # Register Radar processor
     registry.register("radar", RadarProcessor)
 
-    # Register ECMWF period processor (subprocess for scientific processing)
-    registry.register("ecmwf_period_processor", EcmwfPeriodProcessor)
+    # Register ECMWF processors (subprocess for scientific processing)
+    registry.register(ECMWF_TP_CONFIG.processor_id, EcmwfTotalPrecipitationProcessor)
+    registry.register(ECMWF_MSLP_CONFIG.processor_id, EcmwfMslpProcessor)
 
     return registry
 

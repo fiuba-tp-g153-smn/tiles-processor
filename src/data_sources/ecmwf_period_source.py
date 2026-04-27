@@ -35,11 +35,11 @@ class EcmwfPeriodDataSource(DataSource):
 
     @property
     def source_id(self) -> str:
-        return "ecmwf_tp_period"
+        return self._product_config.period_data_source_id
 
     @property
     def processor_id(self) -> str:
-        return "ecmwf_period_processor"
+        return self._product_config.processor_id
 
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
         """Always returns [] — periods are enqueued by EcmwfGribDownloader, not the producer."""
@@ -65,7 +65,8 @@ class EcmwfPeriodDataSource(DataSource):
         target = dest_path.with_suffix(".grib")
         target.parent.mkdir(parents=True, exist_ok=True)
 
-        logger.info("[ECMWF] Downloading GRIB from S3: %s → %s", grib_s3_key, target)
+        prefix = f"[{self._product_config.log_prefix}]"
+        logger.info("%s Downloading GRIB from S3: %s → %s", prefix, grib_s3_key, target)
         await self._s3_client.download_to_file(grib_s3_key, target)
-        logger.info("[ECMWF] GRIB downloaded (%.1f MB)", target.stat().st_size / 1e6)
+        logger.info("%s GRIB downloaded (%.1f MB)", prefix, target.stat().st_size / 1e6)
         return target

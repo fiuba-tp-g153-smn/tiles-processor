@@ -10,7 +10,7 @@ from clients.s3_client import S3Client
 from models.ecmwf_config import (
     ECMWF_TP_CONFIG,
     FORECAST_HOURS,
-    PERIOD_HOURS,
+    STEP_HOURS,
     EcmwfProductConfig,
 )
 from models.work_unit import WorkUnit
@@ -60,6 +60,7 @@ class EcmwfGribDownloader(InlineProcessor):
         if self._s3_client is None:
             raise RuntimeError("EcmwfGribDownloader requires an S3 client")
 
+        prefix = f"[{self._product_config.log_prefix}]"
         forecast_ts = work_unit.image_id
         forecast_time = datetime.fromisoformat(work_unit.source_uri)
         grib_s3_key = f"{self._product_config.grib_prefix}/{forecast_ts}.grib"
@@ -76,7 +77,7 @@ class EcmwfGribDownloader(InlineProcessor):
 
             cog_key = f"{self._product_config.cog_prefix}/{forecast_ts}/{center_ts}.tif"
             if cog_key in existing_cog_keys:
-                logger.debug("[ECMWF] Center already processed: %s", center_ts)
+                logger.debug("%s Center already processed: %s", prefix, center_ts)
                 continue
 
             center_unit = WorkUnit.create(
@@ -89,17 +90,18 @@ class EcmwfGribDownloader(InlineProcessor):
                         "hour_center": hour_center,
                     }
                 ),
-                data_source_id="ecmwf_tp_period",
-                processor_id="ecmwf_period_processor",
+                data_source_id=self._product_config.period_data_source_id,
+                processor_id=self._product_config.processor_id,
                 output_prefix=f"{self._product_config.tiles_prefix}/{forecast_ts}",
                 bounds=self._bounds,
-                band_id="ecmwf_tp",
+                band_id=self._product_config.band_id,
             )
             mq_client.publish(center_unit)
             enqueued += 1
 
         logger.info(
-            "[ECMWF] Enqueued %d centered work units for forecast %s",
+            "%s Enqueued %d centered work units for forecast %s",
+            prefix,
             enqueued,
             forecast_ts,
         )
@@ -113,18 +115,21 @@ class EcmwfGribDownloader(InlineProcessor):
     ) -> None:
         """Upload GRIB to S3 unless it already exists (idempotency)."""
         assert self._s3_client is not None
+        prefix = f"[{self._product_config.log_prefix}]"
         existing = await self._s3_client.list_files(
             f"{self._product_config.grib_prefix}/", f"{forecast_ts}.grib"
         )
         if existing:
-            logger.info("[ECMWF] GRIB already in S3, skipping upload: %s", grib_s3_key)
+            logger.info(
+                "%s GRIB already in S3, skipping upload: %s", prefix, grib_s3_key
+            )
             return
 
-        logger.info("[ECMWF] Uploading GRIB to S3: %s", grib_s3_key)
+        logger.info("%s Uploading GRIB to S3: %s", prefix, grib_s3_key)
         uploaded = await self._s3_client.upload_file(grib_s3_key, Path(local_path))
         if not uploaded:
             raise RuntimeError(f"Failed to upload GRIB to S3: {grib_s3_key}")
-        logger.info("[ECMWF] GRIB uploaded: %s", grib_s3_key)
+        logger.info("%s GRIB uploaded: %s", prefix, grib_s3_key)
 
     async def _list_existing_cog_keys(self, forecast_ts: str) -> set[str]:
         """Return the set of COG keys already generated for this forecast."""
@@ -135,13 +140,17 @@ class EcmwfGribDownloader(InlineProcessor):
             )
             return set(keys)
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning("[ECMWF] Could not list existing COGs: %s", exc)
+            logger.warning(
+                "[%s] Could not list existing COGs: %s",
+                self._product_config.log_prefix,
+                exc,
+            )
             return set()
 
 
 def _center_hours() -> list[int]:
     """Return centered timestamps T+3, T+6, ..., T+141 (47 values; T+144 dropped)."""
-    return list(range(PERIOD_HOURS, FORECAST_HOURS, PERIOD_HOURS))
+    return list(range(STEP_HOURS, FORECAST_HOURS, STEP_HOURS))
 
 
 def _fmt_ts(dt: datetime) -> str:

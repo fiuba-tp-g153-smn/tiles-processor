@@ -6,7 +6,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 import pytest
 from config import Config
-from factories import create_s3_client
+from factories import create_data_source_registry, create_s3_client
+from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
 
 
 @pytest.fixture
@@ -58,3 +59,50 @@ class TestCreateS3Client:
                 create_s3_client(config_with_filer, with_ttl=None)
                 _, kwargs = mock_uploader_cls.call_args
                 assert kwargs["ttl"] is None
+
+
+class TestCreateDataSourceRegistry:
+    def _build_config(self, *, tp: bool, mslp: bool) -> MagicMock:
+        config = MagicMock(spec=Config)
+        config.ENABLE_BAND_13 = False
+        config.ENABLE_BAND_9 = False
+        config.ENABLE_BAND_2 = False
+        config.ENABLE_GLM_FED = False
+        config.ENABLE_GLM_TOE = False
+        config.ENABLE_GLM_MFA = False
+        config.ENABLED_RADAR_PRODUCTS = {}
+        config.ENABLE_ECMWF_PRECIPITATION = tp
+        config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE = mslp
+        config.RADAR_INPUT_DIR = "/tmp/radar"
+        return config
+
+    def test_mslp_data_sources_registered_when_enabled(self):
+        config = self._build_config(tp=False, mslp=True)
+        with patch("factories.create_s3_client", return_value=MagicMock()):
+            registry = create_data_source_registry(config)
+
+        ids = {ds.source_id for ds in registry.get_all()}
+        assert ECMWF_MSLP_CONFIG.producer_data_source_id in ids
+        assert ECMWF_MSLP_CONFIG.period_data_source_id in ids
+
+    def test_mslp_data_sources_skipped_when_disabled(self):
+        config = self._build_config(tp=False, mslp=False)
+        with patch("factories.create_s3_client", return_value=MagicMock()):
+            registry = create_data_source_registry(config)
+
+        ids = {ds.source_id for ds in registry.get_all()}
+        assert ECMWF_MSLP_CONFIG.producer_data_source_id not in ids
+        assert ECMWF_MSLP_CONFIG.period_data_source_id not in ids
+
+    def test_tp_and_mslp_coexist_with_distinct_ids(self):
+        config = self._build_config(tp=True, mslp=True)
+        with patch("factories.create_s3_client", return_value=MagicMock()):
+            registry = create_data_source_registry(config)
+
+        ids = {ds.source_id for ds in registry.get_all()}
+        assert {
+            ECMWF_TP_CONFIG.producer_data_source_id,
+            ECMWF_TP_CONFIG.period_data_source_id,
+            ECMWF_MSLP_CONFIG.producer_data_source_id,
+            ECMWF_MSLP_CONFIG.period_data_source_id,
+        }.issubset(ids)

@@ -1,4 +1,4 @@
-"""ECMWF period processor: full subprocess pipeline for a single centered 6h accumulation window."""
+"""ECMWF total precipitation processor: full subprocess pipeline for a single centered 6h accumulation window."""
 
 import asyncio
 import gc
@@ -13,12 +13,8 @@ import xarray as xr
 
 from config import Config
 from factories import create_s3_client
-from models.ecmwf_config import (
-    ECMWF_TP_CONFIG,
-    PERIOD_HOURS,
-    PRECIPITATION_COLORS,
-    PRECIPITATION_THRESHOLDS,
-)
+from models.ecmwf_config import ECMWF_TP_CONFIG, STEP_HOURS
+from models.ecmwf_tp_palettes import PRECIPITATION_COLORS, PRECIPITATION_THRESHOLDS
 from models.work_unit import WorkUnit
 from processors.base_processor import ImageProcessor
 from services.processing_steps import (
@@ -33,9 +29,10 @@ logger = logging.getLogger(__name__)
 
 _ZOOM_LEVELS = "3-7"
 _GDAL_PROCESSES = 2
+_ACCUMULATION_HALF_WINDOW_HOURS = STEP_HOURS  # Centered 6h window: ±3h around center
 
 
-class EcmwfPeriodProcessor(ImageProcessor):
+class EcmwfTotalPrecipitationProcessor(ImageProcessor):
     """
     Subprocess processor for a single ECMWF centered 6h precipitation window.
 
@@ -53,12 +50,12 @@ class EcmwfPeriodProcessor(ImageProcessor):
         meta = json.loads(work_unit.source_uri)
         forecast_time = datetime.fromisoformat(meta["forecast_time"])
         hour_center: int = meta["hour_center"]
-        hour_start = hour_center - PERIOD_HOURS
-        hour_end = hour_center + PERIOD_HOURS
+        hour_start = hour_center - _ACCUMULATION_HALF_WINDOW_HOURS
+        hour_end = hour_center + _ACCUMULATION_HALF_WINDOW_HOURS
         forecast_ts = _fmt_ts(forecast_time)
 
         logger.info(
-            "[ECMWF] Processing centered window %s (hours %d-%d, center %d)",
+            "[ECMWF-TP] Processing centered window %s (hours %d-%d, center %d)",
             work_unit.image_id,
             hour_start,
             hour_end,
@@ -110,7 +107,7 @@ class EcmwfPeriodProcessor(ImageProcessor):
         """Read GRIB, compute differential, reproject and clip."""
         import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
 
-        logger.info("[ECMWF] Step 1: Reading GRIB %s", grib_path.name)
+        logger.info("[ECMWF-TP] Step 1: Reading GRIB %s", grib_path.name)
         ds = xr.open_dataset(
             grib_path,
             engine="cfgrib",
@@ -119,7 +116,7 @@ class EcmwfPeriodProcessor(ImageProcessor):
         tp_var = ds["tp"]
 
         logger.info(
-            "[ECMWF] Step 2: Computing precipitation differential (hours %d-%d)",
+            "[ECMWF-TP] Step 2: Computing precipitation differential (hours %d-%d)",
             hour_start,
             hour_end,
         )
@@ -150,7 +147,7 @@ class EcmwfPeriodProcessor(ImageProcessor):
         precip_diff.rio.write_crs("EPSG:4326", inplace=True)
         precip_diff.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
 
-        logger.info("[ECMWF] Step 3: Reprojecting and clipping")
+        logger.info("[ECMWF-TP] Step 3: Reprojecting and clipping")
         reproj = precip_diff.rio.reproject("EPSG:4326", resolution=None)
         reproj.rio.write_nodata(float("nan"), inplace=True)
         del precip_diff
@@ -170,10 +167,10 @@ class EcmwfPeriodProcessor(ImageProcessor):
         self, clipped: xr.DataArray, geotiff_dir: Path, image_id: str
     ) -> tuple[Path, Path]:
         """Generate COG and colorized GeoTIFF from the already-reprojected data."""
-        logger.info("[ECMWF] Step 4: Generating COG")
+        logger.info("[ECMWF-TP] Step 4: Generating COG")
         cog_path = save_as_cog(clipped, geotiff_dir, image_id)
 
-        logger.info("[ECMWF] Step 5: Generating colorized GeoTIFF")
+        logger.info("[ECMWF-TP] Step 5: Generating colorized GeoTIFF")
         geotiff_path = self._colorize_and_save(clipped, geotiff_dir, image_id)
         return cog_path, geotiff_path
 
@@ -227,18 +224,18 @@ class EcmwfPeriodProcessor(ImageProcessor):
         )
 
         self._check_shutdown()
-        logger.info("[ECMWF] Step 6a: Uploading COG → %s", cog_key)
+        logger.info("[ECMWF-TP] Step 6a: Uploading COG → %s", cog_key)
         uploaded = await self._s3_client.upload_file(cog_key, cog_path)
         if not uploaded:
             logger.warning(
-                "[ECMWF] COG upload failed for %s; continuing", work_unit.image_id
+                "[ECMWF-TP] COG upload failed for %s; continuing", work_unit.image_id
             )
 
         self._check_shutdown()
-        logger.info("[ECMWF] Step 6b: Uploading tiles → %s", tiles_prefix)
+        logger.info("[ECMWF-TP] Step 6b: Uploading tiles → %s", tiles_prefix)
         await self._s3_client.upload_directory(tiles_output_dir, tiles_prefix)
 
-        logger.info("[ECMWF] Upload complete: %s", work_unit.image_id)
+        logger.info("[ECMWF-TP] Upload complete: %s", work_unit.image_id)
 
 
 def _fmt_ts(dt: datetime) -> str:

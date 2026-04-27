@@ -18,7 +18,7 @@ from data_sources import (
 )
 from data_sources.radar_repository import LocalRadarFileRepository
 from models.band_config import BAND_CONFIGS
-from models.ecmwf_config import ECMWF_TP_CONFIG
+from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
 from models.radar_config import RADAR_PRODUCT_CONFIGS
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,11 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         ecmwf_s3 = create_s3_client(config, with_ttl=False)
         registry.register(EcmwfProducerDataSource(ECMWF_TP_CONFIG, ecmwf_s3))
         registry.register(EcmwfPeriodDataSource(ECMWF_TP_CONFIG, ecmwf_s3))
+
+    if config is not None and config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE:
+        ecmwf_mslp_s3 = create_s3_client(config, with_ttl=False)
+        registry.register(EcmwfProducerDataSource(ECMWF_MSLP_CONFIG, ecmwf_mslp_s3))
+        registry.register(EcmwfPeriodDataSource(ECMWF_MSLP_CONFIG, ecmwf_mslp_s3))
 
     return registry
 

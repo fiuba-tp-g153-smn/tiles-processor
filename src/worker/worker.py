@@ -20,7 +20,7 @@ from factories import (
 )
 from worker.ecmwf_grib_downloader import EcmwfGribDownloader
 from worker.inline_processor import InlineProcessor
-from models.ecmwf_config import ECMWF_TP_CONFIG
+from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
 from models.work_unit import WorkUnit
 from worker.work_handler import WorkHandler
 from health_server import HealthCheckServer
@@ -239,10 +239,17 @@ def run_worker(config: Config) -> None:
     # Build inline processors (run in main process, need MQ access)
     inline_processors: dict[str, InlineProcessor] = {}
     if config.ENABLE_ECMWF_PRECIPITATION:
-        ecmwf_s3 = create_s3_client(config, with_ttl=False)
-        inline_processors["ecmwf_grib_download"] = EcmwfGribDownloader(
+        ecmwf_tp_s3 = create_s3_client(config, with_ttl=False)
+        inline_processors[ECMWF_TP_CONFIG.inline_processor_id] = EcmwfGribDownloader(
             product_config=ECMWF_TP_CONFIG,
-            s3_client=ecmwf_s3,
+            s3_client=ecmwf_tp_s3,
+            bounds=config.get_bounds(),
+        )
+    if config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE:
+        ecmwf_mslp_s3 = create_s3_client(config, with_ttl=False)
+        inline_processors[ECMWF_MSLP_CONFIG.inline_processor_id] = EcmwfGribDownloader(
+            product_config=ECMWF_MSLP_CONFIG,
+            s3_client=ecmwf_mslp_s3,
             bounds=config.get_bounds(),
         )
 
