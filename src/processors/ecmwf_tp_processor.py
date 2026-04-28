@@ -43,7 +43,7 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._s3_client = create_s3_client(config)
+        self._s3_client = create_s3_client(config, with_ttl=config.SEAWEEDFS_ECMWF_TTL)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute the full processing pipeline for a centered 6h window."""
