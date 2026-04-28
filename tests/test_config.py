@@ -122,6 +122,40 @@ class TestConfig:
             config = Config(settings_path=temp_settings_file)
             assert config.SEAWEEDFS_RADAR_TILE_TTL is None
 
+    def test_config_seaweedfs_ecmwf_ttl_from_env(self, temp_settings_file, env_vars):
+        """SEAWEEDFS_ECMWF_TTL is read from the environment variable."""
+        with mock.patch.dict(
+            os.environ, {**env_vars, "SEAWEEDFS_ECMWF_TTL": "48h"}, clear=True
+        ):
+            config = Config(settings_path=temp_settings_file)
+            assert config.SEAWEEDFS_ECMWF_TTL == "48h"
+
+    def test_config_seaweedfs_ecmwf_ttl_defaults_to_none(
+        self, temp_settings_file, env_vars
+    ):
+        """SEAWEEDFS_ECMWF_TTL is None when the env var is not set."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            assert config.SEAWEEDFS_ECMWF_TTL is None
+
+    def test_config_seaweedfs_ecmwf_grib_ttl_from_env(
+        self, temp_settings_file, env_vars
+    ):
+        """SEAWEEDFS_ECMWF_GRIB_TTL is read from the environment variable."""
+        with mock.patch.dict(
+            os.environ, {**env_vars, "SEAWEEDFS_ECMWF_GRIB_TTL": "72h"}, clear=True
+        ):
+            config = Config(settings_path=temp_settings_file)
+            assert config.SEAWEEDFS_ECMWF_GRIB_TTL == "72h"
+
+    def test_config_seaweedfs_ecmwf_grib_ttl_defaults_to_none(
+        self, temp_settings_file, env_vars
+    ):
+        """SEAWEEDFS_ECMWF_GRIB_TTL is None when the env var is not set."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            assert config.SEAWEEDFS_ECMWF_GRIB_TTL is None
+
     def test_get_bounds_returns_dict(self, temp_settings_file, env_vars):
         """Test that get_bounds returns correct dictionary."""
         with mock.patch.dict(os.environ, env_vars, clear=True):

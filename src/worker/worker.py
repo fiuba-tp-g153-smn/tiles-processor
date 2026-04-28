@@ -236,17 +236,22 @@ def run_worker(config: Config) -> None:
     tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"
     progress_tracker = ProgressTracker(tracker_path)
 
-    # Build inline processors (run in main process, need MQ access)
+    # Build inline processors (run in main process, need MQ access).
+    # GRIB uploads use SEAWEEDFS_ECMWF_GRIB_TTL — independent from the output
+    # TTL (SEAWEEDFS_ECMWF_TTL) so operators can keep raw GRIB inputs around
+    # longer than the derived COG/tile/GeoJSON outputs (or vice versa).
     inline_processors: dict[str, InlineProcessor] = {}
     if config.ENABLE_ECMWF_PRECIPITATION:
-        ecmwf_tp_s3 = create_s3_client(config, with_ttl=False)
+        ecmwf_tp_s3 = create_s3_client(config, with_ttl=config.SEAWEEDFS_ECMWF_GRIB_TTL)
         inline_processors[ECMWF_TP_CONFIG.inline_processor_id] = EcmwfGribDownloader(
             product_config=ECMWF_TP_CONFIG,
             s3_client=ecmwf_tp_s3,
             bounds=config.get_bounds(),
         )
     if config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE:
-        ecmwf_mslp_s3 = create_s3_client(config, with_ttl=False)
+        ecmwf_mslp_s3 = create_s3_client(
+            config, with_ttl=config.SEAWEEDFS_ECMWF_GRIB_TTL
+        )
         inline_processors[ECMWF_MSLP_CONFIG.inline_processor_id] = EcmwfGribDownloader(
             product_config=ECMWF_MSLP_CONFIG,
             s3_client=ecmwf_mslp_s3,

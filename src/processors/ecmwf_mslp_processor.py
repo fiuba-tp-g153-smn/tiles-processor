@@ -37,7 +37,7 @@ class EcmwfMslpProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._s3_client = create_s3_client(config)
+        self._s3_client = create_s3_client(config, with_ttl=config.SEAWEEDFS_ECMWF_TTL)
         self._smoothing_sigma = config.ECMWF_MSLP_SMOOTHING_SIGMA
         self._isobar_simplify_tolerance = config.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE
 
