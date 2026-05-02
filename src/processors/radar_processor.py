@@ -479,6 +479,7 @@ class RadarProcessor(ImageProcessor):
             self.ZOOM_LEVELS,
             "-w",
             "none",
+            "--resampling=near",
             f"--processes={self.GDAL_PROCESSES}",
             "--xyz",
             "--tiledriver=WEBP",

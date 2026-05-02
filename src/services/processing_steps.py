@@ -423,6 +423,7 @@ def run_gdal2tiles(
             "--xyz",
             "--tiledriver=WEBP",
             "--webp-lossless",
+            "--resampling=near",
             f"--processes={processes}",
             str(geotiff_path),
             str(tmp_tiles_dir),
