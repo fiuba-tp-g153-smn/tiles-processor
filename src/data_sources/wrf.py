@@ -1,0 +1,136 @@
+"""WRF-ARG4K data source — discovers NetCDF files from a local directory."""
+
+import shutil
+from abc import ABC, abstractmethod
+from logging import getLogger
+from pathlib import Path
+
+from data_sources.base import DataSource, DiscoveryConfig, ImageInfo
+from models.wrf_config import WrfProductConfig, parse_wrf_filename
+
+logger = getLogger(__name__)
+
+
+class WrfFileRepository(ABC):
+    """Interface for WRF file storage backends."""
+
+    @abstractmethod
+    async def list_files(self) -> list[str]:
+        """Return absolute source URIs for all FIELD2D .nc files."""
+
+    @abstractmethod
+    async def download(self, source_uri: str, dest_path: Path) -> Path:
+        """Copy/download file to dest_path; return final path (with .nc extension)."""
+
+
+class LocalWrfFileRepository(WrfFileRepository):
+    """Reads WRF NetCDF files from a local directory."""
+
+    def __init__(self, input_dir: Path) -> None:
+        self._input_dir = input_dir
+
+    async def list_files(self) -> list[str]:
+        if not self._input_dir.exists():
+            return []
+        files = sorted(self._input_dir.glob("WRF_ARG4K.FCST_L0_FIELD2D.*.nc"))
+        return [str(f.absolute()) for f in files]
+
+    async def download(self, source_uri: str, dest_path: Path) -> Path:
+        source_path = Path(source_uri)
+        if not source_path.exists():
+            raise FileNotFoundError(f"WRF file not found: {source_uri}")
+        dest_with_ext = dest_path.with_suffix(".nc")
+        dest_with_ext.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, dest_with_ext)
+        return dest_with_ext
+
+
+class WrfDataSource(DataSource):
+    """
+    Data source for WRF-ARG4K model output (SMN Argentina).
+
+    Discovers FIELD2D .nc files from a local directory. One instance per
+    product: each creates image_ids unique to (product_id, init_tag, fxxx).
+    The processor derives the FIELD3D path from the FIELD2D path when needed.
+
+    File naming convention:
+        WRF_ARG4K.FCST_L0_FIELD2D.01H.<INIT_TAG>.<FXXX>.M000.nc
+    F000 is always skipped (initialization hour: no pp01H, not a forecast).
+    """
+
+    def __init__(
+        self, product_config: WrfProductConfig, repository: WrfFileRepository
+    ):
+        self._product_config = product_config
+        self._repository = repository
+
+    @property
+    def source_id(self) -> str:
+        return f"wrf_{self._product_config.product_id}"
+
+    @property
+    def processor_id(self) -> str:
+        return "wrf"
+
+    @property
+    def product_config(self) -> WrfProductConfig:
+        return self._product_config
+
+    async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
+        """Discover unprocessed WRF forecast steps for this product."""
+        source_uris = await self._repository.list_files()
+        if not source_uris:
+            logger.warning("[%s] No WRF FIELD2D files found in input dir", self.source_id)
+            return []
+
+        new_images = []
+        for source_uri in source_uris:
+            filename = Path(source_uri).name
+            try:
+                parsed = parse_wrf_filename(filename)
+            except ValueError as e:
+                logger.debug("Skipping file with invalid name: %s (%s)", filename, e)
+                continue
+
+            if parsed["fnum"] == 0:
+                continue
+
+            image_id = (
+                f"{self._product_config.product_id}_"
+                f"{parsed['init_tag']}_{parsed['fxxx']}"
+            )
+
+            if image_id in config.existing_tilesets:
+                logger.debug("Skipping %s (already processed)", image_id)
+                continue
+            if image_id in config.in_progress_images:
+                logger.debug("Skipping %s (in progress)", image_id)
+                continue
+
+            new_images.append(
+                ImageInfo(
+                    image_id=image_id,
+                    source_uri=source_uri,
+                    data_source_id=self.source_id,
+                    processor_id=self.processor_id,
+                    output_prefix=self._product_config.s3_tiles_prefix,
+                )
+            )
+
+        logger.info(
+            "[%s] Found %d new forecast steps to process",
+            self.source_id,
+            len(new_images),
+        )
+        return new_images
+
+    async def download(self, source_uri: str, dest_path: Path) -> Path:
+        """Copy WRF FIELD2D NetCDF file to the worker's work directory."""
+        dest = await self._repository.download(source_uri, dest_path)
+        logger.info(
+            "[%s] Copied %s → %s",
+            self.source_id,
+            Path(source_uri).name,
+            dest,
+        )
+        return dest

@@ -1,5 +1,6 @@
 """Worker implementation for processing work units from RabbitMQ."""
 
+import shutil
 from asyncio import AbstractEventLoop, new_event_loop, set_event_loop
 from logging import getLogger
 from signal import signal, SIGINT, SIGTERM
@@ -202,6 +203,25 @@ class Worker:  # pylint: disable=too-few-public-methods
             return True  # Acknowledge (we've handled it via retry or DLQ)
 
 
+def _purge_stale_work_dirs(tmp_dir: Path) -> None:
+    """Remove residual per-image working directories from prior crashes.
+
+    The progress tracker DB and any non-directory entries are preserved.
+    """
+    if not tmp_dir.exists():
+        return
+    keep = {"progress_tracker.db", "progress_tracker.db-journal"}
+    for entry in tmp_dir.iterdir():
+        if entry.name in keep:
+            continue
+        try:
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+                logger.info("Purged stale work dir: %s", entry)
+        except OSError as exc:
+            logger.warning("Could not purge %s: %s", entry, exc)
+
+
 def run_worker(config: Config) -> None:
     """
     Entry point to run a worker.
@@ -214,6 +234,10 @@ def run_worker(config: Config) -> None:
     """
     data_source_registry = create_data_source_registry(config)
     mq_client = create_rabbitmq_client(config)
+
+    # Stale work directories from prior crashes are not cleaned up by the
+    # finally block in WorkHandler.handle, so wipe them at boot.
+    _purge_stale_work_dirs(Path(config.TMP_DIR))
 
     # Configure S3 lifecycle policy for automatic tile expiration
     s3_client = create_s3_client(config)

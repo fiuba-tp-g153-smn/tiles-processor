@@ -18,6 +18,7 @@ from data_sources import (
     DataSourceRegistry,
     DiscoveryConfig,
     RadarDataSource,
+    WrfDataSource,
 )
 from data_sources.goes19_base import Goes19BaseDataSource
 from factories import (
@@ -117,6 +118,10 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         if source_id.startswith("radar_"):
             product_id = source_id.removeprefix("radar_")
             return self._config.ENABLED_RADAR_PRODUCTS.get(product_id, False)
+        # Check for WRF sources (wrf_Colmax, wrf_Rafagas, etc.)
+        if source_id.startswith("wrf_"):
+            product_id = source_id.removeprefix("wrf_")
+            return self._config.ENABLED_WRF_PRODUCTS.get(product_id, False)
 
         # ECMWF sources
         if source_id == "ecmwf_tp_producer":
@@ -144,6 +149,10 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             product_id = data_source.product_config.product_id
             # Search across all radar IDs for this product
             existing_tilesets = await self._get_radar_existing_tilesets(product_id)
+        elif isinstance(data_source, WrfDataSource):
+            product_id = data_source.product_config.product_id
+            band_id = f"wrf_{product_id}"
+            existing_tilesets = await self._get_wrf_existing_tilesets(product_id)
         else:
             band_id = data_source.source_id
             output_prefix = f"tiles/{band_id}"
@@ -220,6 +229,31 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning("Error listing S3 tilesets: %s", e)
             return set()
+
+    async def _get_wrf_existing_tilesets(self, product_id: str) -> Set[str]:
+        """Get existing WRF tilesets for a product.
+
+        Path structure: tiles/wrf/{product_id}/{init_tag}/{fxxx}/
+        Returns image_ids like: Colmax_20260430_060000_F001
+        """
+        tilesets = set()
+        try:
+            product_prefix = f"tiles/wrf/{product_id}/"
+            init_tag_prefixes = await self._s3_client.list_prefixes(
+                product_prefix, delimiter="/"
+            )
+            for init_tag_prefix in init_tag_prefixes:
+                init_tag = init_tag_prefix.rstrip("/").split("/")[-1]
+                fxxx_prefixes = await self._s3_client.list_prefixes(
+                    init_tag_prefix, delimiter="/"
+                )
+                for fxxx_prefix in fxxx_prefixes:
+                    fxxx = fxxx_prefix.rstrip("/").split("/")[-1]
+                    image_id = f"{product_id}_{init_tag}_{fxxx}"
+                    tilesets.add(image_id)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning("Error listing WRF tilesets for %s: %s", product_id, e)
+        return tilesets
 
     async def _get_radar_existing_tilesets(self, product_id: str) -> Set[str]:
         """

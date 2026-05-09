@@ -44,6 +44,7 @@ def create_processor_registry():
         RadarProcessor,
         EcmwfTotalPrecipitationProcessor,
         EcmwfMslpProcessor,
+        WrfProcessor,
     )
     from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
 
@@ -65,6 +66,9 @@ def create_processor_registry():
     # Register ECMWF processors (subprocess for scientific processing)
     registry.register(ECMWF_TP_CONFIG.processor_id, EcmwfTotalPrecipitationProcessor)
     registry.register(ECMWF_MSLP_CONFIG.processor_id, EcmwfMslpProcessor)
+
+    # Register WRF processor
+    registry.register("wrf", WrfProcessor)
 
     return registry
 
