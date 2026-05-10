@@ -10,8 +10,8 @@ from pathlib import Path
 import matplotlib.colors as mcolors
 import numpy as np
 import rasterio
+from rasterio.control import GroundControlPoint
 from rasterio.crs import CRS  # pylint: disable=no-name-in-module
-from rasterio.transform import from_bounds
 
 from config import Config
 from factories import create_s3_client
@@ -235,18 +235,46 @@ class WrfProcessor(ImageProcessor):
                 payload["primary"],
                 payload["topo_nan_mask"],
             )
-            geotiff_path = work_dir / f"{work_unit.image_id}.tif"
+            # Two-stage raster output: (1) write a GCP-tagged TIFF that
+            # carries each pixel's true Lambert (lon, lat); (2) warp it to a
+            # regular EPSG:4326 grid via thin-plate spline. gdal2tiles then
+            # produces tiles whose pixels align with the basemap and the
+            # GeoJSON overlays — the same alignment the manual SMN script
+            # gets via cartopy's projection-aware rendering.
+            geotiff_gcp_path = work_dir / f"{work_unit.image_id}_gcp.tif"
             self._save_rgba_geotiff(
-                rgba, payload["lat"], payload["lon"], geotiff_path
+                rgba, payload["lat"], payload["lon"], geotiff_gcp_path
             )
             del rgba
             gc.collect()
             self._check_shutdown()
 
-            cog_path = work_dir / f"{work_unit.image_id}_cog.tif"
-            self._save_float_cog(
-                payload["primary"], payload["lat"], payload["lon"], cog_path
+            geotiff_path = work_dir / f"{work_unit.image_id}.tif"
+            self._warp_to_epsg4326(
+                geotiff_gcp_path, geotiff_path, resampling="near"
             )
+            geotiff_gcp_path.unlink(missing_ok=True)
+            self._check_shutdown()
+
+            # COG: same two-stage pipeline. Float field needs bilinear
+            # resampling so NaN/finite transitions stay clean.
+            cog_gcp_path = work_dir / f"{work_unit.image_id}_cog_gcp.tif"
+            self._save_float_geotiff_gcp(
+                payload["primary"], payload["lat"], payload["lon"], cog_gcp_path
+            )
+            cog_path = work_dir / f"{work_unit.image_id}_cog.tif"
+            self._warp_to_epsg4326(
+                cog_gcp_path,
+                cog_path,
+                of="COG",
+                resampling="bilinear",
+                extra_creation_options=(
+                    "COMPRESS=DEFLATE",
+                    "PREDICTOR=3",
+                    "BLOCKSIZE=512",
+                ),
+            )
+            cog_gcp_path.unlink(missing_ok=True)
             self._check_shutdown()
 
             geojson_paths = self._generate_geojson_layers(
@@ -455,6 +483,56 @@ class WrfProcessor(ImageProcessor):
     # Raster outputs
     # ------------------------------------------------------------------
 
+    # GCP_STEP samples the curvilinear grid every N cells (in both axes) to
+    # build the GCP set passed to ``gdalwarp -tps``. Thin-plate spline cost
+    # grows superlinearly with GCP count; ~800 GCPs gives sub-pixel accuracy
+    # against the SMN reference figures while keeping warp time around 5s.
+    # Lower = denser GCPs (more accurate, slower). Higher = fewer GCPs
+    # (faster, but corners can drift).
+    GCP_STEP: int = 40
+
+    # Output resolution forced on gdalwarp (degrees per pixel). 0.04° ≈ 4.4 km
+    # which is close to WRF-ARG4K's native ~4 km grid. Without ``-tr`` GDAL
+    # picks a finer resolution from the GCP density and inflates the output
+    # raster, blowing up tile-generation time.
+    WARP_PIXEL_SIZE_DEG: float = 0.04
+
+    @staticmethod
+    def _build_gcps(
+        lat: np.ndarray, lon: np.ndarray, step: int
+    ) -> list[GroundControlPoint]:
+        """Build a sparse GCP grid from the curvilinear lat/lon arrays.
+
+        Each GCP maps an array pixel ``(col=i, row=j)`` to the WGS84 coordinate
+        ``(lon[j, i], lat[j, i])`` of that grid cell. Sampling every ``step``
+        cells (with explicit corners + edges) is enough for ``gdalwarp -tps``
+        to recover the Lambert→WGS84 transformation accurately.
+        """
+        nrows, ncols = lat.shape
+        rows = list(range(0, nrows, step))
+        if rows[-1] != nrows - 1:
+            rows.append(nrows - 1)
+        cols = list(range(0, ncols, step))
+        if cols[-1] != ncols - 1:
+            cols.append(ncols - 1)
+
+        gcps: list[GroundControlPoint] = []
+        for j in rows:
+            for i in cols:
+                lat_val = lat[j, i]
+                lon_val = lon[j, i]
+                if not (np.isfinite(lat_val) and np.isfinite(lon_val)):
+                    continue
+                gcps.append(
+                    GroundControlPoint(
+                        row=float(j),
+                        col=float(i),
+                        x=float(lon_val),
+                        y=float(lat_val),
+                    )
+                )
+        return gcps
+
     @staticmethod
     def _save_rgba_geotiff(
         rgba: np.ndarray,
@@ -462,11 +540,16 @@ class WrfProcessor(ImageProcessor):
         lon: np.ndarray,
         output_path: Path,
     ) -> None:
-        """Write RGBA uint8 GeoTIFF in EPSG:4326 (north-up)."""
+        """Write RGBA uint8 GeoTIFF tagged with GCPs from the curvilinear grid.
+
+        The tagged file is later warped to a regular EPSG:4326 raster by
+        ``_warp_to_epsg4326`` so that gdal2tiles produces tiles aligned with
+        the WGS84 web-map grid (and the GeoJSON overlays). Without GCPs, a
+        cheap ``from_bounds`` approximation distorted pixel positions because
+        the WRF Lambert grid is curvilinear, not a regular WGS84 grid.
+        """
         nrows, ncols = rgba.shape[:2]
-        transform = from_bounds(
-            lon.min(), lat.min(), lon.max(), lat.max(), ncols, nrows
-        )
+        gcps = WrfProcessor._build_gcps(lat, lon, WrfProcessor.GCP_STEP)
         tmp_path = output_path.parent / f"{uuid.uuid4()}.tif"
         try:
             with rasterio.open(
@@ -477,49 +560,97 @@ class WrfProcessor(ImageProcessor):
                 width=ncols,
                 count=4,
                 dtype=np.uint8,
-                crs=CRS.from_epsg(4326),
-                transform=transform,
                 compress="lzw",
             ) as dst:
+                dst.gcps = (gcps, CRS.from_epsg(4326))
                 for i in range(4):
-                    dst.write(np.flipud(rgba[:, :, i]), i + 1)
+                    dst.write(rgba[:, :, i], i + 1)
             tmp_path.rename(output_path)
-            logger.info("[WRF] GeoTIFF written: %s", output_path.name)
+            logger.info("[WRF] GeoTIFF written (GCP-tagged): %s", output_path.name)
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
 
     @staticmethod
-    def _save_float_cog(
+    def _save_float_geotiff_gcp(
         data: np.ndarray,
         lat: np.ndarray,
         lon: np.ndarray,
         output_path: Path,
     ) -> None:
-        """Write a single-band float32 Cloud-Optimized GeoTIFF of the primary field."""
+        """Write a single-band float32 GeoTIFF tagged with GCPs.
+
+        Used as an intermediate before warping to the final COG via
+        ``_warp_to_epsg4326(of="COG")``. NaN is preserved as nodata so the
+        warp + downstream point queries see masked pixels correctly.
+        """
         nrows, ncols = data.shape
-        transform = from_bounds(
-            lon.min(), lat.min(), lon.max(), lat.max(), ncols, nrows
-        )
+        gcps = WrfProcessor._build_gcps(lat, lon, WrfProcessor.GCP_STEP)
         tmp_path = output_path.parent / f"{uuid.uuid4()}.tif"
         try:
             with rasterio.open(
                 tmp_path,
                 "w",
-                driver="COG",
+                driver="GTiff",
                 height=nrows,
                 width=ncols,
                 count=1,
                 dtype="float32",
-                crs=CRS.from_epsg(4326),
-                transform=transform,
                 compress="DEFLATE",
                 predictor=3,
                 nodata=float("nan"),
             ) as dst:
-                dst.write(np.flipud(data).astype(np.float32), 1)
+                dst.gcps = (gcps, CRS.from_epsg(4326))
+                dst.write(data.astype(np.float32), 1)
             tmp_path.rename(output_path)
-            logger.info("[WRF] COG written: %s", output_path.name)
+            logger.info("[WRF] Float GeoTIFF written (GCP-tagged): %s", output_path.name)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _warp_to_epsg4326(
+        input_path: Path,
+        output_path: Path,
+        *,
+        of: str = "GTiff",
+        resampling: str = "near",
+        extra_creation_options: tuple[str, ...] = (),
+    ) -> None:
+        """Reproject a GCP-tagged raster to a regular EPSG:4326 grid.
+
+        Uses ``gdalwarp -tps`` (thin-plate spline) so the curvilinear Lambert
+        layout is recovered from the GCP grid rather than from a 4-corner
+        affine approximation. ``-r near`` is correct for the RGBA output;
+        callers warping float fields should pass ``resampling="bilinear"``.
+        """
+        tmp_path = output_path.parent / f"{uuid.uuid4()}.tif"
+        pixel_deg = WrfProcessor.WARP_PIXEL_SIZE_DEG
+        cmd = [
+            "gdalwarp",
+            "-tps",
+            "-t_srs",
+            "EPSG:4326",
+            "-tr",
+            str(pixel_deg),
+            str(pixel_deg),
+            "-r",
+            resampling,
+            "-of",
+            of,
+            "-overwrite",
+        ]
+        for opt in extra_creation_options:
+            cmd += ["-co", opt]
+        cmd += [str(input_path), str(tmp_path)]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                logger.error("[WRF] gdalwarp error: %s", result.stderr)
+                raise RuntimeError(f"gdalwarp failed: {result.stderr}")
+            tmp_path.rename(output_path)
+            logger.info("[WRF] Warped → %s: %s", of, output_path.name)
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise

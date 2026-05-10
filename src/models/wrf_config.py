@@ -122,9 +122,8 @@ PRECIPITACION1H_CONFIG = WrfProductConfig(
         WrfContourConfig(
             name="slp",
             var="slp",
-            # Restricted set requested by SMN — only the strategic isobars,
-            # not every 4 hPa across the full range.
-            levels=(976.0, 984.0, 992.0, 1000.0, 1016.0),
+            # Restricted set requested by SMN — only the strategic isobars
+            levels=(976.0, 984.0, 992.0, 1000.0, 1008.0, 1016.0),
             smooth_sigma=3.0,
         ),
     ),
