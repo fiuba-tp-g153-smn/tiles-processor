@@ -122,7 +122,9 @@ PRECIPITACION1H_CONFIG = WrfProductConfig(
         WrfContourConfig(
             name="slp",
             var="slp",
-            levels=tuple(float(v) for v in range(960, 1040, 4)),
+            # Restricted set requested by SMN — only the strategic isobars,
+            # not every 4 hPa across the full range.
+            levels=(976.0, 984.0, 992.0, 1000.0, 1016.0),
             smooth_sigma=3.0,
         ),
     ),
@@ -215,6 +217,7 @@ GRANIZO_CONFIG = WrfProductConfig(
     product_id="Granizo",
     primary_var="ship",
     needs_field3d=False,
+    nan_fill_color=_TOPO_BROWN,
     s3_tiles_prefix="tiles/wrf",
     s3_cog_prefix="cog/wrf",
     contours=(

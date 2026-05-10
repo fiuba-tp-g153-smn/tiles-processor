@@ -94,12 +94,18 @@ def extract_isolines(
 
 
 def smooth_array(arr: np.ndarray, sigma: float) -> np.ndarray:
-    """Gaussian-smooth a 2-D array, preserving NaN locations."""
+    """Gaussian-smooth a 2-D array, preserving NaN locations.
+
+    Uses 0-fill (matching `WRF/generar_wrf.py` for BRN / SLP / shear): NaN
+    pixels are replaced with 0 before the Gaussian filter, then re-masked
+    to NaN afterwards. Filling with `nanmean` instead biases the smoothed
+    field around the NaN edges and produces dense, fragmented contours
+    (hundreds of small loops instead of a few smooth lines).
+    """
     nan_mask = np.isnan(arr)
     if nan_mask.all() or sigma <= 0:
         return arr
-    fill_value = float(np.nanmean(arr))
-    arr_filled = np.where(nan_mask, fill_value, arr)
+    arr_filled = np.where(nan_mask, 0.0, arr)
     smoothed = gaussian_filter(arr_filled, sigma=sigma)
     return np.where(nan_mask, np.nan, smoothed)
 
