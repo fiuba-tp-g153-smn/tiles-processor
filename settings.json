@@ -2,7 +2,7 @@
   "timezone": "America/Argentina/Buenos_Aires",
   "tile_retention_days": 30,
   "radar_input_dir": "/app/data/radar_h5",
-  "ecmwf_mslp_isobar_simplify_tolerance": 0.1,
+  "ecmwf_mslp_isobar_simplify_tolerance": 0.05,
   "ecmwf_mslp_smoothing_sigma": 1.5,
   "features": {
     "enable_band_13": true,
