@@ -143,7 +143,7 @@ class Band2Processor(GoesProcessor):
     @override
     def _compute_brightness_temperature(self, dataset: xr.Dataset) -> xr.DataArray:
         """
-        Compute reflectance factor for visible Band 2 with gamma correction.
+        Compute reflectance factor for visible Band 2.
 
         Band 2 measures reflected sunlight, not thermal emission.
         The conversion is: reflectance = kappa0 * radiance
@@ -151,10 +151,6 @@ class Band2Processor(GoesProcessor):
         Nighttime noise floor (< 0.005) is masked to NaN to prevent
         sensor noise from appearing as speckle in dark areas and from
         polluting the dynamic vmax percentile calculation.
-
-        Square-root gamma (γ = 0.5) is then applied to produce
-        perceptually uniform display values matching conventional
-        visible satellite imagery rendering.
         """
         radiance = dataset["Rad"]
         kappa0 = float(dataset["kappa0"].values)
@@ -172,11 +168,6 @@ class Band2Processor(GoesProcessor):
             np.nan,
         )
 
-        # Square-root gamma correction (γ = 0.5)
-        # Converts linear physical reflectance to perceptually uniform display values.
-        # Max physical value: sqrt(1.2) ≈ 1.095
-        reflectance = reflectance**0.5
-
         reflectance.rio.write_crs(dataset.rio.crs, inplace=True)
         reflectance.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
 
@@ -187,25 +178,24 @@ class Band2Processor(GoesProcessor):
         """Compute dynamic vmax from the 95th percentile of the clipped region.
 
         Per SMN recommendation for visible channel:
-        The 95th percentile of gamma-corrected reflectance (sqrt domain) is used
-        to dynamically adjust vmax so images don't appear too dark at sunrise/sunset.
-        Computing on already-clipped data (Argentina bounds) is more representative
-        than using the full satellite disk.
+        The 95th percentile of reflectance is used to dynamically adjust vmax
+        so images don't appear too dark at sunrise/sunset. Computing on
+        already-clipped data (Argentina bounds) is more representative than
+        using the full satellite disk.
 
-        Thresholds are in the gamma-corrected (sqrt) domain:
             perc = np.nanpercentile(data, 95)
-            if isnan(perc) or perc < 0.22:  vmax = 1.0   (nighttime / very dark)
-            elif perc > 0.84:               vmax = 0.95  (bright daylight)
-            else:                           vmax = min(perc + 0.10, 1.0)
+            if isnan(perc) or perc < 0.05:  vmax = 1.0   (nighttime / very dark)
+            elif perc > 0.7:               vmax = 0.95  (bright daylight)
+            else:                           vmax = min(perc + 0.2, 1.0)
         """
         perc = float(np.nanpercentile(reprojected_data.values, 95))
 
-        if np.isnan(perc) or perc < 0.22:
+        if np.isnan(perc) or perc < 0.05:
             dynamic_vmax = 1.0  # mostly dark / terminator — use full range
-        elif perc > 0.84:
+        elif perc > 0.7:
             dynamic_vmax = 0.95  # bright daylight — cap just above physical max
         else:
-            dynamic_vmax = min(perc + 0.10, 1.0)  # transition — add headroom
+            dynamic_vmax = min(perc + 0.2, 1.0)  # transition — add headroom
 
         logger.info(
             "Dynamic vmax for Band 2: percentile_95=%.4f, vmax=%.4f",
