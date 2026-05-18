@@ -1,4 +1,4 @@
-"""ECMWF total precipitation processor: full subprocess pipeline for a single centered 6h accumulation window."""
+"""ECMWF total precipitation processor: full subprocess pipeline for a single 6h accumulation window ending at hour_end."""
 
 import asyncio
 import gc
@@ -13,7 +13,7 @@ import xarray as xr
 
 from config import Config
 from factories import create_s3_client
-from models.ecmwf_config import ECMWF_TP_CONFIG, STEP_HOURS
+from models.ecmwf_config import ECMWF_TP_CONFIG, WINDOW_HOURS
 from models.ecmwf_tp_palettes import PRECIPITATION_COLORS, PRECIPITATION_THRESHOLDS
 from models.work_unit import WorkUnit
 from processors.base_processor import ImageProcessor
@@ -29,16 +29,15 @@ logger = logging.getLogger(__name__)
 
 _ZOOM_LEVELS = "3-7"
 _GDAL_PROCESSES = 2
-_ACCUMULATION_HALF_WINDOW_HOURS = STEP_HOURS  # Centered 6h window: ±3h around center
 
 
 class EcmwfTotalPrecipitationProcessor(ImageProcessor):
     """
-    Subprocess processor for a single ECMWF centered 6h precipitation window.
+    Subprocess processor for a single ECMWF 6h precipitation window ending at hour_end.
 
     Reads the cached GRIB, computes the precipitation differential for the
-    centered window, generates a COG (raw mm values) and colorized tiles,
-    then uploads both to S3/SeaweedFS.
+    6h window that ends at hour_end (accumulating the previous 6 hours), generates
+    a COG (raw mm values) and colorized tiles, then uploads both to S3/SeaweedFS.
     """
 
     def __init__(self, config: Config):
@@ -46,20 +45,18 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
         self._s3_client = create_s3_client(config, with_ttl=config.SEAWEEDFS_ECMWF_TTL)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
-        """Execute the full processing pipeline for a centered 6h window."""
+        """Execute the full processing pipeline for a 6h window ending at hour_end."""
         meta = json.loads(work_unit.source_uri)
         forecast_time = datetime.fromisoformat(meta["forecast_time"])
-        hour_center: int = meta["hour_center"]
-        hour_start = hour_center - _ACCUMULATION_HALF_WINDOW_HOURS
-        hour_end = hour_center + _ACCUMULATION_HALF_WINDOW_HOURS
+        hour_end: int = meta["hour_end"]
+        hour_start = hour_end - WINDOW_HOURS
         forecast_ts = _fmt_ts(forecast_time)
 
         logger.info(
-            "[ECMWF-TP] Processing centered window %s (hours %d-%d, center %d)",
+            "[ECMWF-TP] Processing window %s (hours %d-%d)",
             work_unit.image_id,
             hour_start,
             hour_end,
-            hour_center,
         )
 
         grib_path = Path(downloaded_file_path)

@@ -60,4 +60,5 @@ ECMWF_MSLP_CONFIG = EcmwfProductConfig(
 MAX_LOOKBACK_HOURS: int = 48  # Hours to look back when searching for forecasts
 FORECAST_HOURS: int = 144  # Total length of each forecast (6 days)
 STEP_HOURS: int = 3  # Cadence of model output steps
+WINDOW_HOURS: int = STEP_HOURS * 2  # Accumulation window length (6h)
 FORECASTS_TO_MAINTAIN: int = 3  # Number of recent forecasts to keep active

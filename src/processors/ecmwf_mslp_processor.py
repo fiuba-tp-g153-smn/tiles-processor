@@ -1,4 +1,4 @@
-"""ECMWF mean sea level pressure processor: COG + isobars GeoJSON per centered timestamp."""
+"""ECMWF mean sea level pressure processor: COG + isobars GeoJSON per period-end timestamp."""
 
 import asyncio
 import gc
@@ -28,8 +28,8 @@ class EcmwfMslpProcessor(ImageProcessor):
     """
     Subprocess processor for a single ECMWF mean sea level pressure timestamp.
 
-    Reads the cached GRIB, extracts the `msl` field at the requested step,
-    converts Pa → hPa, reprojects/clips, and produces:
+    Reads the cached GRIB, extracts the `msl` field at the requested period-end
+    step, converts Pa → hPa, reprojects/clips, and produces:
       * a Cloud Optimized GeoTIFF with the raw pressure field, and
       * a GeoJSON of isobars (multiples of 5 hPa, simplified geometry).
     Both are uploaded to S3/SeaweedFS.
@@ -42,16 +42,16 @@ class EcmwfMslpProcessor(ImageProcessor):
         self._isobar_simplify_tolerance = config.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
-        """Execute the full processing pipeline for one centered MSLP timestamp."""
+        """Execute the full processing pipeline for one period-end MSLP timestamp."""
         meta = json.loads(work_unit.source_uri)
         forecast_time = datetime.fromisoformat(meta["forecast_time"])
-        hour_center: int = meta["hour_center"]
+        hour_end: int = meta["hour_end"]
         forecast_ts = _fmt_ts(forecast_time)
 
         logger.info(
             "[ECMWF-MSLP] Processing timestamp %s (T+%dh)",
             work_unit.image_id,
-            hour_center,
+            hour_end,
         )
 
         grib_path = Path(downloaded_file_path)
@@ -62,7 +62,7 @@ class EcmwfMslpProcessor(ImageProcessor):
         output_dir = self._ensure_dir(work_dir / "outputs")
 
         clipped = await asyncio.to_thread(
-            self._load_and_prepare, grib_path, hour_center, work_unit.bounds
+            self._load_and_prepare, grib_path, hour_end, work_unit.bounds
         )
         self._check_shutdown()
 
@@ -83,7 +83,7 @@ class EcmwfMslpProcessor(ImageProcessor):
     # ------------------------------------------------------------------
 
     def _load_and_prepare(
-        self, grib_path: Path, hour_center: int, bounds: dict
+        self, grib_path: Path, hour_end: int, bounds: dict
     ) -> xr.DataArray:
         """Read GRIB, select step, convert Pa→hPa, reproject and clip."""
         import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
@@ -100,9 +100,9 @@ class EcmwfMslpProcessor(ImageProcessor):
 
         logger.info(
             "[ECMWF-MSLP] Step 2: Selecting step T+%dh and converting Pa→hPa",
-            hour_center,
+            hour_end,
         )
-        msl_step = msl_var.sel(step=pd.Timedelta(hours=hour_center))
+        msl_step = msl_var.sel(step=pd.Timedelta(hours=hour_end))
         msl_hpa = msl_step / _PA_TO_HPA
 
         del msl_var, msl_step, ds
