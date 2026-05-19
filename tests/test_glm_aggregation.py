@@ -66,6 +66,50 @@ def test_aggregate_fed_sums_across_minutes():
     assert fed_agg_max > 0, "expected lightning activity in sample window"
 
 
+def test_aggregate_emits_nan_for_empty_fed_toe_cells():
+    """FED/TOE empty cells must arrive as NaN, not 0 — otherwise tiles render opaque."""
+    _require_sample_files()
+
+    aggregated = aggregate_glm_window(
+        SAMPLE_FILES,
+        window_start=datetime(2026, 3, 2, 14, 0),
+        window_end=datetime(2026, 3, 2, 14, 3),
+        accum_minutes=3,
+    )
+
+    for var in ("flash_extent_density", "total_energy"):
+        values = aggregated[var].values
+        assert (values == 0).sum() == 0, f"{var} still has zero-valued empty cells"
+        assert np.isnan(
+            values
+        ).any(), f"{var} should have NaN where no lightning was observed"
+
+    # MFA's behavior is unchanged — glmtools.aggregate already returns NaN for it.
+    assert np.isnan(aggregated["minimum_flash_area"].values).any()
+
+
+def test_reproject_carries_nan_nodata():
+    """Reprojection must produce a NaN-nodata raster, not a 0-filled one."""
+    _require_sample_files()
+
+    aggregated = aggregate_glm_window(
+        SAMPLE_FILES,
+        window_start=datetime(2026, 3, 2, 14, 0),
+        window_end=datetime(2026, 3, 2, 14, 3),
+        accum_minutes=3,
+    )
+    reprojected = reproject_to_latlon(
+        aggregated,
+        var_name="flash_extent_density",
+        bounds={"minx": -75.0, "maxx": -50.0, "miny": -40.0, "maxy": -20.0},
+        resolution_deg=0.1,
+    )
+
+    assert np.isnan(reprojected.rio.nodata)
+    assert (reprojected.values == 0).sum() == 0
+    assert np.isnan(reprojected.values).any()
+
+
 def test_reproject_to_latlon_clips_to_bounds():
     _require_sample_files()
 

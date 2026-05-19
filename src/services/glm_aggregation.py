@@ -19,6 +19,7 @@ projection; call :func:`reproject_to_latlon` to obtain a per-variable
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import rioxarray  # noqa: F401  # pylint: disable=unused-import  # registers .rio
 import xarray as xr
@@ -96,7 +97,18 @@ def aggregate_glm_window(
     aggregated = aggregated.assign_coords(
         time_bins=[interval.left for interval in aggregated.time_bins.values]
     )
-    return aggregated.rename({"time_bins": "time"})
+    aggregated = aggregated.rename({"time_bins": "time"})
+
+    # glmtools.aggregate uses sum(skipna=True) for the extensive variables, which
+    # returns 0 (not NaN) for cells that were NaN across every minute of the
+    # window. Treat those 0s as "no lightning" so downstream colorization sees a
+    # missing-value sentinel and renders the cell transparent — same convention
+    # as minimum_flash_area, which glmtools already returns as NaN.
+    for var in ("flash_extent_density", "total_energy"):
+        if var in aggregated.data_vars:
+            aggregated[var] = aggregated[var].where(aggregated[var] > 0)
+
+    return aggregated
 
 
 def reproject_to_latlon(
@@ -139,8 +151,17 @@ def reproject_to_latlon(
     da = da.assign_coords(x=da["x"].values * sat_h, y=da["y"].values * sat_h)
     da.rio.write_crs(src_crs.to_string(), inplace=True)
     da.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+    # Pin NaN as the nodata sentinel both on the source and on the warp output
+    # so destination cells outside the source extent (or filled by GDAL) come
+    # back as NaN instead of 0 — without this, a future rioxarray/GDAL default
+    # change could silently turn empty cells into opaque palette-floor colors.
+    da.rio.write_nodata(np.nan, inplace=True)
 
-    reprojected = da.rio.reproject("EPSG:4326", resolution=resolution_deg)
+    reprojected = da.rio.reproject(
+        "EPSG:4326",
+        resolution=resolution_deg,
+        nodata=float("nan"),
+    )
     return reprojected.rio.clip_box(
         minx=bounds["minx"],
         miny=bounds["miny"],

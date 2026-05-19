@@ -198,8 +198,8 @@ def test_log_clip_preserves_nan_and_takes_log10():
     )
     out = _log_clip(da, vmin=1.0, vmax=100.0)
     values = out.values
-    assert np.isclose(values[0], 0.0)  # 0.5 clipped to 1 → log10(1) = 0
+    assert np.isnan(values[0])  # 0.5 < vmin → NaN (transparent, LogNorm clip=False)
     assert np.isclose(values[1], 0.0)  # 1 → log10(1) = 0
     assert np.isclose(values[2], 1.0)  # 10 → log10(10) = 1
-    assert np.isclose(values[3], 2.0)  # 1000 clipped to 100 → log10(100) = 2
-    assert np.isnan(values[4])
+    assert np.isclose(values[3], 2.0)  # 1000 clamped to 100 → log10(100) = 2
+    assert np.isnan(values[4])  # NaN passes through

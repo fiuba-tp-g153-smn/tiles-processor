@@ -276,10 +276,14 @@ class GlmFedProcessor(ImageProcessor):
 
 
 def _log_clip(da: xr.DataArray, vmin: float, vmax: float) -> xr.DataArray:
-    """Clip data to ``[vmin, vmax]`` then take base-10 log, preserving NaN.
+    """Mask sub-vmin to NaN, clamp above-vmax to vmax, return base-10 log.
 
-    Cells below ``vmin`` get the floor color (palette index 0) and cells above
-    ``vmax`` get the ceiling color, matching ``LogNorm(clip=True)``.
+    Reproduces matplotlib's ``LogNorm(vmin, vmax, clip=False)`` semantics: values
+    strictly below ``vmin`` are treated as missing data so downstream
+    colorization renders them transparent (``normalize_and_colorize`` maps NaN
+    to ``alpha=0``). Values above ``vmax`` are kept and clamped to ``vmax`` so
+    they receive the palette's ceiling color rather than going transparent.
     """
-    clipped = da.clip(min=vmin, max=vmax)
+    masked = da.where(da >= vmin)
+    clipped = masked.clip(max=vmax)
     return np.log10(clipped)
