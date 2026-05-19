@@ -392,6 +392,71 @@ def save_as_cog(data: xr.DataArray, output_dir: Path, image_id: str) -> Path:
     return output_path
 
 
+_EARTH_CIRCUMFERENCE_M = 2 * math.pi * 6378137.0
+_TILE_SIZE = 256
+
+
+def _mercator_resolution_for_zoom(zoom: int) -> float:
+    """Web Mercator pixel size in meters at XYZ zoom level `zoom`."""
+    return _EARTH_CIRCUMFERENCE_M / (2**zoom * _TILE_SIZE)
+
+
+def prewarp_to_mercator_grid(
+    geotiff_path: Path,
+    output_dir: Path,
+    max_zoom: int,
+) -> Path:
+    """Reproject a GeoTIFF to EPSG:3857 at the pixel size of `max_zoom`, atomically.
+
+    Why: ``gdal2tiles`` upsamples its input via per-tile RasterIO with nearest-neighbor
+    rounding. For threshold-colorized RGBA inputs (alpha is exactly 0 or 255, no
+    gradient), that rounding shifts cell boundaries by sub-cell amounts and can drop
+    isolated opaque cells entirely. Pre-warping to the destination tile grid makes
+    the per-tile read a 1:1 pickup, so cell boundaries are preserved exactly.
+    """
+    output_path = output_dir / f"{geotiff_path.stem}_3857.tif"
+    tmp_path = output_dir / f"{uuid.uuid4()}.tif"
+    res = _mercator_resolution_for_zoom(max_zoom)
+
+    cmd = [
+        "gdalwarp",
+        "-t_srs",
+        "EPSG:3857",
+        "-r",
+        "near",
+        "-tr",
+        str(res),
+        str(res),
+        "-dstalpha",
+        "-co",
+        "COMPRESS=DEFLATE",
+        str(geotiff_path),
+        str(tmp_path),
+    ]
+
+    try:
+        logger.info("Pre-warping %s to EPSG:3857 at zoom %d (%.2f m/px)...",
+                    geotiff_path.name, max_zoom, res)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=600, check=False
+        )
+
+        if result.returncode != 0:
+            logger.error("gdalwarp pre-warp failed: %s", result.stderr)
+            raise RuntimeError(f"gdalwarp pre-warp failed for {geotiff_path.name}")
+
+        tmp_path.rename(output_path)
+        logger.info("Pre-warped GeoTIFF written: %s", output_path)
+        return output_path
+
+    except subprocess.TimeoutExpired as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError("gdalwarp pre-warp timed out") from exc
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def run_gdal2tiles(
     geotiff_path: Path,
     output_dir: Path,
