@@ -12,12 +12,13 @@ from data_sources import (
     DataSourceRegistry,
     EcmwfPeriodDataSource,
     EcmwfProducerDataSource,
+    GlmFolderDataSource,
     Goes19AbiDataSource,
-    Goes19GlmDataSource,
     RadarDataSource,
 )
+from data_sources.glm_folder_repository import LocalGlmFolderFileRepository
 from data_sources.radar_repository import LocalRadarFileRepository
-from models.band_config import BAND_CONFIGS
+from models.band_config import BAND_CONFIGS, get_band_config
 from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
 from models.radar_config import RADAR_PRODUCT_CONFIGS
 
@@ -28,18 +29,33 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     """Create and populate the data source registry with all known sources."""
     registry = DataSourceRegistry()
 
-    # Products computed as by-products of another source's processor (no separate download)
-    combined_products = {"glm_toe", "glm_mfa"}
+    # BandConfigs that are produced as by-products of another source's processor
+    # and therefore must NOT get their own DataSource registration. The
+    # folder-based GLM pipeline registers exactly one source below, which emits
+    # FED/TOE/MFA tiles in the same processor run.
+    combined_products = {
+        "glm_folder_fed",
+        "glm_folder_toe",
+        "glm_folder_mfa",
+    }
 
     for _band_id, band_config in BAND_CONFIGS.items():
         if band_config.band_id in combined_products:
             continue
-        if band_config.band_id.startswith("glm_"):
-            # Register GLM sources (lightning products)
-            registry.register(Goes19GlmDataSource(band_config))
-        else:
-            # Register ABI sources (band 13, 9, 2, etc.)
-            registry.register(Goes19AbiDataSource(band_config))
+        # Only ABI bands remain (band_13, band_9, band_2, ...).
+        registry.register(Goes19AbiDataSource(band_config))
+
+    # Register the folder-based GLM data source (one entry covers FED/TOE/MFA).
+    if config is not None:
+        glm_repo = LocalGlmFolderFileRepository(Path(config.GLM_FOLDER_INPUT_DIR))
+        registry.register(
+            GlmFolderDataSource(
+                get_band_config("glm_folder_fed"),
+                glm_repo,
+                accum_minutes=config.GLM_ACCUM_MINUTES,
+                produce_every_minutes=config.GLM_PRODUCE_EVERY_MINUTES,
+            )
+        )
 
     # Register radar data sources for each product
     if config is not None:

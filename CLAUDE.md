@@ -25,17 +25,19 @@ Bare commands require `source .venv/bin/activate && cmd`. Pre-commit hooks run B
 Producer-worker satellite imagery pipeline:
 
 ```
-NOAA S3 (GOES-19) → Producer → RabbitMQ → Workers (1–5) → S3/SeaweedFS (tiles)
+NOAA S3 (GOES-19 ABI)  ─┐
+Local CG_GLM-L2-GLMF    ├→ Producer → RabbitMQ → Workers (1–5) → S3/SeaweedFS (tiles)
+Local SINARAME radar    ─┘
 ```
 
 | Component | Location | Role |
 |---|---|---|
-| **Producer** | `src/producer/` | Cron-scheduled. Discovers new NOAA S3 images, deduplicates via SeaweedFS, publishes `WorkUnit` to RabbitMQ. |
+| **Producer** | `src/producer/` | Cron-scheduled. Discovers new images from each data source, deduplicates via SeaweedFS, publishes `WorkUnit` to RabbitMQ. |
 | **Workers** | `src/worker/` | Consume work units (prefetch=1, manual ack). Pipeline: download → georeference → science → GeoTIFF → gdal2tiles → upload → cleanup. |
 | **Subprocess isolation** | `src/worker/subprocess_processor.py` | Heavy processing in subprocess for full memory reclamation per image. |
-| **Processors** | `src/processors/` | `GoesProcessor` (template-method) → `Band2Processor`, `Band13Processor`, `Band9Processor`. `GlmFedProcessor` for lightning. All via `ProcessorRegistry`. |
-| **Data Sources** | `src/data_sources/` | `DataSourceRegistry` with pluggable impls (GOES-19 ABI, GLM, Radar). |
-| **Services** | `src/services/processing_steps.py` | Pure functions: georeferencing, brightness temp, colorization, tiling, RGBA. |
+| **Processors** | `src/processors/` | `GoesProcessor` (template-method) → `Band2Processor`, `Band13Processor`, `Band9Processor`. `GlmFedProcessor` aggregates pre-gridded GLM windows via `glmtools` and emits FED/TOE/MFA tiles in one run. All via `ProcessorRegistry`. |
+| **Data Sources** | `src/data_sources/` | `DataSourceRegistry` with pluggable impls: `Goes19AbiDataSource` (NOAA S3), `GlmFolderDataSource` (local CG_GLM-L2-GLMF folder), `RadarDataSource` (local SINARAME H5 folder), ECMWF. |
+| **Services** | `src/services/processing_steps.py`, `glm_aggregation.py` | Pure functions: georeferencing, brightness temp, colorization, tiling, RGBA; GLM window aggregation + GEOS→EPSG:4326 reprojection. |
 | **Clients** | `src/clients/` | Async S3 (aioboto3 + semaphore), RabbitMQ (pika, connection pooling), SQLite progress tracker. |
 | **Config** | `src/config.py`, `settings.json` | Env vars, feature flags, geographic bounds. |
 | **Entry point** | `src/main.py producer\|worker` | |

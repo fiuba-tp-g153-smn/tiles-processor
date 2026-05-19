@@ -93,34 +93,41 @@ BAND_2_CONFIG = BandConfig(
     product_name="Visible",
 )
 
-GLM_FED_CONFIG = BandConfig(
-    band_id="glm_fed",
-    file_pattern="GLM-L2-LCFA",
-    vmin=0.0,
-    vmax=256.0,  # Flashes per grid cell (guide range: 0–256)
-    palette_name="FED_PALETTE",
+# Folder-based GLM pipeline (CG_GLM-L2-GLMF inputs, LogNorm rendering).
+# vmin/vmax are the SMN reference LogNorm ranges in the variable's native
+# units; the processor takes log10 before normalize_and_colorize.
+GLM_FOLDER_FED_CONFIG = BandConfig(
+    band_id="glm_folder_fed",
+    file_pattern="CG_GLM-L2-GLMF",
+    vmin=1.0,
+    vmax=128.0,  # flashes / cell (LogNorm)
+    palette_name="GLM_FOLDER_FED_PALETTE",
     s3_tiles_prefix="tiles/glm_fed",
     s3_cog_prefix="cog/glm_fed",
     product_name="GLM_Flash_Extent_Density",
 )
 
-GLM_TOE_CONFIG = BandConfig(
-    band_id="glm_toe",
-    file_pattern="GLM-L2-LCFA",  # same source files as FED — no separate download
-    vmin=0.0,
-    vmax=1.5e-12,  # 1500 fJ in Joules (guide range: 1–1500 fJ)
-    palette_name="TOE_PALETTE",
+GLM_FOLDER_TOE_CONFIG = BandConfig(
+    band_id="glm_folder_toe",
+    file_pattern="CG_GLM-L2-GLMF",
+    # ``total_energy`` is converted from nJ to fJ inside aggregate_glm_window
+    # so this range matches the SMN reference (grafico_glmtools_viejo.py:122)
+    # 1:1 and reads at the same magnitude as FED's (1, 128) and MFA's
+    # (64, 2500).
+    vmin=0.01,
+    vmax=1500.0,
+    palette_name="GLM_FOLDER_TOE_PALETTE",
     s3_tiles_prefix="tiles/glm_toe",
     s3_cog_prefix="cog/glm_toe",
     product_name="GLM_Total_Optical_Energy",
 )
 
-GLM_MFA_CONFIG = BandConfig(
-    band_id="glm_mfa",
-    file_pattern="GLM-L2-LCFA",  # same source files as FED — no separate download
-    vmin=0.0,
-    vmax=3000.0,  # km² operational cap
-    palette_name="MFA_PALETTE",
+GLM_FOLDER_MFA_CONFIG = BandConfig(
+    band_id="glm_folder_mfa",
+    file_pattern="CG_GLM-L2-GLMF",
+    vmin=64.0,
+    vmax=2500.0,  # km² / cell (LogNorm)
+    palette_name="GLM_FOLDER_MFA_PALETTE",
     s3_tiles_prefix="tiles/glm_mfa",
     s3_cog_prefix="cog/glm_mfa",
     product_name="GLM_Minimum_Flash_Area",
@@ -131,9 +138,9 @@ BAND_CONFIGS = {
     "band_13": BAND_13_CONFIG,
     "band_9": BAND_9_CONFIG,
     "band_2": BAND_2_CONFIG,
-    "glm_fed": GLM_FED_CONFIG,
-    "glm_toe": GLM_TOE_CONFIG,
-    "glm_mfa": GLM_MFA_CONFIG,
+    "glm_folder_fed": GLM_FOLDER_FED_CONFIG,
+    "glm_folder_toe": GLM_FOLDER_TOE_CONFIG,
+    "glm_folder_mfa": GLM_FOLDER_MFA_CONFIG,
 }
 
 
