@@ -683,62 +683,10 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
     # Low reflectance (surface/ocean) = dark, high reflectance (clouds) = white
     VISIBLE_PALETTE = [f"#{i:02x}{i:02x}{i:02x}" for i in range(256)]
 
-    # Palette for GLM Flash Extent Density (FED)
-    # Range: 0–256 flashes per grid cell
-    # Ticks: 1, 2, 4, 8, 16, 32, 64, 128, 256
-    FED_PALETTE = _interpolate_palette(
-        [
-            (0, 0, 0, 139),  # 1 flash (Index 0): Dark navy
-            (1, 0, 0, 255),  # 2 flashes (Index 1): Blue
-            (3, 0, 191, 255),  # 4 flashes (Index 3): Light blue
-            (7, 0, 255, 0),  # 8 flashes (Index 7): Green
-            (15, 173, 255, 47),  # 16 flashes (Index 15): Green-yellow
-            (31, 255, 255, 0),  # 32 flashes (Index 31): Yellow
-            (63, 255, 165, 0),  # 64 flashes (Index 63): Orange
-            (127, 255, 0, 0),  # 128 flashes (Index 127): Red
-            (255, 255, 255, 255),  # 256 flashes (Index 255): White
-        ]
-    )
-
-    # Backward-compat alias — use FED_PALETTE in new code
-    LIGHTNING_PALETTE = FED_PALETTE
-
-    # Palette for GLM Total Optical Energy (TOE)
-    # Range: 0–1500 fJ per grid cell
-    # Ticks: 1, 5, 10, 25, 50, 100, 500, 1500 fJ
-    TOE_PALETTE = _interpolate_palette(
-        [
-            (0, 75, 0, 130),  # 1-5 fJ (Index 0): Dark purple
-            (1, 0, 0, 128),  # 10 fJ (Index 1): Dark blue
-            (4, 0, 0, 255),  # 25 fJ (Index 4): Blue
-            (8, 255, 105, 180),  # 50 fJ (Index 8): Hot Pink
-            (17, 255, 0, 255),  # 100 fJ (Index 17): Magenta
-            (85, 255, 165, 0),  # 500 fJ (Index 85): Orange
-            (170, 255, 255, 0),  # 1000 fJ (Index 170): Bright yellow
-            (255, 255, 255, 255),  # 1500 fJ (Index 255): White
-        ]
-    )
-
-    # Palette for GLM Minimum Flash Area (MFA)
-    # Range: 0–3000 km² per grid cell
-    # Ticks: ~60, 120, 300, 600, 1200, 2000, 3000 km²
-    MFA_PALETTE = _interpolate_palette(
-        [
-            (0, 255, 255, 0),  # ~0 km²:    Yellow (placeholder; 0→NaN→transparent)
-            (5, 255, 255, 0),  # ~60 km²:   Bright Yellow (strong updraft)
-            (10, 255, 200, 0),  # ~120 km²:  Yellow-Orange
-            (26, 0, 255, 0),  # ~300 km²:  Green
-            (51, 0, 128, 255),  # ~600 km²:  Light Blue
-            (102, 0, 0, 255),  # ~1200 km²: Blue
-            (170, 128, 0, 255),  # ~2000 km²: Purple
-            (255, 255, 0, 255),  # ~3000 km²: Magenta
-        ]
-    )
-
-    # Palettes for the folder-based GLM pipeline. Unlike FED/TOE/MFA above,
-    # these are *linearly* sampled across [0, 255] so that the new processor
-    # can apply a log10 pre-transform and reproduce SMN's LogNorm rendering
-    # exactly (see services.glm_aggregation for the data side).
+    # Palettes for the folder-based GLM pipeline. Linearly sampled 256-entry
+    # LUTs; the processor applies a log10 pre-transform on the data so the
+    # lookup reproduces SMN's matplotlib LogNorm rendering exactly. See
+    # services.glm_aggregation for the data side.
     GLM_FOLDER_FED_PALETTE = _sample_cmap(_GLM_FOLDER_FED_STOPS)
     GLM_FOLDER_TOE_PALETTE = _sample_cmap("magma")
     GLM_FOLDER_MFA_PALETTE = _sample_cmap("viridis_r")
@@ -747,10 +695,6 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
     def get_palette(cls, name: str) -> list[str]:
         """Look up a color palette by its BandConfig palette_name string."""
         palettes = {
-            "FED_PALETTE": cls.FED_PALETTE,
-            "TOE_PALETTE": cls.TOE_PALETTE,
-            "MFA_PALETTE": cls.MFA_PALETTE,
-            "LIGHTNING_PALETTE": cls.FED_PALETTE,
             "CLOUD_TOPS_PALETTE": cls.CLOUD_TOPS_PALETTE,
             "WATER_VAPOR_PALETTE": cls.WATER_VAPOR_PALETTE,
             "VISIBLE_PALETTE": cls.VISIBLE_PALETTE,

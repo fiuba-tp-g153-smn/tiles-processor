@@ -113,11 +113,9 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             return self._config.ENABLE_BAND_9
         if source_id == "goes19_abi_band_2":
             return self._config.ENABLE_BAND_2
-        # Check for GLM sources (legacy AWS source removed in Phase 5 cleanup;
-        # the active source is the folder-based one).
+        # Folder-based GLM (FED/TOE/MFA gated together via this single flag;
+        # TOE/MFA also have their own per-product flags inside the processor).
         if source_id == "glm_folder":
-            return self._config.ENABLE_GLM_FED
-        if source_id == "goes19_glm_fed":
             return self._config.ENABLE_GLM_FED
         # Check for radar sources (radar_DBZH, radar_VRAD, etc.)
         if source_id.startswith("radar_"):

@@ -1,8 +1,8 @@
 """GLM folder data source — groups pre-gridded 1-minute GLM netCDFs into windows.
 
 Equivalent to :class:`RadarDataSource` for folder-based discovery, but emits one
-:class:`ImageInfo` per N-minute aggregation window (mirroring the multi-file
-manifest pattern used by :class:`Goes19GlmDataSource`).
+:class:`ImageInfo` per N-minute aggregation window, with the file list encoded
+as a JSON manifest in ``source_uri``.
 """
 
 import json

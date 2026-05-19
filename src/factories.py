@@ -30,18 +30,13 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     registry = DataSourceRegistry()
 
     # BandConfigs that are produced as by-products of another source's processor
-    # and therefore must NOT get their own DataSource registration.
+    # and therefore must NOT get their own DataSource registration. The
+    # folder-based GLM pipeline registers exactly one source below, which emits
+    # FED/TOE/MFA tiles in the same processor run.
     combined_products = {
-        # Legacy AWS-based GLM configs — pipeline replaced by GlmFolderDataSource.
-        # Kept in BAND_CONFIGS for now; removed in the Phase 5 cleanup.
-        "glm_fed",
-        "glm_toe",
-        "glm_mfa",
-        # New folder-based GLM: only glm_folder_fed gets a DataSource; the
-        # processor emits TOE/MFA tiles in the same run.
+        "glm_folder_fed",
         "glm_folder_toe",
         "glm_folder_mfa",
-        "glm_folder_fed",
     }
 
     for _band_id, band_config in BAND_CONFIGS.items():

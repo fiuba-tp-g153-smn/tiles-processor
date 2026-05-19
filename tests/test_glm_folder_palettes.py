@@ -92,9 +92,8 @@ def test_glm_folder_band_configs_registered(
     assert cfg.file_pattern == "CG_GLM-L2-GLMF"
 
 
-def test_event_based_glm_configs_unchanged():
-    """Phase 3 must NOT alter the existing event-based GLM entries — Phase 4/5 removes them."""
-    assert get_band_config("glm_fed").vmax == 256.0
-    assert get_band_config("glm_fed").palette_name == "FED_PALETTE"
-    assert get_band_config("glm_toe").palette_name == "TOE_PALETTE"
-    assert get_band_config("glm_mfa").palette_name == "MFA_PALETTE"
+def test_legacy_event_based_glm_configs_are_gone():
+    """After Phase 5 cleanup the legacy AWS-based GLM BandConfigs must not exist."""
+    assert "glm_fed" not in BAND_CONFIGS
+    assert "glm_toe" not in BAND_CONFIGS
+    assert "glm_mfa" not in BAND_CONFIGS
