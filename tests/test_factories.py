@@ -74,6 +74,9 @@ class TestCreateDataSourceRegistry:
         config.ENABLE_ECMWF_PRECIPITATION = tp
         config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE = mslp
         config.RADAR_INPUT_DIR = "/tmp/radar"
+        config.GLM_FOLDER_INPUT_DIR = "/tmp/glm"
+        config.GLM_ACCUM_MINUTES = 10
+        config.GLM_PRODUCE_EVERY_MINUTES = 10
         return config
 
     def test_mslp_data_sources_registered_when_enabled(self):

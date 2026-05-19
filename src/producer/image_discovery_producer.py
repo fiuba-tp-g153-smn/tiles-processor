@@ -17,6 +17,7 @@ from data_sources import (
     DataSource,
     DataSourceRegistry,
     DiscoveryConfig,
+    GlmFolderDataSource,
     RadarDataSource,
 )
 from data_sources.goes19_base import Goes19BaseDataSource
@@ -99,7 +100,9 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         logger.info("Total work units published: %d", total_published)
         return total_published
 
-    def _is_source_enabled(self, data_source: DataSource) -> bool:
+    def _is_source_enabled(  # pylint: disable=too-many-return-statements
+        self, data_source: DataSource
+    ) -> bool:
         """Check if a data source is enabled in the config."""
         source_id = data_source.source_id
 
@@ -110,7 +113,10 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             return self._config.ENABLE_BAND_9
         if source_id == "goes19_abi_band_2":
             return self._config.ENABLE_BAND_2
-        # Check for GOES19 GLM sources
+        # Check for GLM sources (legacy AWS source removed in Phase 5 cleanup;
+        # the active source is the folder-based one).
+        if source_id == "glm_folder":
+            return self._config.ENABLE_GLM_FED
         if source_id == "goes19_glm_fed":
             return self._config.ENABLE_GLM_FED
         # Check for radar sources (radar_DBZH, radar_VRAD, etc.)
@@ -134,6 +140,13 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         """Discover and publish work units for a single data source."""
         # Get band_id from band_config or product_config (for radar)
         if isinstance(data_source, Goes19BaseDataSource):
+            band_id = data_source.band_config.band_id
+            existing_tilesets = await self._get_existing_tilesets(
+                data_source.band_config.s3_tiles_prefix
+            )
+        elif isinstance(data_source, GlmFolderDataSource):
+            # GLM folder source carries its BandConfig the same way as ABI/GLM
+            # AWS sources, but does not inherit from Goes19BaseDataSource.
             band_id = data_source.band_config.band_id
             existing_tilesets = await self._get_existing_tilesets(
                 data_source.band_config.s3_tiles_prefix

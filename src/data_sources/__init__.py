@@ -4,6 +4,7 @@ from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
 from data_sources.registry import DataSourceRegistry
 from data_sources.goes19_abi import Goes19AbiDataSource
 from data_sources.goes19_glm import Goes19GlmDataSource
+from data_sources.glm_folder import GlmFolderDataSource
 from data_sources.radar import RadarDataSource
 from data_sources.ecmwf_producer_source import EcmwfProducerDataSource
 from data_sources.ecmwf_period_source import EcmwfPeriodDataSource
@@ -15,6 +16,7 @@ __all__ = [
     "DataSourceRegistry",
     "Goes19AbiDataSource",
     "Goes19GlmDataSource",
+    "GlmFolderDataSource",
     "RadarDataSource",
     "EcmwfProducerDataSource",
     "EcmwfPeriodDataSource",

@@ -1,237 +1,205 @@
-"""Tests for GLM FED/TOE processor zero-flash window handling."""
+"""Tests for the folder-based GlmFedProcessor (CG_GLM-L2-GLMF inputs)."""
 
-import os
-import sys
-import warnings
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import numpy as np
 import pytest
+import rioxarray  # noqa: F401  # registers .rio accessor
 import xarray as xr
-
-import rioxarray  # noqa: F401  # ensures rio accessor is registered
 
 from models.work_unit import WorkUnit
 from processors.glm_fed_processor import GlmFedProcessor
-from services.processing_steps import compute_flash_extent_density, compute_glm_grids
-
-BOUNDS = {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15}
-RESOLUTION = 0.02
 
 
-def _make_empty_glm_dataset():
-    """Return a mock xr.Dataset whose flash arrays are empty.
-
-    Uses side_effect on __getitem__ so each key gets its own .values,
-    avoiding the MagicMock pitfall where a single return_value is shared.
-    """
-    _data = {
-        "flash_lat": np.array([], dtype=np.float32),
-        "flash_lon": np.array([], dtype=np.float32),
-        "flash_energy": np.array([], dtype=np.float32),
-        "flash_area": np.array([], dtype=np.float32),
-    }
-    mock_ds = MagicMock()
-    mock_ds.__enter__ = MagicMock(return_value=mock_ds)
-    mock_ds.__exit__ = MagicMock(return_value=False)
-
-    def _getitem(key):
-        child = MagicMock()
-        child.values = _data[key]
-        return child
-
-    mock_ds.__getitem__.side_effect = _getitem
-    return mock_ds
+SMALL_BOUNDS = {"minx": -80.0, "maxx": -78.0, "miny": -50.0, "maxy": -48.0}
 
 
-def _make_fed_data_array(bounds: dict, resolution: float = RESOLUTION) -> xr.DataArray:
-    """Create a properly georeferenced all-NaN FED DataArray."""
-    lon_bins = np.arange(bounds["minx"], bounds["maxx"] + resolution, resolution)
-    lat_bins = np.arange(bounds["miny"], bounds["maxy"] + resolution, resolution)
-    lon_centers = (lon_bins[:-1] + lon_bins[1:]) / 2
-    lat_centers = (lat_bins[:-1] + lat_bins[1:]) / 2
-    data = np.full((len(lat_centers), len(lon_centers)), np.nan, dtype=np.float64)
-    fed = xr.DataArray(
+def _fake_reprojected_array(bounds: dict) -> xr.DataArray:
+    """Return a tiny EPSG:4326 DataArray that survives the colorize/COG/GeoTIFF chain."""
+    lon = np.array([bounds["minx"], bounds["maxx"]], dtype=np.float64)
+    lat = np.array([bounds["maxy"], bounds["miny"]], dtype=np.float64)
+    data = np.array([[10.0, 50.0], [np.nan, 100.0]], dtype=np.float32)
+    da = xr.DataArray(
         data,
-        dims=["y", "x"],
-        coords={"x": lon_centers, "y": lat_centers},
-        name="Flash_Extent_Density",
+        dims=("y", "x"),
+        coords={"x": lon, "y": lat},
+        name="aggregated_glm_var",
     )
-    fed.rio.write_crs("EPSG:4326", inplace=True)
-    fed.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
-    return fed
+    da.rio.write_crs("EPSG:4326", inplace=True)
+    da.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+    return da
 
 
-class TestZeroFlashFedGrid:
-    """compute_glm_grids / compute_flash_extent_density behave correctly when no flashes present."""
-
-    def test_zero_flash_returns_all_nan_dataarray(self, tmp_path):
-        """Empty flash arrays yield an all-NaN DataArray named Flash_Extent_Density."""
-        fake_files = [
-            tmp_path
-            / "OR_GLM-L2-LCFA_G19_s2026044120000_e2026044120200_c2026044120200.nc",
-            tmp_path
-            / "OR_GLM-L2-LCFA_G19_s2026044120200_e2026044120400_c2026044120400.nc",
-        ]
-        mock_ds = _make_empty_glm_dataset()
-
-        with patch("services.processing_steps.xr.open_dataset", return_value=mock_ds):
-            with warnings.catch_warnings():
-                warnings.filterwarnings("error", category=RuntimeWarning)
-                result = compute_flash_extent_density(fake_files, BOUNDS, RESOLUTION)
-
-        assert isinstance(result, xr.DataArray)
-        assert result.name == "Flash_Extent_Density"
-        assert result.dims == ("y", "x")
-        assert np.all(np.isnan(result.values))
-
-    def test_zero_flash_shape_matches_bounds(self, tmp_path):
-        """Grid shape matches the expected cell count derived from bounds + resolution."""
-        fake_files = [
-            tmp_path
-            / "OR_GLM-L2-LCFA_G19_s2026044120000_e2026044120200_c2026044120200.nc",
-        ]
-        mock_ds = _make_empty_glm_dataset()
-
-        with patch("services.processing_steps.xr.open_dataset", return_value=mock_ds):
-            result = compute_flash_extent_density(fake_files, BOUNDS, RESOLUTION)
-
-        lon_bins = np.arange(BOUNDS["minx"], BOUNDS["maxx"] + RESOLUTION, RESOLUTION)
-        lat_bins = np.arange(BOUNDS["miny"], BOUNDS["maxy"] + RESOLUTION, RESOLUTION)
-        expected_rows = len(lat_bins) - 1
-        expected_cols = len(lon_bins) - 1
-        assert result.shape == (expected_rows, expected_cols)
-
-    def test_compute_glm_grids_returns_both_arrays(self, tmp_path):
-        """compute_glm_grids returns (fed, toe, mfa) tuple, all all-NaN when no flashes."""
-        fake_files = [
-            tmp_path
-            / "OR_GLM-L2-LCFA_G19_s2026044120000_e2026044120200_c2026044120200.nc",
-        ]
-        mock_ds = _make_empty_glm_dataset()
-
-        with patch("services.processing_steps.xr.open_dataset", return_value=mock_ds):
-            fed, toe, mfa = compute_glm_grids(fake_files, BOUNDS, RESOLUTION)
-
-        assert fed.name == "Flash_Extent_Density"
-        assert toe.name == "Total_Optical_Energy"
-        assert mfa.name == "Minimum_Flash_Area"
-        assert fed.shape == toe.shape == mfa.shape
-        assert np.all(np.isnan(fed.values))
-        assert np.all(np.isnan(toe.values))
-        assert np.all(np.isnan(mfa.values))
+def _make_work_unit(window_start: datetime) -> WorkUnit:
+    manifest = json.dumps(
+        {
+            "window_start": window_start.isoformat(),
+            "files": ["/data/glm_h5/file1.nc", "/data/glm_h5/file2.nc"],
+        }
+    )
+    return WorkUnit.create(
+        image_id="20260611400000",
+        source_uri=manifest,
+        data_source_id="glm_folder",
+        processor_id="glm_fed",
+        output_prefix="tiles/glm_fed",
+        bounds=SMALL_BOUNDS,
+        band_id="glm_folder_fed",
+    )
 
 
-class TestZeroFlashWindowPipeline:
-    """GlmFedProcessor completes and uploads tiles for a zero-flash window."""
+def _make_config(tmp_path: Path, *, enable_toe: bool, enable_mfa: bool) -> MagicMock:
+    config = MagicMock()
+    config.TMP_DIR = str(tmp_path / "proc")
+    config.ENABLE_GLM_TOE = enable_toe
+    config.ENABLE_GLM_MFA = enable_mfa
+    config.GLM_ACCUM_MINUTES = 10
+    config.GLM_RESOLUTION_DEG = 1.0
+    return config
 
-    # Small bounds → tiny GeoTIFF, fast rio.to_raster call
-    _SMALL_BOUNDS = {"minx": -80, "miny": -50, "maxx": -70, "maxy": -40}
-    _SMALL_RESOLUTION = 1.0
 
-    @pytest.mark.asyncio
-    async def test_zero_flash_window_uploads_tiles(self, tmp_path):
-        """upload_directory is called exactly once (FED only) when TOE and MFA are disabled."""
-        config = MagicMock()
-        config.TMP_DIR = str(tmp_path / "proc")
-        config.ENABLE_GLM_TOE = False
-        config.ENABLE_GLM_MFA = False
+def _make_processor(config: MagicMock) -> GlmFedProcessor:
+    mock_s3 = AsyncMock()
+    mock_s3.upload_directory = AsyncMock()
+    mock_s3.ensure_bucket_exists = AsyncMock()
+    mock_s3.upload_file = AsyncMock(return_value=True)
+    with patch("processors.glm_fed_processor.create_s3_client", return_value=mock_s3):
+        processor = GlmFedProcessor(config)
+    processor.test_s3 = mock_s3  # expose for assertions
+    return processor
 
-        mock_s3 = AsyncMock()
-        mock_s3.upload_directory = AsyncMock()
-        mock_s3.ensure_bucket_exists = AsyncMock()
 
-        with patch(
-            "processors.glm_fed_processor.create_s3_client", return_value=mock_s3
-        ):
-            processor = GlmFedProcessor(config)
+def _populate_data_dir(tmp_path: Path) -> Path:
+    data_dir = tmp_path / "glm_window"
+    data_dir.mkdir()
+    (data_dir / "CG_GLM-L2-GLMF-M3_G19_s20260611400000_e20260611401000_c0.nc").touch()
+    return data_dir
 
-        # A data directory with at least one matching GLM file name
-        data_dir = tmp_path / "glm_window"
-        data_dir.mkdir()
-        (
-            data_dir
-            / "OR_GLM-L2-LCFA_G19_s2026044120000_e2026044120200_c2026044120200.nc"
-        ).touch()
 
-        # Fake tiles directory that run_gdal2tiles would return
-        fake_tiles_dir = tmp_path / "fake_tiles"
-        fake_tiles_dir.mkdir()
+@pytest.mark.asyncio
+async def test_fed_only_uploads_once(tmp_path):
+    """With TOE/MFA disabled, only FED's tiles+COG should hit S3."""
+    config = _make_config(tmp_path, enable_toe=False, enable_mfa=False)
+    processor = _make_processor(config)
+    data_dir = _populate_data_dir(tmp_path)
+    work_unit = _make_work_unit(datetime(2026, 3, 2, 14, 0, tzinfo=timezone.utc))
 
-        work_unit = WorkUnit.create(
-            image_id="20260213120000",
-            source_uri="test://unused",
-            data_source_id="goes19_glm",
-            processor_id="glm_fed",
-            output_prefix="tiles/glm_fed",
-            bounds=self._SMALL_BOUNDS,
-            band_id="glm_fed",
-        )
+    fake_tiles_dir = tmp_path / "fake_tiles"
+    fake_tiles_dir.mkdir()
 
-        fed_data = _make_fed_data_array(self._SMALL_BOUNDS, self._SMALL_RESOLUTION)
+    with patch(
+        "processors.glm_fed_processor.aggregate_glm_window",
+        return_value=MagicMock(close=lambda: None),
+    ), patch(
+        "processors.glm_fed_processor.reproject_to_latlon",
+        return_value=_fake_reprojected_array(SMALL_BOUNDS),
+    ), patch(
+        "processors.glm_fed_processor.run_gdal2tiles",
+        return_value=fake_tiles_dir,
+    ), patch(
+        "processors.glm_fed_processor.fill_missing_tiles",
+        return_value=0,
+    ):
+        await processor.process(str(data_dir), work_unit)
 
-        with patch(
-            "processors.glm_fed_processor.compute_glm_grids",
-            return_value=(fed_data, fed_data, fed_data),
-        ), patch(
-            "processors.glm_fed_processor.run_gdal2tiles",
-            return_value=fake_tiles_dir,
-        ):
-            await processor.process(str(data_dir), work_unit)
+    assert processor.test_s3.upload_directory.await_count == 1
+    assert processor.test_s3.upload_file.await_count == 1  # COG
 
-        mock_s3.upload_directory.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_toe_enabled_uploads_twice(self, tmp_path):
-        """upload_directory is called twice (FED + TOE) when ENABLE_GLM_TOE is True."""
-        config = MagicMock()
-        config.TMP_DIR = str(tmp_path / "proc")
-        config.ENABLE_GLM_TOE = True
-        config.ENABLE_GLM_MFA = False
+@pytest.mark.asyncio
+async def test_toe_and_mfa_enabled_uploads_three_times(tmp_path):
+    config = _make_config(tmp_path, enable_toe=True, enable_mfa=True)
+    processor = _make_processor(config)
+    data_dir = _populate_data_dir(tmp_path)
+    work_unit = _make_work_unit(datetime(2026, 3, 2, 14, 0, tzinfo=timezone.utc))
 
-        mock_s3 = AsyncMock()
-        mock_s3.upload_directory = AsyncMock()
-        mock_s3.ensure_bucket_exists = AsyncMock()
+    fake_tiles_dir = tmp_path / "fake_tiles"
+    fake_tiles_dir.mkdir()
 
-        with patch(
-            "processors.glm_fed_processor.create_s3_client", return_value=mock_s3
-        ):
-            processor = GlmFedProcessor(config)
+    with patch(
+        "processors.glm_fed_processor.aggregate_glm_window",
+        return_value=MagicMock(close=lambda: None),
+    ), patch(
+        "processors.glm_fed_processor.reproject_to_latlon",
+        side_effect=lambda *_a, **_kw: _fake_reprojected_array(SMALL_BOUNDS),
+    ), patch(
+        "processors.glm_fed_processor.run_gdal2tiles",
+        return_value=fake_tiles_dir,
+    ), patch(
+        "processors.glm_fed_processor.fill_missing_tiles",
+        return_value=0,
+    ):
+        await processor.process(str(data_dir), work_unit)
 
-        data_dir = tmp_path / "glm_window"
-        data_dir.mkdir()
-        (
-            data_dir
-            / "OR_GLM-L2-LCFA_G19_s2026044120000_e2026044120200_c2026044120200.nc"
-        ).touch()
+    assert processor.test_s3.upload_directory.await_count == 3
+    assert processor.test_s3.upload_file.await_count == 3
 
-        fake_tiles_dir = tmp_path / "fake_tiles"
-        fake_tiles_dir.mkdir()
 
-        work_unit = WorkUnit.create(
-            image_id="20260213120000",
-            source_uri="test://unused",
-            data_source_id="goes19_glm",
-            processor_id="glm_fed",
-            output_prefix="tiles/glm_fed",
-            bounds=self._SMALL_BOUNDS,
-            band_id="glm_fed",
-        )
+@pytest.mark.asyncio
+async def test_missing_glm_files_raises(tmp_path):
+    config = _make_config(tmp_path, enable_toe=False, enable_mfa=False)
+    processor = _make_processor(config)
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    work_unit = _make_work_unit(datetime(2026, 3, 2, 14, 0, tzinfo=timezone.utc))
 
-        fed_data = _make_fed_data_array(self._SMALL_BOUNDS, self._SMALL_RESOLUTION)
+    with pytest.raises(FileNotFoundError, match="CG_GLM-L2-GLMF"):
+        await processor.process(str(empty_dir), work_unit)
 
-        with patch(
-            "processors.glm_fed_processor.compute_glm_grids",
-            side_effect=[
-                (fed_data, fed_data, fed_data),  # 0.08° call: FED + MFA
-                (fed_data, fed_data, fed_data),  # 0.02° call: TOE
-            ],
-        ), patch(
-            "processors.glm_fed_processor.run_gdal2tiles",
-            return_value=fake_tiles_dir,
-        ):
-            await processor.process(str(data_dir), work_unit)
 
-        assert mock_s3.upload_directory.call_count == 2
+@pytest.mark.asyncio
+async def test_aggregate_called_with_window_from_manifest(tmp_path):
+    """The aggregation window must come from the JSON manifest + config.GLM_ACCUM_MINUTES."""
+    config = _make_config(tmp_path, enable_toe=False, enable_mfa=False)
+    processor = _make_processor(config)
+    data_dir = _populate_data_dir(tmp_path)
+    window_start = datetime(2026, 3, 2, 14, 0, tzinfo=timezone.utc)
+    work_unit = _make_work_unit(window_start)
+
+    fake_tiles_dir = tmp_path / "fake_tiles"
+    fake_tiles_dir.mkdir()
+
+    aggregate_mock = MagicMock(return_value=MagicMock(close=lambda: None))
+    with patch(
+        "processors.glm_fed_processor.aggregate_glm_window", aggregate_mock
+    ), patch(
+        "processors.glm_fed_processor.reproject_to_latlon",
+        return_value=_fake_reprojected_array(SMALL_BOUNDS),
+    ), patch(
+        "processors.glm_fed_processor.run_gdal2tiles",
+        return_value=fake_tiles_dir,
+    ), patch(
+        "processors.glm_fed_processor.fill_missing_tiles",
+        return_value=0,
+    ):
+        await processor.process(str(data_dir), work_unit)
+
+    call_args = aggregate_mock.call_args
+    files_arg, win_start_arg, win_end_arg, accum_arg = call_args.args
+    assert [Path(f).name for f in files_arg] == [
+        "CG_GLM-L2-GLMF-M3_G19_s20260611400000_e20260611401000_c0.nc"
+    ]
+    assert win_start_arg == window_start
+    assert win_end_arg == datetime(2026, 3, 2, 14, 10, tzinfo=timezone.utc)
+    assert accum_arg == 10
+
+
+def test_log_clip_preserves_nan_and_takes_log10():
+    """_log_clip should clamp to [vmin, vmax] and apply base-10 log; NaN stays NaN."""
+    # pylint: disable=import-outside-toplevel,protected-access
+    from processors.glm_fed_processor import _log_clip
+
+    da = xr.DataArray(
+        np.array([0.5, 1.0, 10.0, 1000.0, np.nan], dtype=np.float32),
+        dims=("x",),
+    )
+    out = _log_clip(da, vmin=1.0, vmax=100.0)
+    values = out.values
+    assert np.isclose(values[0], 0.0)  # 0.5 clipped to 1 → log10(1) = 0
+    assert np.isclose(values[1], 0.0)  # 1 → log10(1) = 0
+    assert np.isclose(values[2], 1.0)  # 10 → log10(10) = 1
+    assert np.isclose(values[3], 2.0)  # 1000 clipped to 100 → log10(100) = 2
+    assert np.isnan(values[4])
