@@ -66,6 +66,56 @@ def _interpolate_palette(  # pylint: disable=too-many-locals
     return result
 
 
+def _sample_cmap(name_or_hex_stops, n: int = 256) -> list[str]:
+    """Return ``n`` evenly-spaced hex samples from a matplotlib colormap.
+
+    Args:
+        name_or_hex_stops: Either a registered matplotlib cmap name (e.g.
+            ``"magma"``, ``"viridis_r"``) or a list of hex color stops that
+            will be expanded with :func:`LinearSegmentedColormap.from_list`.
+    """
+    # Local import: matplotlib is heavy and not needed unless palettes are built.
+    # pylint: disable=import-outside-toplevel
+    from matplotlib import colormaps
+    from matplotlib.colors import LinearSegmentedColormap
+
+    if isinstance(name_or_hex_stops, str):
+        cmap = colormaps[name_or_hex_stops]
+    else:
+        cmap = LinearSegmentedColormap.from_list(
+            "_glm_folder_cmap", list(name_or_hex_stops)
+        )
+
+    samples = cmap(np.linspace(0.0, 1.0, n))
+    return [
+        f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+        for r, g, b, _alpha in samples
+    ]
+
+
+# Reference 17-color stops for FED, ported from
+# data/glm_codigos/grafico_glmtools_viejo.py:102-105.
+_GLM_FOLDER_FED_STOPS: list[str] = [
+    "#0000b8",
+    "#0702c1",
+    "#0f05cb",
+    "#1808d6",
+    "#1f0bdf",
+    "#280eeb",
+    "#2f10f4",
+    "#3813fe",
+    "#2d49ff",
+    "#1e92ff",
+    "#12dfff",
+    "#5bfdb6",
+    "#d5ff3c",
+    "#ffad12",
+    "#f73611",
+    "#cc0e4e",
+    "#f9e5e7",
+]
+
+
 class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
     """
     Generates colorized RGBA GeoTIFF files from brightness temperature data.
@@ -685,6 +735,14 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
         ]
     )
 
+    # Palettes for the folder-based GLM pipeline. Unlike FED/TOE/MFA above,
+    # these are *linearly* sampled across [0, 255] so that the new processor
+    # can apply a log10 pre-transform and reproduce SMN's LogNorm rendering
+    # exactly (see services.glm_aggregation for the data side).
+    GLM_FOLDER_FED_PALETTE = _sample_cmap(_GLM_FOLDER_FED_STOPS)
+    GLM_FOLDER_TOE_PALETTE = _sample_cmap("magma")
+    GLM_FOLDER_MFA_PALETTE = _sample_cmap("viridis_r")
+
     @classmethod
     def get_palette(cls, name: str) -> list[str]:
         """Look up a color palette by its BandConfig palette_name string."""
@@ -696,6 +754,9 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
             "CLOUD_TOPS_PALETTE": cls.CLOUD_TOPS_PALETTE,
             "WATER_VAPOR_PALETTE": cls.WATER_VAPOR_PALETTE,
             "VISIBLE_PALETTE": cls.VISIBLE_PALETTE,
+            "GLM_FOLDER_FED_PALETTE": cls.GLM_FOLDER_FED_PALETTE,
+            "GLM_FOLDER_TOE_PALETTE": cls.GLM_FOLDER_TOE_PALETTE,
+            "GLM_FOLDER_MFA_PALETTE": cls.GLM_FOLDER_MFA_PALETTE,
         }
         if name not in palettes:
             raise ValueError(f"Unknown palette '{name}'. Valid: {list(palettes)}")

@@ -126,6 +126,42 @@ GLM_MFA_CONFIG = BandConfig(
     product_name="GLM_Minimum_Flash_Area",
 )
 
+# Folder-based GLM pipeline (CG_GLM-L2-GLMF inputs, LogNorm rendering).
+# vmin/vmax are the SMN reference LogNorm ranges in the variable's native
+# units; the processor takes log10 before normalize_and_colorize.
+GLM_FOLDER_FED_CONFIG = BandConfig(
+    band_id="glm_folder_fed",
+    file_pattern="CG_GLM-L2-GLMF",
+    vmin=1.0,
+    vmax=128.0,  # flashes / cell (LogNorm)
+    palette_name="GLM_FOLDER_FED_PALETTE",
+    s3_tiles_prefix="tiles/glm_fed",
+    s3_cog_prefix="cog/glm_fed",
+    product_name="GLM_Flash_Extent_Density",
+)
+
+GLM_FOLDER_TOE_CONFIG = BandConfig(
+    band_id="glm_folder_toe",
+    file_pattern="CG_GLM-L2-GLMF",
+    vmin=0.01,
+    vmax=1500.0,  # fJ / cell (LogNorm)
+    palette_name="GLM_FOLDER_TOE_PALETTE",
+    s3_tiles_prefix="tiles/glm_toe",
+    s3_cog_prefix="cog/glm_toe",
+    product_name="GLM_Total_Optical_Energy",
+)
+
+GLM_FOLDER_MFA_CONFIG = BandConfig(
+    band_id="glm_folder_mfa",
+    file_pattern="CG_GLM-L2-GLMF",
+    vmin=64.0,
+    vmax=2500.0,  # km² / cell (LogNorm)
+    palette_name="GLM_FOLDER_MFA_PALETTE",
+    s3_tiles_prefix="tiles/glm_mfa",
+    s3_cog_prefix="cog/glm_mfa",
+    product_name="GLM_Minimum_Flash_Area",
+)
+
 # Registry for looking up band configs by ID
 BAND_CONFIGS = {
     "band_13": BAND_13_CONFIG,
@@ -134,6 +170,9 @@ BAND_CONFIGS = {
     "glm_fed": GLM_FED_CONFIG,
     "glm_toe": GLM_TOE_CONFIG,
     "glm_mfa": GLM_MFA_CONFIG,
+    "glm_folder_fed": GLM_FOLDER_FED_CONFIG,
+    "glm_folder_toe": GLM_FOLDER_TOE_CONFIG,
+    "glm_folder_mfa": GLM_FOLDER_MFA_CONFIG,
 }
 
 
