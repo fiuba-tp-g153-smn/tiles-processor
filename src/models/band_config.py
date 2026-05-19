@@ -110,8 +110,12 @@ GLM_FOLDER_FED_CONFIG = BandConfig(
 GLM_FOLDER_TOE_CONFIG = BandConfig(
     band_id="glm_folder_toe",
     file_pattern="CG_GLM-L2-GLMF",
+    # ``total_energy`` is converted from nJ to fJ inside aggregate_glm_window
+    # so this range matches the SMN reference (grafico_glmtools_viejo.py:122)
+    # 1:1 and reads at the same magnitude as FED's (1, 128) and MFA's
+    # (64, 2500).
     vmin=0.01,
-    vmax=1500.0,  # fJ / cell (LogNorm)
+    vmax=1500.0,
     palette_name="GLM_FOLDER_TOE_PALETTE",
     s3_tiles_prefix="tiles/glm_toe",
     s3_cog_prefix="cog/glm_toe",

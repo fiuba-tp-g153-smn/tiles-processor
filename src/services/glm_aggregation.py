@@ -108,6 +108,16 @@ def aggregate_glm_window(
         if var in aggregated.data_vars:
             aggregated[var] = aggregated[var].where(aggregated[var] > 0)
 
+    # CG_GLM-L2-GLMF ships ``total_energy`` in nanojoules. The SMN reference
+    # (data/glm_codigos/grafico_glmtools_viejo.py:122) and our BandConfig
+    # vmin/vmax for TOE are in femtojoules (1 nJ = 1e6 fJ). Convert here so
+    # every downstream consumer — COG, tiles, BandConfig — operates in fJ. This
+    # also keeps the BandConfig literal range readable (0.01, 1500), at the
+    # same magnitude as FED's (1, 128) and MFA's (64, 2500).
+    if "total_energy" in aggregated.data_vars:
+        aggregated["total_energy"] = aggregated["total_energy"] * 1e6
+        aggregated["total_energy"].attrs["units"] = "fJ"
+
     return aggregated
 
 

@@ -88,6 +88,64 @@ def test_aggregate_emits_nan_for_empty_fed_toe_cells():
     assert np.isnan(aggregated["minimum_flash_area"].values).any()
 
 
+def test_aggregate_converts_total_energy_to_fj():
+    """aggregate_glm_window must rescale total_energy from nJ to fJ.
+
+    Source files carry ``total_energy.attrs.units = "nJ"`` but the SMN
+    reference + BandConfig operate in fJ; the conversion happens once at the
+    aggregation step so every downstream consumer (COG, tiles, BandConfig)
+    sees fJ.
+    """
+    _require_sample_files()
+
+    aggregated = aggregate_glm_window(
+        SAMPLE_FILES,
+        window_start=datetime(2026, 3, 2, 14, 0),
+        window_end=datetime(2026, 3, 2, 14, 3),
+        accum_minutes=3,
+    )
+    assert aggregated["total_energy"].attrs.get("units") == "fJ"
+    # Sanity-check magnitude: post-conversion the typical lightning cell has
+    # values in the ones-to-tens-of-fJ range; pre-conversion (nJ) the maximum
+    # is < 1.
+    values = aggregated["total_energy"].values
+    valid = values[~np.isnan(values)]
+    assert float(np.nanmax(valid)) > 1.0, (
+        f"total_energy max is {float(np.nanmax(valid)):.3e}; conversion to fJ "
+        "appears not to have run."
+    )
+
+
+def test_aggregated_toe_overlaps_configured_lognorm_range():
+    """Most aggregated TOE cells must fall inside the BandConfig LogNorm range.
+
+    Guards against the nJ-vs-fJ unit mismatch that previously left TOE tiles
+    blank: if the conversion in aggregate_glm_window stops happening, or if
+    vmin/vmax drift back to nJ-scale values, the overlap collapses.
+    """
+    _require_sample_files()
+    from models.band_config import (  # pylint: disable=import-outside-toplevel
+        get_band_config,
+    )
+
+    aggregated = aggregate_glm_window(
+        SAMPLE_FILES,
+        window_start=datetime(2026, 3, 2, 14, 0),
+        window_end=datetime(2026, 3, 2, 14, 3),
+        accum_minutes=3,
+    )
+    cfg = get_band_config("glm_folder_toe")
+    valid = aggregated["total_energy"].values
+    valid = valid[~np.isnan(valid)]
+    in_range = int(((valid >= cfg.vmin) & (valid <= cfg.vmax)).sum())
+    assert in_range > 0
+    assert in_range / len(valid) > 0.5, (
+        f"<50% of TOE cells inside [{cfg.vmin}, {cfg.vmax}]; either the "
+        f"nJ→fJ conversion drifted or vmin/vmax got rescaled. "
+        f"Real range: {valid.min():.3e}..{valid.max():.3e}"
+    )
+
+
 def test_reproject_carries_nan_nodata():
     """Reprojection must produce a NaN-nodata raster, not a 0-filled one."""
     _require_sample_files()
