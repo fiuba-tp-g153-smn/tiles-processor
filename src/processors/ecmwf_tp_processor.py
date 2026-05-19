@@ -20,6 +20,7 @@ from processors.base_processor import ImageProcessor
 from services.processing_steps import (
     build_rgba_data_array,
     fill_missing_tiles,
+    prewarp_to_mercator_grid,
     run_gdal2tiles,
     save_as_cog,
     threshold_colorize,
@@ -27,7 +28,8 @@ from services.processing_steps import (
 
 logger = logging.getLogger(__name__)
 
-_ZOOM_LEVELS = "3-7"
+_MAX_ZOOM = 7
+_ZOOM_LEVELS = f"3-{_MAX_ZOOM}"
 _GDAL_PROCESSES = 2
 
 
@@ -79,8 +81,13 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
         gc.collect()
         self._check_shutdown()
 
+        prewarped_path = await asyncio.to_thread(
+            prewarp_to_mercator_grid, geotiff_path, geotiff_dir, _MAX_ZOOM
+        )
+        self._check_shutdown()
+
         tiles_output_dir = await asyncio.to_thread(
-            run_gdal2tiles, geotiff_path, tiles_dir, _ZOOM_LEVELS, _GDAL_PROCESSES
+            run_gdal2tiles, prewarped_path, tiles_dir, _ZOOM_LEVELS, _GDAL_PROCESSES
         )
         await asyncio.to_thread(
             fill_missing_tiles, tiles_output_dir, work_unit.bounds, _ZOOM_LEVELS
@@ -91,6 +98,7 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
 
         # Cleanup intermediate files (WorkHandler cleans up the parent work_dir)
         self._cleanup_file(geotiff_path)
+        self._cleanup_file(prewarped_path)
         self._cleanup_file(cog_path)
         self._cleanup_directory(tiles_output_dir)
 
