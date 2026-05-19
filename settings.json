@@ -10,18 +10,18 @@
   "ecmwf_mslp_smoothing_sigma": 1.5,
   "features": {
     "enable_band_13": true,
-    "enable_band_9": false,
-    "enable_band_2": false,
+    "enable_band_9": true,
+    "enable_band_2": true,
     "enable_glm_fed": true,
     "enable_glm_toe": true,
     "enable_glm_mfa": true,
-    "enable_radar_DBZH": false,
-    "enable_radar_ZDR": false,
-    "enable_radar_RHOHV": false,
-    "enable_radar_KDP": false,
-    "enable_radar_VRAD": false,
-    "enable_ecmwf_precipitation": false,
-    "enable_ecmwf_mean_sea_level_pressure": false
+    "enable_radar_DBZH": true,
+    "enable_radar_ZDR": true,
+    "enable_radar_RHOHV": true,
+    "enable_radar_KDP": true,
+    "enable_radar_VRAD": true,
+    "enable_ecmwf_precipitation": true,
+    "enable_ecmwf_mean_sea_level_pressure": true
   },
   "bounds": {
     "minx": -110.0,
