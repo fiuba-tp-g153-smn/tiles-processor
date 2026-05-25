@@ -28,6 +28,7 @@ apscheduler = "^3.11.2"
 pytz = "^2025.2"
 h5py = "^3.15.1"
 arm-pyart = "^1.19.5"
+wradlib = "~2.7.1"
 rasterio = "^1.4.3"
 matplotlib = "^3.10.0"
 requests = "^2.32.5"
@@ -74,6 +75,8 @@ module = [
     "requests",
     "glmtools",
     "glmtools.*",
+    "wradlib",
+    "wradlib.*",
 ]
 ignore_missing_imports = true
 

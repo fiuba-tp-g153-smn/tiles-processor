@@ -29,7 +29,7 @@ from rasterio.crs import CRS  # pylint: disable=no-name-in-module
 from config import Config
 from factories import create_s3_client
 from models.work_unit import WorkUnit
-from models.radar_config import get_radar_product_config, parse_radar_filename
+from models.radar_config import get_radar_product_config, parse_radar_file
 from processors.base_processor import ImageProcessor
 from models.radar_palettes import get_palette, mask_radar_data
 from processors.base_processor import ImageProcessor
@@ -75,7 +75,7 @@ class RadarProcessor(ImageProcessor):
 
         # Parse filename to get product info
         original_filename = Path(work_unit.source_uri).name
-        parsed = parse_radar_filename(original_filename)
+        parsed = parse_radar_file(original_filename)
         product_id = parsed["variable"]
         product_config = get_radar_product_config(product_id)
 
@@ -199,13 +199,16 @@ class RadarProcessor(ImageProcessor):
                 shutil.rmtree(work_dir, ignore_errors=True)
 
     def _read_radar(self, h5_path: Path):
-        """Read H5 radar file using PyART (SINARAME HDF5 format)."""
+        """Read radar file using PyART. Dispatches by extension:
+        .vol → Rainbow5 (INTA), .h5/.H5 → SINARAME (RMA)."""
         import pyart  # pylint: disable=import-outside-toplevel
 
         logger.info("[RADAR] Reading %s", h5_path.name)
 
-        # Use SINARAME reader for Argentine radar files
-        radar = pyart.aux_io.read_sinarame_h5(str(h5_path))
+        if h5_path.suffix.lower() == ".vol":
+            radar = pyart.aux_io.read_rainbow_wrl(str(h5_path))
+        else:
+            radar = pyart.aux_io.read_sinarame_h5(str(h5_path))
 
         logger.info(
             "[RADAR] Fields: %s, Sweeps: %d, Center: (%.4f, %.4f)",

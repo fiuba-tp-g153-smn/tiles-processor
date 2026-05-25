@@ -18,14 +18,17 @@ class RadarFileRepository(ABC):
 
 
 class LocalRadarFileRepository(RadarFileRepository):
-    """Reads H5 files from a local directory.
+    """Reads radar files from a local directory.
 
     Supports two layouts:
-      - Flat:   <input_dir>/*.H5
-      - Nested: <input_dir>/RMA*/*.H5 (or any subdirectory)
+      - Flat:   <input_dir>/*.H5 or <input_dir>/*.vol
+      - Nested: <input_dir>/RMA*/*.H5 or <input_dir>/PAR/*.vol (any subdirectory)
 
     Both layouts are scanned and their files are merged.
+    Supported extensions: .H5, .h5 (SINARAME/RMA), .vol, .VOL (Rainbow5/INTA).
     """
+
+    _GLOBS = ("*.H5", "*.h5", "*.vol", "*.VOL")
 
     def __init__(self, input_dir: Path) -> None:
         self._input_dir = input_dir
@@ -36,15 +39,13 @@ class LocalRadarFileRepository(RadarFileRepository):
 
         files: list[Path] = []
 
-        # Flat files at root level
-        files.extend(self._input_dir.glob("*.H5"))
-        files.extend(self._input_dir.glob("*.h5"))
+        for pattern in self._GLOBS:
+            files.extend(self._input_dir.glob(pattern))
 
-        # Nested per-radar subdirs
         for subdir in self._input_dir.iterdir():
             if subdir.is_dir():
-                files.extend(subdir.glob("*.H5"))
-                files.extend(subdir.glob("*.h5"))
+                for pattern in self._GLOBS:
+                    files.extend(subdir.glob(pattern))
 
         return [str(f.absolute()) for f in sorted(files)]
 
@@ -52,7 +53,7 @@ class LocalRadarFileRepository(RadarFileRepository):
         source_path = Path(source_uri)
         if not source_path.exists():
             raise FileNotFoundError(f"Radar file not found: {source_uri}")
-        dest_with_ext = dest_path.with_suffix(".H5")
+        dest_with_ext = dest_path.with_suffix(source_path.suffix)
         dest_with_ext.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, dest_with_ext)
         return dest_with_ext

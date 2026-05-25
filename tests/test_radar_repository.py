@@ -85,3 +85,50 @@ async def test_download_raises_for_missing_file(tmp_path):
     repo = LocalRadarFileRepository(tmp_path)
     with pytest.raises(FileNotFoundError):
         await repo.download(str(tmp_path / "missing.H5"), tmp_path / "out")
+
+
+@pytest.fixture()
+def vol_flat(tmp_path):
+    """Flat layout: .vol files at root of input_dir."""
+    for name in ["2026052115400400dBZ.vol", "2026052115500400dBZ.vol"]:
+        (tmp_path / name).write_bytes(b"")
+    return tmp_path
+
+
+@pytest.fixture()
+def mixed_h5_vol(tmp_path):
+    """Mixed layout: H5 + .vol files coexisting."""
+    (tmp_path / "RMA1_0315_01_DBZH_20260114T170000Z.H5").write_bytes(b"")
+    (tmp_path / "2026052115400400dBZ.vol").write_bytes(b"")
+    return tmp_path
+
+
+@pytest.mark.asyncio
+async def test_list_files_vol_flat(vol_flat):
+    repo = LocalRadarFileRepository(vol_flat)
+    files = await repo.list_files()
+    assert len(files) == 2
+    assert all(f.endswith(".vol") for f in files)
+
+
+@pytest.mark.asyncio
+async def test_list_files_mixed_h5_and_vol(mixed_h5_vol):
+    repo = LocalRadarFileRepository(mixed_h5_vol)
+    files = await repo.list_files()
+    assert len(files) == 2
+    extensions = {f.rsplit(".", 1)[-1] for f in files}
+    assert "H5" in extensions
+    assert "vol" in extensions
+
+
+@pytest.mark.asyncio
+async def test_download_preserves_vol_suffix(tmp_path):
+    src = tmp_path / "source" / "2026052115400400dBZ.vol"
+    src.parent.mkdir()
+    src.write_bytes(b"rainbow_data")
+
+    repo = LocalRadarFileRepository(tmp_path / "source")
+    result = await repo.download(str(src), tmp_path / "dest" / "output")
+
+    assert result.suffix == ".vol"
+    assert result.read_bytes() == b"rainbow_data"

@@ -123,3 +123,40 @@ async def test_download_delegates_to_repository(tmp_path):
     result = await source.download("/data/file.H5", tmp_path / "out")
     repo.download.assert_called_once_with("/data/file.H5", tmp_path / "out")
     assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_discover_mixed_h5_and_vol_files():
+    """INTA .vol and RMA .H5 DBZH files coexist — both discovered under DBZH source."""
+    files = [
+        "/data/RMA1_0315_01_DBZH_20260114T170000Z.H5",
+        "/data/2026052115400400dBZ.vol",
+    ]
+    source = RadarDataSource(DBZH_CONFIG, make_repo(files))
+    images = await source.discover_images(make_discovery_config())
+    assert len(images) == 2
+    image_ids = {img.image_id for img in images}
+    assert any("RMA1" in i for i in image_ids)
+    assert any("PAR" in i for i in image_ids)
+
+
+@pytest.mark.asyncio
+async def test_discover_vol_vrad_ignored_by_dbzh_source():
+    """A hypothetical .vol VRAD file must not appear under DBZH source."""
+    files = [
+        "/data/2026052115400400dBZ.vol",
+        "/data/RMA1_0315_02_VRAD_20260114T170000Z.H5",
+    ]
+    source = RadarDataSource(DBZH_CONFIG, make_repo(files))
+    images = await source.discover_images(make_discovery_config())
+    assert len(images) == 1
+    assert "DBZH" in images[0].image_id
+
+
+@pytest.mark.asyncio
+async def test_discover_inta_already_processed():
+    files = ["/data/2026052115400400dBZ.vol"]
+    source = RadarDataSource(DBZH_CONFIG, make_repo(files))
+    existing = {"PAR_DBZH_20260521T154004Z"}
+    images = await source.discover_images(make_discovery_config(existing=existing))
+    assert images == []

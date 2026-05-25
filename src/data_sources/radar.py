@@ -8,7 +8,7 @@ from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
 from data_sources.radar_repository import RadarFileRepository
 from models.radar_config import (
     RadarProductConfig,
-    parse_radar_filename,
+    parse_radar_file,
 )
 
 logger = getLogger(__name__)
@@ -79,7 +79,7 @@ class RadarDataSource(DataSource):
         source_uris = await self._repository.list_files()
 
         if not source_uris:
-            logger.warning("[%s] No H5 files found by repository", self.source_id)
+            logger.warning("[%s] No radar files found by repository", self.source_id)
             return []
 
         new_images = []
@@ -87,7 +87,7 @@ class RadarDataSource(DataSource):
         for source_uri in source_uris:
             filepath = Path(source_uri)
             try:
-                parsed = parse_radar_filename(filepath.name)
+                parsed = parse_radar_file(filepath.name)
             except ValueError as e:
                 logger.debug("Skipping file with invalid name: %s (%s)", filepath, e)
                 continue
@@ -140,7 +140,7 @@ class RadarDataSource(DataSource):
             target_images.extend(images[: self.TARGET_IMAGES])
 
         logger.info(
-            "[%s] Found %d new files, publishing %d (limit %d, from %d total H5 files)",
+            "[%s] Found %d new files, publishing %d (limit %d, from %d total files)",
             self.source_id,
             len(new_images),
             len(target_images),

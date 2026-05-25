@@ -174,7 +174,7 @@ def parse_radar_filename(filename: str) -> dict:
                      radar_id
 
     Returns:
-        Dict with radar_id, volume, subvolume, variable, timestamp
+        Dict with radar_id, volume, subvolume, variable, timestamp, format
     """
     stem = filename.replace(".H5", "").replace(".h5", "")
     parts = stem.split("_")
@@ -188,4 +188,79 @@ def parse_radar_filename(filename: str) -> dict:
         "subvolume": parts[2],
         "variable": parts[3],
         "timestamp": parts[4],
+        "format": "sinarame",
     }
+
+
+# Maps INTA Rainbow5 variable names (in filename) to canonical product IDs.
+INTA_VARIABLE_TO_PRODUCT: dict[str, str] = {
+    "dBZ": "DBZH",
+}
+
+# Hardcoded radar_id for INTA radars until filenames/metadata carry an identifier.
+# Currently only Paraná (PAR) is operational. Update when more INTA radars are added.
+INTA_RADAR_ID = "PAR"
+
+
+def parse_inta_radar_filename(filename: str) -> dict:
+    """
+    Parse INTA Rainbow5 filename into components.
+
+    Filename format: 2026052115400400dBZ.vol
+                     ^             ^^  ^
+                     |             ||  variable (dBZ, ZDR, ...)
+                     |             |centiseconds (2 digits, ignored)
+                     YYYYMMDDHHmmss (14 digits)
+
+    Returns:
+        Dict with radar_id, variable, timestamp, format='rainbow5'.
+        timestamp is normalized to RMA convention: YYYYMMDDTHHmmssZ
+    """
+    import re  # pylint: disable=import-outside-toplevel
+
+    stem = filename
+    for suffix in (".vol", ".VOL"):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    else:
+        raise ValueError(f"Expected .vol extension: {filename}")
+
+    match = re.match(r"^(\d{14})\d*([A-Za-z]\w*)$", stem)
+    if not match:
+        raise ValueError(f"Invalid INTA radar filename format: {filename}")
+
+    ts_raw = match.group(1)  # YYYYMMDDHHmmss
+    variable_raw = match.group(2)  # e.g. "dBZ"
+
+    if variable_raw not in INTA_VARIABLE_TO_PRODUCT:
+        raise ValueError(
+            f"Unknown INTA variable '{variable_raw}' in {filename}. "
+            f"Supported: {list(INTA_VARIABLE_TO_PRODUCT)}"
+        )
+
+    # Normalize: "20260521154004" → "20260521T154004Z"
+    timestamp = f"{ts_raw[:8]}T{ts_raw[8:]}Z"
+
+    return {
+        "radar_id": INTA_RADAR_ID,
+        "variable": INTA_VARIABLE_TO_PRODUCT[variable_raw],
+        "subvolume": "01",
+        "timestamp": timestamp,
+        "format": "rainbow5",
+    }
+
+
+def parse_radar_file(filename: str) -> dict:
+    """
+    Dispatch filename parser by extension.
+
+    Returns the same dict shape as parse_radar_filename, with an added
+    'format' key: 'sinarame' for .H5/.h5 or 'rainbow5' for .vol/.VOL.
+    """
+    lower = filename.lower()
+    if lower.endswith(".vol"):
+        return parse_inta_radar_filename(filename)
+    if lower.endswith(".h5"):
+        return parse_radar_filename(filename)
+    raise ValueError(f"Unsupported radar file extension: {filename}")
