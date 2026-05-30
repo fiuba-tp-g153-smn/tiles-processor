@@ -1,6 +1,7 @@
 """Pure functions to smooth a 2-D field and extract simplified isolines as GeoJSON."""
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -205,6 +206,48 @@ def extract_barbs(
             }
         )
     return features
+
+
+BARB_ZOOM_STRIDES: dict[int, int] = {2: 90, 4: 50, 6: 16, 8: 9, 10: 30, 12: 45}
+
+_LAT_CLIP = 85.05112878
+
+
+def _lonlat_to_tile(lon: float, lat: float, zoom: int) -> tuple[int, int]:
+    """Web Mercator XYZ tile index for (lon, lat) at the given zoom."""
+    lat_c = max(-_LAT_CLIP, min(_LAT_CLIP, lat))
+    n = 2 ** zoom
+    x = int((lon + 180.0) / 360.0 * n)
+    lat_r = math.radians(lat_c)
+    y = int(
+        (1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi) / 2.0 * n
+    )
+    x = max(0, min(n - 1, x))
+    y = max(0, min(n - 1, y))
+    return x, y
+
+
+def extract_barbs_tiled(
+    u_ms: np.ndarray,
+    v_ms: np.ndarray,
+    lon_2d: np.ndarray,
+    lat_2d: np.ndarray,
+) -> dict[tuple[int, int, int], list[dict]]:
+    """Partition wind-barb features into Web Mercator tiles per zoom level.
+
+    Calls `extract_barbs` once per zoom in `BARB_ZOOM_STRIDES` with the
+    zoom-specific stride, then buckets the resulting Point features by
+    (zoom, tile_x, tile_y). Features are kept verbatim — same schema as
+    `extract_barbs` so callers can reuse the rendering code.
+    """
+    result: dict[tuple[int, int, int], list[dict]] = {}
+    for zoom, stride in BARB_ZOOM_STRIDES.items():
+        features = extract_barbs(u_ms, v_ms, lon_2d, lat_2d, stride=stride)
+        for feature in features:
+            lon, lat = feature["geometry"]["coordinates"]
+            tx, ty = _lonlat_to_tile(lon, lat, zoom)
+            result.setdefault((zoom, tx, ty), []).append(feature)
+    return result
 
 
 def write_geojson(features: list[dict], output_path: Path) -> Path:

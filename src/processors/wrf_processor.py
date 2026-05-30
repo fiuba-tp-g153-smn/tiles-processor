@@ -24,7 +24,7 @@ from models.wrf_config import (
 )
 from processors.base_processor import ImageProcessor
 from services.contouring import (
-    extract_barbs,
+    extract_barbs_tiled,
     extract_isolines_2d,
     smooth_array,
     write_geojson,
@@ -694,18 +694,14 @@ class WrfProcessor(ImageProcessor):
 
         if payload["barbs"] is not None and product_config.barbs is not None:
             u, v = payload["barbs"]
-            features = extract_barbs(
-                u_ms=u,
-                v_ms=v,
-                lon_2d=lon,
-                lat_2d=lat,
-                stride=product_config.barbs.stride,
-            )
-            if features:
-                out_path = work_dir / f"{image_id}_barbs.json"
-                write_geojson(features, out_path)
-                outputs["barbs"] = out_path
-                logger.info("[WRF] Barbs written (%d features)", len(features))
+            tiled = extract_barbs_tiled(u_ms=u, v_ms=v, lon_2d=lon, lat_2d=lat)
+            for (zoom, tx, ty), feats in tiled.items():
+                tile_dir = work_dir / "barbs" / str(zoom) / str(tx)
+                tile_dir.mkdir(parents=True, exist_ok=True)
+                write_geojson(feats, tile_dir / f"{ty}.json")
+            if tiled:
+                outputs["barbs_tiled_dir"] = work_dir / "barbs"
+                logger.info("[WRF] Barb tiles written (%d GeoJSON tiles)", len(tiled))
 
         return outputs
 
@@ -785,6 +781,14 @@ class WrfProcessor(ImageProcessor):
             logger.warning("[WRF] COG upload failed for %s", product_id)
         else:
             logger.info("[WRF] Uploaded COG → %s", cog_key)
+
+        barbs_tiled_dir = geojson_paths.pop("barbs_tiled_dir", None)
+        if barbs_tiled_dir is not None and Path(barbs_tiled_dir).is_dir():
+            barb_prefix = f"{geojson_prefix}/barbs"
+            count = await self._s3_client.upload_directory(
+                Path(barbs_tiled_dir), barb_prefix
+            )
+            logger.info("[WRF] Uploaded %d barb tile(s) → %s", count, barb_prefix)
 
         for layer_name, path in geojson_paths.items():
             key = f"{geojson_prefix}/{layer_name}.json"
