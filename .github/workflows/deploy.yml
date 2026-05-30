@@ -22,8 +22,9 @@ jobs:
       - name: Build Docker image
         run: docker build -t tiles-processor:scan .
       - name: Install Trivy
+        env:
+          TRIVY_VERSION: "0.70.0"
         run: |
-          TRIVY_VERSION=$(curl -s https://api.github.com/repos/aquasecurity/trivy/releases/latest | grep '"tag_name"' | sed 's/.*"v\(.*\)".*/\1/')
           curl -sSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | tar -xz -C /usr/local/bin trivy
       - name: Scan image for vulnerabilities
         run: |
