@@ -83,152 +83,6 @@ def compute_brightness_temperature(dataset: xr.Dataset) -> xr.DataArray:
     return brightness_temperature
 
 
-def _make_grid_array(
-    data: np.ndarray,
-    lat_centers: np.ndarray,
-    lon_centers: np.ndarray,
-    name: str,
-) -> xr.DataArray:
-    """Build a georeferenced xr.DataArray from a 2-D histogram result.
-
-    Sets CRS to EPSG:4326, spatial dims, and replaces zero cells with NaN.
-    """
-    import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
-
-    arr = xr.DataArray(
-        data,
-        dims=["y", "x"],
-        coords={"x": lon_centers, "y": lat_centers},
-        name=name,
-    )
-    arr.rio.write_crs("EPSG:4326", inplace=True)
-    arr.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
-    return xr.where(arr > 0, arr, np.nan)
-
-
-def compute_glm_grids(  # pylint: disable=too-many-locals
-    glm_file_paths: list[Path],
-    grid_bounds: dict,
-    grid_resolution: float = 0.02,
-) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
-    """Compute FED, TOE, and MFA grids from GLM-L2-LCFA files in a single pass.
-
-    Opens each file once; reads flash_lat, flash_lon, flash_energy, and flash_area together.
-    All grids share identical spatial coordinates.
-
-    Args:
-        glm_file_paths: List of GLM-L2-LCFA NetCDF files (typically ~30 for a 10-min window).
-        grid_bounds: Geographic bounds dict with keys: minx, maxx, miny, maxy (degrees).
-        grid_resolution: Grid cell size in degrees (default 0.02° ≈ 2 km at equator).
-
-    Returns:
-        (fed_array, toe_array, mfa_array) — all georeferenced to EPSG:4326.
-        Cells with no flashes are set to NaN for map transparency.
-
-    Memory Profile:
-        - Each GLM file: ~2-5 MB
-        - 30 files: ~150 MB raw data
-        - Output grids (e.g. 3000×1500 each): ~36 MB float64 each
-        - Peak memory: ~250 MB
-    """
-    all_lats, all_lons, all_energies, all_areas = [], [], [], []
-
-    for file_path in glm_file_paths:
-        with xr.open_dataset(file_path, engine="h5netcdf") as ds:
-            all_lats.append(ds["flash_lat"].values)
-            all_lons.append(ds["flash_lon"].values)
-            all_energies.append(ds["flash_energy"].values)  # Joules, auto-decoded
-            all_areas.append(ds["flash_area"].values / 1e6)  # m² → km²
-
-    lats = np.concatenate(all_lats)
-    lons = np.concatenate(all_lons)
-    energies = np.concatenate(all_energies)
-    areas = np.concatenate(all_areas)
-    del all_lats, all_lons, all_energies, all_areas
-    gc.collect()
-
-    flash_count = len(lats)
-    logger.info("Loaded %d flashes from %d GLM files", flash_count, len(glm_file_paths))
-
-    lon_bins = np.arange(
-        grid_bounds["minx"], grid_bounds["maxx"] + grid_resolution, grid_resolution
-    )
-    lat_bins = np.arange(
-        grid_bounds["miny"], grid_bounds["maxy"] + grid_resolution, grid_resolution
-    )
-
-    n_lat = len(lat_bins) - 1
-    n_lon = len(lon_bins) - 1
-
-    # FED: count flashes per cell
-    fed_counts, _, _ = np.histogram2d(lats, lons, bins=[lat_bins, lon_bins])
-
-    # TOE: sum energy per cell (same bins, one extra histogram call)
-    toe_energy, _, _ = np.histogram2d(
-        lats, lons, bins=[lat_bins, lon_bins], weights=energies
-    )
-
-    # MFA: minimum flash area per cell using np.minimum.at
-    mfa_raw = np.full((n_lat, n_lon), np.inf)
-    lat_idx = np.digitize(lats, lat_bins) - 1
-    lon_idx = np.digitize(lons, lon_bins) - 1
-    valid = (lat_idx >= 0) & (lat_idx < n_lat) & (lon_idx >= 0) & (lon_idx < n_lon)
-    np.minimum.at(mfa_raw, (lat_idx[valid], lon_idx[valid]), areas[valid])
-    mfa_raw[mfa_raw == np.inf] = 0  # → _make_grid_array converts 0 → NaN
-
-    del lats, lons, energies, areas, lat_idx, lon_idx, valid
-    gc.collect()
-
-    lon_centers = (lon_bins[:-1] + lon_bins[1:]) / 2
-    lat_centers = (lat_bins[:-1] + lat_bins[1:]) / 2
-
-    fed_array = _make_grid_array(
-        fed_counts, lat_centers, lon_centers, "Flash_Extent_Density"
-    )
-    toe_array = _make_grid_array(
-        toe_energy, lat_centers, lon_centers, "Total_Optical_Energy"
-    )
-    mfa_array = _make_grid_array(
-        mfa_raw, lat_centers, lon_centers, "Minimum_Flash_Area"
-    )
-
-    if flash_count == 0:
-        logger.info(
-            "Computed GLM grids: %d x %d cells, no flashes — transparent tiles will be generated",
-            len(lat_centers),
-            len(lon_centers),
-        )
-    else:
-        logger.info(
-            "Computed FED grid: %d x %d cells, max flash count: %.0f",
-            len(lat_centers),
-            len(lon_centers),
-            float(np.nanmax(fed_array.values)),
-        )
-        logger.info(
-            "Computed TOE grid: max energy: %.3e J/cell",
-            float(np.nanmax(toe_array.values)),
-        )
-        logger.info(
-            "Computed MFA grid: min flash area: %.1f km²/cell",
-            float(np.nanmin(mfa_array.values)),
-        )
-
-    return fed_array, toe_array, mfa_array
-
-
-def compute_flash_extent_density(
-    glm_file_paths: list[Path], grid_bounds: dict, grid_resolution: float = 0.02
-) -> xr.DataArray:
-    """Compute Flash Extent Density from GLM-L2-LCFA files.
-
-    Thin wrapper around compute_glm_grids that returns only the FED grid.
-    Kept for backward compatibility.
-    """
-    fed_array, _, _ = compute_glm_grids(glm_file_paths, grid_bounds, grid_resolution)
-    return fed_array
-
-
 def normalize_and_colorize(
     array: xr.DataArray,
     vmin: float,
@@ -390,6 +244,71 @@ def save_as_cog(data: xr.DataArray, output_dir: Path, image_id: str) -> Path:
         raise
 
     return output_path
+
+
+_EARTH_CIRCUMFERENCE_M = 2 * math.pi * 6378137.0
+_TILE_SIZE = 256
+
+
+def _mercator_resolution_for_zoom(zoom: int) -> float:
+    """Web Mercator pixel size in meters at XYZ zoom level `zoom`."""
+    return _EARTH_CIRCUMFERENCE_M / (2**zoom * _TILE_SIZE)
+
+
+def prewarp_to_mercator_grid(
+    geotiff_path: Path,
+    output_dir: Path,
+    max_zoom: int,
+) -> Path:
+    """Reproject a GeoTIFF to EPSG:3857 at the pixel size of `max_zoom`, atomically.
+
+    Why: ``gdal2tiles`` upsamples its input via per-tile RasterIO with nearest-neighbor
+    rounding. For threshold-colorized RGBA inputs (alpha is exactly 0 or 255, no
+    gradient), that rounding shifts cell boundaries by sub-cell amounts and can drop
+    isolated opaque cells entirely. Pre-warping to the destination tile grid makes
+    the per-tile read a 1:1 pickup, so cell boundaries are preserved exactly.
+    """
+    output_path = output_dir / f"{geotiff_path.stem}_3857.tif"
+    tmp_path = output_dir / f"{uuid.uuid4()}.tif"
+    res = _mercator_resolution_for_zoom(max_zoom)
+
+    cmd = [
+        "gdalwarp",
+        "-t_srs",
+        "EPSG:3857",
+        "-r",
+        "near",
+        "-tr",
+        str(res),
+        str(res),
+        "-dstalpha",
+        "-co",
+        "COMPRESS=DEFLATE",
+        str(geotiff_path),
+        str(tmp_path),
+    ]
+
+    try:
+        logger.info("Pre-warping %s to EPSG:3857 at zoom %d (%.2f m/px)...",
+                    geotiff_path.name, max_zoom, res)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=600, check=False
+        )
+
+        if result.returncode != 0:
+            logger.error("gdalwarp pre-warp failed: %s", result.stderr)
+            raise RuntimeError(f"gdalwarp pre-warp failed for {geotiff_path.name}")
+
+        tmp_path.rename(output_path)
+        logger.info("Pre-warped GeoTIFF written: %s", output_path)
+        return output_path
+
+    except subprocess.TimeoutExpired as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError("gdalwarp pre-warp timed out") from exc
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def run_gdal2tiles(

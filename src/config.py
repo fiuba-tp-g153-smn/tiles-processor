@@ -86,6 +86,16 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             "radar_input_dir", str(Path(self.DATA_DIR) / "radar_h5")
         )
 
+        # GLM Folder Configuration (pre-gridded CG_GLM-L2-GLMF netCDFs)
+        self.GLM_FOLDER_INPUT_DIR: str = settings.get(
+            "glm_folder_input_dir", str(Path(self.DATA_DIR) / "glm_h5")
+        )
+        self.GLM_ACCUM_MINUTES: int = int(settings.get("glm_accum_minutes", 10))
+        self.GLM_PRODUCE_EVERY_MINUTES: int = int(
+            settings.get("glm_produce_every_minutes", 10)
+        )
+        self.GLM_RESOLUTION_DEG: float = float(settings.get("glm_resolution_deg", 0.02))
+
         # WRF Configuration
         self.ENABLED_WRF_PRODUCTS: dict[str, bool] = {
             pid: settings["features"].get(f"enable_wrf_{pid}", False)
@@ -181,6 +191,10 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         for pid, enabled in self.ENABLED_RADAR_PRODUCTS.items():
             logger.info("ENABLE_RADAR_%s: %s", pid, enabled)
         logger.info("RADAR_INPUT_DIR: %s", self.RADAR_INPUT_DIR)
+        logger.info("GLM_FOLDER_INPUT_DIR: %s", self.GLM_FOLDER_INPUT_DIR)
+        logger.info("GLM_ACCUM_MINUTES: %s", self.GLM_ACCUM_MINUTES)
+        logger.info("GLM_PRODUCE_EVERY_MINUTES: %s", self.GLM_PRODUCE_EVERY_MINUTES)
+        logger.info("GLM_RESOLUTION_DEG: %s", self.GLM_RESOLUTION_DEG)
         for pid, enabled in self.ENABLED_WRF_PRODUCTS.items():
             logger.info("ENABLE_WRF_%s: %s", pid, enabled)
         logger.info("WRF_INPUT_DIR: %s", self.WRF_INPUT_DIR)

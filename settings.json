@@ -2,8 +2,12 @@
   "timezone": "America/Argentina/Buenos_Aires",
   "tile_retention_days": 30,
   "radar_input_dir": "/app/data/radar_h5",
+  "glm_folder_input_dir": "/app/data/glm_h5",
+  "glm_accum_minutes": 10,
+  "glm_produce_every_minutes": 10,
+  "glm_resolution_deg": 0.02,
+  "ecmwf_mslp_isobar_simplify_tolerance": 0.05,
   "wrf_input_dir": "/app/data/wrf_nc",
-  "ecmwf_mslp_isobar_simplify_tolerance": 0.1,
   "ecmwf_mslp_smoothing_sigma": 1.5,
   "features": {
     "enable_band_13": false,

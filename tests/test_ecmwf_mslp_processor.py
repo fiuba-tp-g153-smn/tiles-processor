@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,14 +29,14 @@ def _make_config(tmp_path: Path):
     return config
 
 
-def _make_work_unit(forecast_time: datetime, hour_center: int) -> WorkUnit:
-    center_time = forecast_time.replace(hour=forecast_time.hour + hour_center)
-    image_id = center_time.strftime("%Y%m%dT%H%MZ")
+def _make_work_unit(forecast_time: datetime, hour_end: int) -> WorkUnit:
+    end_time = forecast_time + timedelta(hours=hour_end)
+    image_id = end_time.strftime("%Y%m%dT%H%MZ")
     payload = {
         "grib_path": "grib/models/ecmwf/mean_sea_level_pressure/20260413T1200Z.grib",
         "forecast_time": forecast_time.isoformat(),
-        "center_time": center_time.isoformat(),
-        "hour_center": hour_center,
+        "end_time": end_time.isoformat(),
+        "hour_end": hour_end,
     }
     return WorkUnit.create(
         image_id=image_id,
@@ -63,7 +63,7 @@ async def test_uploads_cog_and_geojson_with_expected_s3_keys(tmp_path):
     """Both COG and GeoJSON must land at the documented S3 paths."""
     config = _make_config(tmp_path)
     forecast_time = datetime(2026, 4, 13, 12, 0, tzinfo=timezone.utc)
-    work_unit = _make_work_unit(forecast_time, hour_center=3)
+    work_unit = _make_work_unit(forecast_time, hour_end=6)
 
     mock_s3 = AsyncMock()
     mock_s3.upload_file = AsyncMock(return_value=True)
@@ -117,7 +117,7 @@ async def test_load_and_prepare_converts_pa_to_hpa(tmp_path):
     # in Pa, returning the same plane regardless of the requested step.
     lats = np.linspace(-15.0, -60.0, 5)  # decreasing latitude (typical GRIB order)
     lons = np.linspace(-110.0, -30.0, 9)
-    steps = [np.timedelta64(h, "h") for h in (3, 6, 9)]
+    steps = [np.timedelta64(h, "h") for h in (6, 9, 12)]
     pa_values = np.full((len(steps), len(lats), len(lons)), 101300.0)  # 1013 hPa
     msl_da = xr.DataArray(
         pa_values,
@@ -132,7 +132,7 @@ async def test_load_and_prepare_converts_pa_to_hpa(tmp_path):
     with patch("xarray.open_dataset", return_value=fake_ds):
         clipped = processor._load_and_prepare(
             grib_path=tmp_path / "input.grib",
-            hour_center=3,
+            hour_end=6,
             bounds=bounds,
         )
 
@@ -148,7 +148,7 @@ async def test_failed_uploads_do_not_raise(tmp_path):
     """An upload returning False is logged but does not crash the pipeline."""
     config = _make_config(tmp_path)
     forecast_time = datetime(2026, 4, 13, 12, 0, tzinfo=timezone.utc)
-    work_unit = _make_work_unit(forecast_time, hour_center=3)
+    work_unit = _make_work_unit(forecast_time, hour_end=6)
 
     mock_s3 = AsyncMock()
     mock_s3.upload_file = AsyncMock(return_value=False)
