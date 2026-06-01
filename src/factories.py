@@ -15,12 +15,15 @@ from data_sources import (
     GlmFolderDataSource,
     Goes19AbiDataSource,
     RadarDataSource,
+    WrfDataSource,
 )
 from data_sources.glm_folder_repository import LocalGlmFolderFileRepository
 from data_sources.radar_repository import LocalRadarFileRepository
 from models.band_config import BAND_CONFIGS, get_band_config
+from data_sources.wrf import LocalWrfFileRepository
 from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
 from models.radar_config import RADAR_PRODUCT_CONFIGS
+from models.wrf_config import WRF_PRODUCT_CONFIGS
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,14 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         repository = LocalRadarFileRepository(radar_input_dir)
         for _product_id, product_config in RADAR_PRODUCT_CONFIGS.items():
             registry.register(RadarDataSource(product_config, repository))
+
+    # Register WRF data sources for each enabled product
+    if config is not None:
+        wrf_input_dir = Path(config.WRF_INPUT_DIR)
+        wrf_repository = LocalWrfFileRepository(wrf_input_dir)
+        for product_id, product_config in WRF_PRODUCT_CONFIGS.items():
+            if config.ENABLED_WRF_PRODUCTS.get(product_id, False):
+                registry.register(WrfDataSource(product_config, wrf_repository))
 
     # Register ECMWF data sources (feature-flagged)
     if config is not None and config.ENABLE_ECMWF_PRECIPITATION:

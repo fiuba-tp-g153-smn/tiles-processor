@@ -96,6 +96,19 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         self.GLM_RESOLUTION_DEG: float = float(settings.get("glm_resolution_deg", 0.02))
 
+        # WRF Configuration
+        self.ENABLED_WRF_PRODUCTS: dict[str, bool] = {
+            pid: settings["features"].get(f"enable_wrf_{pid}", False)
+            for pid in [
+                "Colmax", "Rafagas", "Campo900hPa", "Precipitacion1h",
+                "MUCAPE", "AguaPrecipitable", "JetCapasBajas",
+                "CortanteNivelesBajos", "CAPE_BRN", "Granizo",
+            ]
+        }
+        self.WRF_INPUT_DIR: str = settings.get(
+            "wrf_input_dir", str(Path(self.DATA_DIR) / "wrf_nc")
+        )
+
         # Job Configuration
         self.JOB_TTL_MINUTES: int = int(self._get_required_env("JOB_TTL_MINUTES"))
 
@@ -111,6 +124,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.SEAWEEDFS_ECMWF_GRIB_TTL: str | None = os.getenv(
             "SEAWEEDFS_ECMWF_GRIB_TTL"
         )
+        self.SEAWEEDFS_WRF_TTL: str | None = os.getenv("SEAWEEDFS_WRF_TTL")
 
         # Health Check
         self.HEALTH_PORT: int = int(os.getenv("HEALTH_PORT", "8080"))
@@ -181,6 +195,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("GLM_ACCUM_MINUTES: %s", self.GLM_ACCUM_MINUTES)
         logger.info("GLM_PRODUCE_EVERY_MINUTES: %s", self.GLM_PRODUCE_EVERY_MINUTES)
         logger.info("GLM_RESOLUTION_DEG: %s", self.GLM_RESOLUTION_DEG)
+        for pid, enabled in self.ENABLED_WRF_PRODUCTS.items():
+            logger.info("ENABLE_WRF_%s: %s", pid, enabled)
+        logger.info("WRF_INPUT_DIR: %s", self.WRF_INPUT_DIR)
         logger.info("DATA_DIR: %s", self.DATA_DIR)
         logger.info("TMP_DIR: %s", self.TMP_DIR)
         logger.info("BOUNDS_MINX: %s", self.BOUNDS_MINX)
@@ -195,6 +212,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("SEAWEEDFS_RADAR_TILE_TTL: %s", self.SEAWEEDFS_RADAR_TILE_TTL)
         logger.info("SEAWEEDFS_ECMWF_TTL: %s", self.SEAWEEDFS_ECMWF_TTL)
         logger.info("SEAWEEDFS_ECMWF_GRIB_TTL: %s", self.SEAWEEDFS_ECMWF_GRIB_TTL)
+        logger.info("SEAWEEDFS_WRF_TTL: %s", self.SEAWEEDFS_WRF_TTL)
         logger.info("RABBITMQ_HOST: %s", self.RABBITMQ_HOST)
         logger.info("RABBITMQ_PORT: %s", self.RABBITMQ_PORT)
         logger.info("RABBITMQ_QUEUE: %s", self.RABBITMQ_QUEUE)
