@@ -13,12 +13,16 @@ class WrfBarbsConfig:
         v_var: Northward component variable name (m/s).
         level_hpa: Pressure level for FIELD3D vars; None means FIELD2D.
         stride: Subsampling factor in both grid axes.
+        point_query_var: Variable key for the secondary point-query COG built
+            from the barb magnitude (``sqrt(u^2 + v^2)``, converted to knots).
+            The COG is uploaded as ``{cog}/{init}/{F}.{point_query_var}.tif``.
     """
 
     u_var: str
     v_var: str
     level_hpa: Optional[float] = None
     stride: int = 38
+    point_query_var: str = "wind"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +40,10 @@ class WrfContourConfig:
         unit_conversion: Either ``"ms_to_kt"`` or None.
         topographic_clip: If True, treats values <= 0 or > 500 as NaN
             before smoothing (used for Bulk Richardson Number).
+        point_query: If True, also emit a secondary point-query COG from this
+            contour's scalar field (same units as the contour). The COG is
+            uploaded as ``{cog}/{init}/{F}.{name}.tif`` and exposed by the
+            data-service secondary point endpoint.
     """
 
     name: str
@@ -45,6 +53,7 @@ class WrfContourConfig:
     level_hpa: Optional[float] = None
     unit_conversion: Optional[str] = None
     topographic_clip: bool = False
+    point_query: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +134,7 @@ PRECIPITACION1H_CONFIG = WrfProductConfig(
             # Restricted set requested by SMN — only the strategic isobars
             levels=(976.0, 984.0, 992.0, 1000.0, 1008.0, 1016.0),
             smooth_sigma=3.0,
+            point_query=True,
         ),
     ),
     unit="mm",
@@ -144,6 +154,7 @@ MUCAPE_CONFIG = WrfProductConfig(
             levels=(10.0, 20.0, 30.0, 40.0, 50.0),
             smooth_sigma=3.0,
             unit_conversion="ms_to_kt",
+            point_query=True,
         ),
     ),
     unit="J/kg",
@@ -176,6 +187,7 @@ JET_CAPAS_BAJAS_CONFIG = WrfProductConfig(
             levels=(6.0, 10.0, 14.0),
             smooth_sigma=3.0,
             unit_conversion="ms_to_kt",
+            point_query=True,
         ),
     ),
     unit="kt",
@@ -206,6 +218,7 @@ CAPE_BRN_CONFIG = WrfProductConfig(
             levels=(10.0, 45.0),
             smooth_sigma=2.0,
             topographic_clip=True,
+            point_query=True,
         ),
     ),
     unit="J/kg",
@@ -224,6 +237,7 @@ GRANIZO_CONFIG = WrfProductConfig(
             name="haildiammax",
             var="haildiammax",
             levels=(0.5, 3.0, 5.0),
+            point_query=True,
         ),
     ),
     unit="",

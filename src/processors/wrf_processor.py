@@ -74,9 +74,9 @@ _GUST_BOUNDS = [25, 30, 35, 40, 45, 50, 60, 70, 80]
 _PP_COLORS = [
     (  0 / 255, 103 / 255,  54 / 255), ( 49 / 255, 161 / 255,  84 / 255),
     (119 / 255, 196 / 255, 121 / 255), (193 / 255, 228 / 255, 152 / 255),
-    (  5 / 255,  90 / 255, 141 / 255), ( 53 / 255, 143 / 255, 191 / 255),
-    (165 / 255, 187 / 255, 217 / 255), (210 / 255, 209 / 255, 212 / 255),
-    (225 / 255, 222 / 255, 213 / 255), (166 / 255,  54 / 255,   3 / 255),
+    (254 / 255, 254 / 255, 156 / 255), (  5 / 255,  90 / 255, 141 / 255),
+    ( 53 / 255, 143 / 255, 191 / 255), (166 / 255, 188 / 255, 218 / 255),
+    (226 / 255, 225 / 255, 228 / 255), (166 / 255,  54 / 255,   3 / 255),
     (240 / 255, 104 / 255,  19 / 255), (253 / 255, 174 / 255, 107 / 255),
     (119 / 255,   0 / 255, 116 / 255), (197 / 255,  27 / 255, 138 / 255),
     (247 / 255, 104 / 255, 161 / 255), (251 / 255, 180 / 255, 185 / 255),
@@ -277,6 +277,13 @@ class WrfProcessor(ImageProcessor):
             cog_gcp_path.unlink(missing_ok=True)
             self._check_shutdown()
 
+            # Secondary point-query COGs (wind magnitude + flagged contours).
+            # Same float pipeline as the primary; one COG per secondary var.
+            secondary_cog_paths = self._generate_secondary_cogs(
+                work_dir, work_unit.image_id, payload, product_config
+            )
+            self._check_shutdown()
+
             geojson_paths = self._generate_geojson_layers(
                 work_dir, work_unit.image_id, payload, product_config
             )
@@ -292,6 +299,7 @@ class WrfProcessor(ImageProcessor):
                 fxxx=fxxx,
                 tiles_dir=tiles_dir,
                 cog_path=cog_path,
+                secondary_cog_paths=secondary_cog_paths,
                 geojson_paths=geojson_paths,
             )
 
@@ -656,6 +664,83 @@ class WrfProcessor(ImageProcessor):
             raise
 
     # ------------------------------------------------------------------
+    # Secondary point-query COGs
+    # ------------------------------------------------------------------
+
+    def _generate_secondary_cogs(
+        self,
+        work_dir: Path,
+        image_id: str,
+        payload: dict,
+        product_config: WrfProductConfig,
+    ) -> dict[str, Path]:
+        """Build one float COG per queryable secondary variable.
+
+        Returns a map ``{variable_name: cog_path}`` uploaded later as
+        ``{cog}/{init}/{F}.{variable_name}.tif``. Mirrors the primary COG
+        pipeline (GCP-tagged float → tps warp → COG) so point queries align.
+        """
+        scalars = self._build_secondary_scalars(payload, product_config)
+        outputs: dict[str, Path] = {}
+        for variable, arr in scalars.items():
+            cog_path = self._float_field_to_cog(
+                arr, payload["lat"], payload["lon"], work_dir, f"{image_id}_{variable}"
+            )
+            outputs[variable] = cog_path
+            logger.info("[WRF] Secondary COG '%s' built for %s", variable, image_id)
+        return outputs
+
+    @staticmethod
+    def _build_secondary_scalars(
+        payload: dict, product_config: WrfProductConfig
+    ) -> dict[str, np.ndarray]:
+        """Collect queryable secondary scalar fields keyed by variable name."""
+        scalars: dict[str, np.ndarray] = {}
+
+        if payload["barbs"] is not None and product_config.barbs is not None:
+            u, v = payload["barbs"]
+            # Barb components are in m/s; expose magnitude in knots (SMN unit).
+            scalars[product_config.barbs.point_query_var] = (
+                np.hypot(u, v) * MS_TO_KT
+            )
+
+        for contour in product_config.contours:
+            if not contour.point_query:
+                continue
+            arr = payload["contours"].get(contour.name)
+            if arr is not None:
+                # Already unit-converted / clipped in _load_payload.
+                scalars[contour.name] = arr
+
+        return scalars
+
+    def _float_field_to_cog(
+        self,
+        data: np.ndarray,
+        lat: np.ndarray,
+        lon: np.ndarray,
+        work_dir: Path,
+        name: str,
+    ) -> Path:
+        """Run the float field → GCP TIFF → EPSG:4326 COG pipeline."""
+        gcp_path = work_dir / f"{name}_cog_gcp.tif"
+        self._save_float_geotiff_gcp(data, lat, lon, gcp_path)
+        cog_path = work_dir / f"{name}_cog.tif"
+        self._warp_to_epsg4326(
+            gcp_path,
+            cog_path,
+            of="COG",
+            resampling="bilinear",
+            extra_creation_options=(
+                "COMPRESS=DEFLATE",
+                "PREDICTOR=3",
+                "BLOCKSIZE=512",
+            ),
+        )
+        gcp_path.unlink(missing_ok=True)
+        return cog_path
+
+    # ------------------------------------------------------------------
     # Vector layers
     # ------------------------------------------------------------------
 
@@ -760,15 +845,15 @@ class WrfProcessor(ImageProcessor):
         fxxx: str,
         tiles_dir: Path,
         cog_path: Path,
+        secondary_cog_paths: dict[str, Path],
         geojson_paths: dict[str, Path],
     ) -> None:
         product_id = product_config.product_id
         tiles_prefix = (
             f"{product_config.s3_tiles_prefix}/{product_id}/{init_tag}/{fxxx}"
         )
-        cog_key = (
-            f"{product_config.s3_cog_prefix}/{product_id}/{init_tag}/{fxxx}.tif"
-        )
+        cog_prefix = f"{product_config.s3_cog_prefix}/{product_id}/{init_tag}/{fxxx}"
+        cog_key = f"{cog_prefix}.tif"
         geojson_prefix = (
             f"{product_config.s3_geojson_prefix}/{product_id}/{init_tag}/{fxxx}"
         )
@@ -781,6 +866,14 @@ class WrfProcessor(ImageProcessor):
             logger.warning("[WRF] COG upload failed for %s", product_id)
         else:
             logger.info("[WRF] Uploaded COG → %s", cog_key)
+
+        # Secondary point-query COGs: {cog}/{init}/{F}.{variable}.tif
+        for variable, path in secondary_cog_paths.items():
+            key = f"{cog_prefix}.{variable}.tif"
+            if await self._s3_client.upload_file(key, path):
+                logger.info("[WRF] Uploaded secondary COG → %s", key)
+            else:
+                logger.warning("[WRF] Secondary COG upload failed: %s", key)
 
         barbs_tiled_dir = geojson_paths.pop("barbs_tiled_dir", None)
         if barbs_tiled_dir is not None and Path(barbs_tiled_dir).is_dir():
