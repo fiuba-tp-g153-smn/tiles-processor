@@ -55,7 +55,8 @@ class WrfDataSource(DataSource):
 
     File naming convention:
         WRF_ARG4K.FCST_L0_FIELD2D.01H.<INIT_TAG>.<FXXX>.M000.nc
-    F000 is always skipped (initialization hour: no pp01H, not a forecast).
+    F000 (initialization hour) is processed for every product except those
+    with ``skip_f000=True`` (1h-accumulation products lacking pp01H at init).
     """
 
     def __init__(
@@ -92,7 +93,9 @@ class WrfDataSource(DataSource):
                 logger.debug("Skipping file with invalid name: %s (%s)", filename, e)
                 continue
 
-            if parsed["fnum"] == 0:
+            # F000 se descarta solo en productos de acumulado 1h (pp01H), donde
+            # la variable no existe en la hora de inicialización. El resto sí.
+            if parsed["fnum"] == 0 and self._product_config.skip_f000:
                 continue
 
             image_id = (

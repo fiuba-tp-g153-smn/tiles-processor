@@ -72,6 +72,10 @@ class WrfProductConfig:
     contours: tuple[WrfContourConfig, ...] = field(default_factory=tuple)
     unit: str = ""
     long_name: str = ""
+    # F000 = hora de inicialización. Para acumulados de 1h (pp01H) la variable
+    # no existe en F000 (no hay hora previa) → se descarta para ese producto.
+    # El resto de productos sí procesan y muestran F000 como primer frame.
+    skip_f000: bool = False
 
 
 # Topographic brown background used by Campo900hPa and JetCapasBajas
@@ -124,6 +128,7 @@ PRECIPITACION1H_CONFIG = WrfProductConfig(
     product_id="Precipitacion1h",
     primary_var="pp01H",
     needs_field3d=False,
+    skip_f000=True,  # pp01H no existe en F000 (sin hora previa que acumular)
     s3_tiles_prefix="tiles/wrf",
     s3_cog_prefix="cog/wrf",
     barbs=WrfBarbsConfig(u_var="u10", v_var="v10"),
