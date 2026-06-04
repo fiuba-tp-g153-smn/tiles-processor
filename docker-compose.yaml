@@ -215,6 +215,47 @@ services:
       start_period: 15s
       start_interval: 1s
 
+  # Dashboard - backoffice performance metrics web UI (read-only)
+  dashboard:
+    image: tiles-processor
+    container_name: tiles-processor-dashboard
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python3 src/main.py dashboard
+    ports:
+      - "${DASHBOARD_PORT:-6020}:6020"
+    volumes:
+      - tiles_data:/app/data
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL}
+      - DATA_DIR=${DATA_DIR}
+      - DASHBOARD_PORT=6020
+      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
+      - S3_TILES_DATA_SECURE=false
+      - S3_TILES_DATA_TILES_PROCESSOR_USER=${S3_TILES_DATA_TILES_PROCESSOR_USER}
+      - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_QUEUE=${RABBITMQ_QUEUE}
+      - RABBITMQ_DLQ=${RABBITMQ_DLQ}
+      - RABBITMQ_DLX=${RABBITMQ_DLX}
+      - JOB_TTL_MINUTES=${JOB_TTL_MINUTES}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6020/health')"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
+      start_interval: 1s
+
 volumes:
   tiles_data:
   s3_data:
