@@ -1,5 +1,6 @@
 """Unified work handler for processing work units (download + process)."""
 
+import json
 import os
 import shutil
 import signal as _signal
@@ -17,6 +18,7 @@ from config import Config
 from data_sources import DataSourceRegistry
 from models.work_unit import WorkUnit
 from worker.inline_processor import InlineProcessor
+from worker.job_metrics_context import JobMetricsContext
 
 logger = getLogger(__name__)
 
@@ -53,12 +55,17 @@ class WorkHandler:
         self._base_dir = Path(config.TMP_DIR)
         self._current_process: subprocess.Popen | None = None
 
-    async def handle(self, work_unit: WorkUnit) -> None:
+    async def handle(
+        self, work_unit: WorkUnit, collector: JobMetricsContext | None = None
+    ) -> None:
         """
         Handle a work unit by downloading and processing the image.
 
         Args:
             work_unit: The work unit to process
+            collector: Optional per-job metrics accumulator. When provided, the
+                download/process timings are recorded into it; the caller stamps
+                the outcome and persists the row.
 
         Raises:
             Exception: If download or processing fails
@@ -75,12 +82,19 @@ class WorkHandler:
         raw_dir = self._ensure_dir(work_dir / "raw")
         local_path = raw_dir / work_unit.image_id
 
+        # Per-stage timings are written here by the subprocess. It is a SIBLING
+        # of work_dir so neither the processor's nor this handler's rmtree of
+        # work_dir removes it before we read it back.
+        metrics_sink = work_dir.parent / f"{image_stem}.metrics.json"
+
         try:
             # Step 1: Download (lightweight, stays in main process)
             download_start = perf_counter()
             logger.info("[HANDLER] Downloading %s", work_unit.image_id)
             local_path = await data_source.download(work_unit.source_uri, local_path)
             download_time = perf_counter() - download_start
+            if collector is not None:
+                collector.set_download_seconds(download_time)
 
             # Step 2: Process — inline (no subprocess) or in subprocess
             process_start = perf_counter()
@@ -100,8 +114,14 @@ class WorkHandler:
                     work_unit.image_id,
                     work_unit.processor_id,
                 )
-                self._run_processing_subprocess(work_unit, str(local_path))
+                self._run_processing_subprocess(
+                    work_unit, str(local_path), metrics_sink
+                )
+                if collector is not None:
+                    collector.set_stage_timings(self._read_stage_timings(metrics_sink))
             process_time = perf_counter() - process_start
+            if collector is not None:
+                collector.set_process_seconds(process_time)
 
             # Step 3: Mark as completed in SQLite
             self._progress_tracker.mark_completed(work_unit.image_id, work_unit.band_id)
@@ -121,6 +141,25 @@ class WorkHandler:
         finally:
             # Cleanup entire per-image work directory (raw + any subprocess leftovers)
             self._cleanup_directory(work_dir)
+            self._cleanup_file(metrics_sink)
+
+    @staticmethod
+    def _read_stage_timings(sink_path: Path) -> dict[str, float]:
+        """Read per-stage timings written by the subprocess (best-effort)."""
+        try:
+            if sink_path.exists():
+                return json.loads(sink_path.read_text())
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not read stage timings %s: %s", sink_path, exc)
+        return {}
+
+    @staticmethod
+    def _cleanup_file(file_path: Path) -> None:
+        """Safe removal of a single file."""
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to cleanup file %s: %s", file_path, exc)
 
     def release_progress(self, work_unit: WorkUnit) -> None:
         """Remove a work unit from the progress tracker so it can be rediscovered."""
@@ -156,7 +195,9 @@ class WorkHandler:
 
         Thread(target=_force_kill, daemon=True).start()
 
-    def _run_processing_subprocess(self, work_unit: WorkUnit, file_path: str) -> None:
+    def _run_processing_subprocess(
+        self, work_unit: WorkUnit, file_path: str, metrics_sink: Path
+    ) -> None:
         """
         Run image processing in a subprocess for memory isolation.
 
@@ -168,6 +209,7 @@ class WorkHandler:
         Args:
             work_unit: The work unit to process
             file_path: Path to the downloaded file
+            metrics_sink: Path where the subprocess writes per-stage timings
 
         Raises:
             RuntimeError: If subprocess fails (includes error details from stderr)
@@ -182,6 +224,7 @@ class WorkHandler:
                 "worker.subprocess_processor",
                 work_unit_json,
                 file_path,
+                str(metrics_sink),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

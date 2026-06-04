@@ -1,8 +1,12 @@
 """Base processor class definition."""
 
+import json
 import shutil
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from pathlib import Path
+from time import perf_counter
+from typing import Iterator
 import logging
 
 from models.work_unit import WorkUnit
@@ -28,6 +32,8 @@ class ImageProcessor(ABC):
         self.config = config
         self._base_dir = Path(config.TMP_DIR)
         self._shutdown_requested = False
+        self._stage_timings: dict[str, float] = {}
+        self._metrics_sink: Path | None = None
 
     def request_shutdown(self) -> None:
         """Signal that the processor should stop at the next checkpoint."""
@@ -37,6 +43,39 @@ class ImageProcessor(ABC):
         """Raise ShutdownRequested if a graceful shutdown was requested."""
         if self._shutdown_requested:
             raise ShutdownRequested("Graceful shutdown requested")
+
+    def bind_metrics_sink(self, path: Path) -> None:
+        """Set the file where per-stage timings are flushed after processing."""
+        self._metrics_sink = path
+
+    @contextmanager
+    def _time_stage(self, name: str) -> Iterator[None]:
+        """Accumulate the wall-clock duration of a pipeline stage.
+
+        Durations for repeated stage names sum together (e.g. a processor that
+        loops over forecast steps), so the flushed value is the total per stage.
+        """
+        start = perf_counter()
+        try:
+            yield
+        finally:
+            elapsed = perf_counter() - start
+            self._stage_timings[name] = self._stage_timings.get(name, 0.0) + elapsed
+
+    def flush_metrics(self) -> None:
+        """Write accumulated stage timings to the bound sink as JSON.
+
+        Called in a ``finally`` by the subprocess entry point so partial timings
+        survive a mid-pipeline failure. No-op when nothing was recorded.
+        """
+        if self._metrics_sink is None or not self._stage_timings:
+            return
+        try:
+            self._metrics_sink.write_text(json.dumps(self._stage_timings))
+        except OSError as exc:
+            logger.warning(
+                "Failed to write metrics sink %s: %s", self._metrics_sink, exc
+            )
 
     @abstractmethod
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:

@@ -80,6 +80,13 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             for pid in _radar_product_ids
         }
 
+        # Metrics / backoffice dashboard
+        self.ENABLE_METRICS: bool = settings["features"].get("enable_metrics", True)
+        self.METRICS_DB_PATH: str = settings.get(
+            "metrics_db_path", str(Path(self.TMP_DIR) / "metrics.db")
+        )
+        self.DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "6020"))
+
         # Radar Configuration
         # Path to directory containing .H5 radar files
         self.RADAR_INPUT_DIR: str = settings.get(
@@ -100,9 +107,16 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.ENABLED_WRF_PRODUCTS: dict[str, bool] = {
             pid: settings["features"].get(f"enable_wrf_{pid}", False)
             for pid in [
-                "Colmax", "Rafagas", "Campo900hPa", "Precipitacion1h",
-                "MUCAPE", "AguaPrecipitable", "JetCapasBajas",
-                "CortanteNivelesBajos", "CAPE_BRN", "Granizo",
+                "Colmax",
+                "Rafagas",
+                "Campo900hPa",
+                "Precipitacion1h",
+                "MUCAPE",
+                "AguaPrecipitable",
+                "JetCapasBajas",
+                "CortanteNivelesBajos",
+                "CAPE_BRN",
+                "Granizo",
             ]
         }
         self.WRF_INPUT_DIR: str = settings.get(
@@ -220,4 +234,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("RABBITMQ_DLX: %s", self.RABBITMQ_DLX)
         logger.info("JOB_TTL_MINUTES: %s", self.JOB_TTL_MINUTES)
         logger.info("HEALTH_PORT: %s", self.HEALTH_PORT)
+        logger.info("ENABLE_METRICS: %s", self.ENABLE_METRICS)
+        logger.info("METRICS_DB_PATH: %s", self.METRICS_DB_PATH)
+        logger.info("DASHBOARD_PORT: %s", self.DASHBOARD_PORT)
         logger.info("=====================")
