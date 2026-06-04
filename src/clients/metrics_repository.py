@@ -194,7 +194,7 @@ class MetricsRepository:
         for each (bucket, job_type), computed over successful jobs only. Powers
         the timing-evolution, p95-trend and per-stage stacked-area charts.
         """
-        width = 10 if bucket == "day" else 13
+        width = {"day": 10, "10min": 15}.get(bucket, 13)
         clauses = ["outcome = 'success'"]
         params: list[Any] = []
         if since:
@@ -236,9 +236,9 @@ class MetricsRepository:
         """Count finished jobs per time bucket per job_type.
 
         ISO8601 timestamps sort lexically, so a substring is a valid bucket key:
-        first 13 chars => hour ("2026-06-04T00"), first 10 => day.
+        first 15 chars => 10-min ("2026-06-04T00:3"), 13 => hour, 10 => day.
         """
-        width = 10 if bucket == "day" else 13
+        width = {"day": 10, "10min": 15}.get(bucket, 13)
         where = "WHERE finished_at >= ?" if since else ""
         params = [since] if since else []
         with self._get_connection() as conn:

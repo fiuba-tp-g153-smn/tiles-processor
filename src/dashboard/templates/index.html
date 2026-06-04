@@ -80,6 +80,7 @@
     td.strong { color:var(--text-strong); }
     .muted { color:var(--muted); }
     .scrollbox { max-height:460px; overflow-y:auto; }
+    .ip-scroll { max-height:240px; overflow-y:auto; }   /* cap pending-work list height */
     /* ── Pills, bars ─────────────────────────────────────────── */
     .pill { font-size:10.5px; font-weight:600; padding:1px 7px; border-radius:3px; }
     .pill.success { color:var(--green); background:rgba(115,191,105,.15); }
@@ -178,6 +179,18 @@
     </section>
 
     <section class="panel">
+      <div class="panel-head"><span class="panel-title">Throughput · cada 10 min</span>
+        <span class="info" data-tip="Evolución del throughput en una ventana corta con intervalos de 10 minutos: trabajos finalizados por cada bloque de 10 min y por tipo de trabajo. Útil para ver picos y huecos recientes que la vista por hora suaviza.">ⓘ</span>
+        <span class="spacer"></span>
+        <span class="ctl">rango
+          <select id="tpWindow"><option value="1">1h</option><option value="3">3h</option><option value="6" selected>6h</option><option value="12">12h</option></select>
+        </span>
+      </div>
+      <div class="chart-box" style="height:260px;padding:10px 10px 14px;"><canvas id="chTp10"></canvas></div>
+      <div id="tp10Note" class="note"></div>
+    </section>
+
+    <section class="panel">
       <div class="panel-head"><span class="panel-title">Por tipo de trabajo · tiempos y resultados</span>
         <span class="info" data-tip="Estadísticas agregadas por tipo de trabajo: conteos por resultado, % de error y distribución de tiempos (prom/mín/máx/p95). Los tiempos se calculan solo sobre trabajos exitosos. Clic en una columna para ordenar.">ⓘ</span>
       </div>
@@ -257,7 +270,9 @@
     return "hace " + Math.floor(d/86400) + "d";
   }
   function fmtBucket(b) {
-    return b.length >= 13 ? b.slice(5,10) + " " + b.slice(11,13) + "h" : b.slice(5,10);
+    if (b.length >= 15) return b.slice(5,10) + " " + b.slice(11,13) + ":" + b.slice(14,15) + "0"; // 10-min
+    if (b.length >= 13) return b.slice(5,10) + " " + b.slice(11,13) + "h"; // hora
+    return b.slice(5,10); // día
   }
   async function getJSON(url) {
     const r = await fetch(url);
@@ -402,7 +417,7 @@
       const rows = ip.map((p) =>
         `<tr><td class="l"><span class="dot"></span>${esc(p.image_id)}</td><td class="l muted">${esc(p.band_id)}</td>
          <td class="l muted">${esc(p.status||"")}</td><td class="num muted">${ago(p.updated_at)}</td></tr>`).join("");
-      html += `<div class="scroll-x"><table><thead><tr><th class="active">imagen</th><th>banda</th><th>estado</th><th>desde</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      html += `<div class="scroll-x ip-scroll"><table><thead><tr><th class="active">imagen</th><th>banda</th><th>estado</th><th>desde</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     }
     $("live").innerHTML = html;
   }
@@ -501,13 +516,24 @@
     $("chartNote").textContent = series.length ? "" : "Aún no hay trabajos exitosos en esta ventana.";
   }
 
+  // 10-minute throughput evolution (own short window, independent of the global one)
+  function updateTp10Chart(rows) {
+    upsert("chTp10", "line", lineData(rows, "count"), baseOpts(false, ""));
+  }
+  async function loadTp10() {
+    if (!HAS_CHART) { $("tp10Note").textContent = "Chart.js no disponible."; return; }
+    const rows = await getJSON(`/api/throughput?bucket=10min&hours=${$("tpWindow").value}`);
+    updateTp10Chart(rows);
+    $("tp10Note").textContent = rows.length ? "" : "Sin trabajos en este rango.";
+  }
+
   // ── orchestration ────────────────────────────────────────
   async function refresh() {
     try {
       const summary = await getJSON(`/api/summary?hours=${win()}`);
       renderCards(summary);
       renderSummary(summary);
-      await Promise.all([loadJobs(true), loadCharts(), loadLive()]);
+      await Promise.all([loadJobs(true), loadCharts(), loadLive(), loadTp10()]);
       $("updated").textContent = "actualizado " + new Date().toLocaleTimeString();
       $("loadMore").disabled = jobsRows.length < JOBS_PAGE;
     } catch (e) {
@@ -524,6 +550,7 @@
   $("interval").onchange = schedule;
   $("window").onchange = refresh;
   $("bucket").onchange = loadCharts;
+  $("tpWindow").onchange = loadTp10;
   $("loadMore").onclick = () => loadJobs(false);
   refresh();
   schedule();
