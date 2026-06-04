@@ -224,84 +224,92 @@ class WrfProcessor(ImageProcessor):
 
         try:
             self._check_shutdown()
-            payload = self._load_payload(
-                product_config, f2d_path, work_unit.source_uri
-            )
+            with self._time_stage("load"):
+                payload = self._load_payload(
+                    product_config, f2d_path, work_unit.source_uri
+                )
             self._check_shutdown()
 
-            rgba = self._build_rgba(
-                product_id,
-                product_config,
-                payload["primary"],
-                payload["topo_nan_mask"],
-            )
+            with self._time_stage("rgba"):
+                rgba = self._build_rgba(
+                    product_id,
+                    product_config,
+                    payload["primary"],
+                    payload["topo_nan_mask"],
+                )
             # Two-stage raster output: (1) write a GCP-tagged TIFF that
             # carries each pixel's true Lambert (lon, lat); (2) warp it to a
             # regular EPSG:4326 grid via thin-plate spline. gdal2tiles then
             # produces tiles whose pixels align with the basemap and the
             # GeoJSON overlays — the same alignment the manual SMN script
             # gets via cartopy's projection-aware rendering.
-            geotiff_gcp_path = work_dir / f"{work_unit.image_id}_gcp.tif"
-            self._save_rgba_geotiff(
-                rgba, payload["lat"], payload["lon"], geotiff_gcp_path
-            )
-            del rgba
-            gc.collect()
-            self._check_shutdown()
-
             geotiff_path = work_dir / f"{work_unit.image_id}.tif"
-            self._warp_to_epsg4326(
-                geotiff_gcp_path, geotiff_path, resampling="near"
-            )
-            geotiff_gcp_path.unlink(missing_ok=True)
+            with self._time_stage("geotiff"):
+                geotiff_gcp_path = work_dir / f"{work_unit.image_id}_gcp.tif"
+                self._save_rgba_geotiff(
+                    rgba, payload["lat"], payload["lon"], geotiff_gcp_path
+                )
+                del rgba
+                gc.collect()
+                self._check_shutdown()
+
+                self._warp_to_epsg4326(
+                    geotiff_gcp_path, geotiff_path, resampling="near"
+                )
+                geotiff_gcp_path.unlink(missing_ok=True)
             self._check_shutdown()
 
             # COG: same two-stage pipeline. Float field needs bilinear
             # resampling so NaN/finite transitions stay clean.
-            cog_gcp_path = work_dir / f"{work_unit.image_id}_cog_gcp.tif"
-            self._save_float_geotiff_gcp(
-                payload["primary"], payload["lat"], payload["lon"], cog_gcp_path
-            )
             cog_path = work_dir / f"{work_unit.image_id}_cog.tif"
-            self._warp_to_epsg4326(
-                cog_gcp_path,
-                cog_path,
-                of="COG",
-                resampling="bilinear",
-                extra_creation_options=(
-                    "COMPRESS=DEFLATE",
-                    "PREDICTOR=3",
-                    "BLOCKSIZE=512",
-                ),
-            )
-            cog_gcp_path.unlink(missing_ok=True)
+            with self._time_stage("cog"):
+                cog_gcp_path = work_dir / f"{work_unit.image_id}_cog_gcp.tif"
+                self._save_float_geotiff_gcp(
+                    payload["primary"], payload["lat"], payload["lon"], cog_gcp_path
+                )
+                self._warp_to_epsg4326(
+                    cog_gcp_path,
+                    cog_path,
+                    of="COG",
+                    resampling="bilinear",
+                    extra_creation_options=(
+                        "COMPRESS=DEFLATE",
+                        "PREDICTOR=3",
+                        "BLOCKSIZE=512",
+                    ),
+                )
+                cog_gcp_path.unlink(missing_ok=True)
             self._check_shutdown()
 
             # Secondary point-query COGs (wind magnitude + flagged contours).
             # Same float pipeline as the primary; one COG per secondary var.
-            secondary_cog_paths = self._generate_secondary_cogs(
-                work_dir, work_unit.image_id, payload, product_config
-            )
+            with self._time_stage("secondary_cog"):
+                secondary_cog_paths = self._generate_secondary_cogs(
+                    work_dir, work_unit.image_id, payload, product_config
+                )
             self._check_shutdown()
 
-            geojson_paths = self._generate_geojson_layers(
-                work_dir, work_unit.image_id, payload, product_config
-            )
+            with self._time_stage("geojson"):
+                geojson_paths = self._generate_geojson_layers(
+                    work_dir, work_unit.image_id, payload, product_config
+                )
             self._check_shutdown()
 
             tiles_dir = work_dir / "tiles"
-            self._generate_tiles(geotiff_path, tiles_dir)
+            with self._time_stage("tiling"):
+                self._generate_tiles(geotiff_path, tiles_dir)
             self._check_shutdown()
 
-            await self._upload_outputs(
-                product_config=product_config,
-                init_tag=init_tag,
-                fxxx=fxxx,
-                tiles_dir=tiles_dir,
-                cog_path=cog_path,
-                secondary_cog_paths=secondary_cog_paths,
-                geojson_paths=geojson_paths,
-            )
+            with self._time_stage("upload"):
+                await self._upload_outputs(
+                    product_config=product_config,
+                    init_tag=init_tag,
+                    fxxx=fxxx,
+                    tiles_dir=tiles_dir,
+                    cog_path=cog_path,
+                    secondary_cog_paths=secondary_cog_paths,
+                    geojson_paths=geojson_paths,
+                )
 
             logger.info(
                 "[WRF] Completed %s (%s/%s)",

@@ -84,7 +84,9 @@ def client(tmp_path):
 def test_index_serves_html(client):
     r = client.get("/")
     assert r.status_code == 200
-    assert "tiles-processor" in r.text
+    assert "Rendimiento" in r.text  # Spanish UI
+    assert "Trabajos recientes" in r.text
+    assert "chTiming" in r.text  # chart canvas present
 
 
 def test_health(client):
@@ -113,6 +115,30 @@ def test_jobs_filters(client):
 def test_throughput(client):
     tp = client.get("/api/throughput?bucket=hour").json()
     assert tp and set(tp[0]) == {"bucket", "job_type", "count"}
+
+
+def test_timeseries(client):
+    ts = client.get("/api/timeseries?bucket=hour").json()
+    assert ts
+    assert set(ts[0]) == {
+        "bucket",
+        "job_type",
+        "count",
+        "avg_total_s",
+        "p95_total_s",
+        "stages",
+    }
+    goes = [r for r in ts if r["job_type"] == "goes19_abi_band_13"]
+    assert goes and goes[0]["stages"].get("georef") == pytest.approx(3.2)
+
+
+def test_jobs_offset_paginates(client):
+    page1 = client.get("/api/jobs?limit=2&offset=0").json()
+    page2 = client.get("/api/jobs?limit=2&offset=2").json()
+    assert len(page1) == 2 and len(page2) == 2
+    ids1 = {j["image_id"] for j in page1}
+    ids2 = {j["image_id"] for j in page2}
+    assert ids1.isdisjoint(ids2)  # distinct pages
 
 
 def test_live_degrades_when_rabbitmq_down(client, tmp_path):

@@ -99,11 +99,14 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/jobs")
     def api_jobs(
-        limit: int = Query(100, ge=1, le=1000),
+        limit: int = Query(50, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
         job_type: str | None = Query(None, alias="type"),
         outcome: str | None = Query(None),
     ) -> list[dict]:
-        return repo.recent_jobs(limit=limit, job_type=job_type, outcome=outcome)
+        return repo.recent_jobs(
+            limit=limit, offset=offset, job_type=job_type, outcome=outcome
+        )
 
     @app.get("/api/throughput")
     def api_throughput(
@@ -111,6 +114,13 @@ def create_app(config: Config) -> FastAPI:
         hours: int | None = Query(None, ge=0),
     ) -> list[dict]:
         return repo.throughput(bucket=bucket, since=_since_from_hours(hours))
+
+    @app.get("/api/timeseries")
+    def api_timeseries(
+        bucket: str = Query("hour"),
+        hours: int | None = Query(None, ge=0),
+    ) -> list[dict]:
+        return repo.timing_series(bucket=bucket, since=_since_from_hours(hours))
 
     @app.get("/api/live")
     def api_live() -> dict:

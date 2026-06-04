@@ -86,13 +86,14 @@ class GlmFedProcessor(ImageProcessor):
         dirs = self._setup_work_dirs(work_unit)
         try:
             self._check_shutdown()
-            aggregated = await asyncio.to_thread(
-                aggregate_glm_window,
-                glm_files,
-                window_start,
-                window_end,
-                self.config.GLM_ACCUM_MINUTES,
-            )
+            with self._time_stage("aggregate"):
+                aggregated = await asyncio.to_thread(
+                    aggregate_glm_window,
+                    glm_files,
+                    window_start,
+                    window_end,
+                    self.config.GLM_ACCUM_MINUTES,
+                )
             try:
                 await self._process_variable(
                     aggregated,
@@ -156,13 +157,14 @@ class GlmFedProcessor(ImageProcessor):
         """Reproject one aggregated variable to lat/lon and run it through the tile pipeline."""
         self._check_shutdown()
         logger.info("[GLM] %s: reproject to EPSG:4326", band_config.band_id)
-        product_data = await asyncio.to_thread(
-            reproject_to_latlon,
-            aggregated,
-            var_name,
-            work_unit.bounds,
-            self.config.GLM_RESOLUTION_DEG,
-        )
+        with self._time_stage("reproject"):
+            product_data = await asyncio.to_thread(
+                reproject_to_latlon,
+                aggregated,
+                var_name,
+                work_unit.bounds,
+                self.config.GLM_RESOLUTION_DEG,
+            )
         try:
             await self._generate_and_upload(
                 product_data, geotiff_dir, tiles_dir, work_unit, band_config
@@ -187,77 +189,81 @@ class GlmFedProcessor(ImageProcessor):
         # 1. COG — raw float32 in native units (FED counts, TOE Joules, MFA km²).
         self._check_shutdown()
         logger.info("[GLM] %s: COG", band_config.band_id)
-        cog_path = await asyncio.to_thread(
-            save_as_cog, product_data, geotiff_dir, work_unit.image_id
-        )
+        with self._time_stage("cog"):
+            cog_path = await asyncio.to_thread(
+                save_as_cog, product_data, geotiff_dir, work_unit.image_id
+            )
         cog_key = f"{band_config.s3_cog_prefix}/{work_unit.image_id}.tif"
 
         # 2. GeoTIFF in log-domain so the linear normalize_and_colorize +
         #    linearly-sampled palette reproduce matplotlib.LogNorm output.
         self._check_shutdown()
         logger.info("[GLM] %s: log-domain GeoTIFF", band_config.band_id)
-        log_data = _log_clip(product_data, band_config.vmin, band_config.vmax)
-        r, g, b, a = normalize_and_colorize(
-            log_data,
-            vmin=float(np.log10(band_config.vmin)),
-            vmax=float(np.log10(band_config.vmax)),
-            color_palette=color_palette,
-        )
-        rgba = build_rgba_data_array(
-            r,
-            g,
-            b,
-            a,
-            coords_x=log_data.coords["x"],
-            coords_y=log_data.coords["y"],
-            product_name=band_config.product_name,
-        )
-        del log_data, r, g, b, a
-        gc.collect()
+        with self._time_stage("geotiff"):
+            log_data = _log_clip(product_data, band_config.vmin, band_config.vmax)
+            r, g, b, a = normalize_and_colorize(
+                log_data,
+                vmin=float(np.log10(band_config.vmin)),
+                vmax=float(np.log10(band_config.vmax)),
+                color_palette=color_palette,
+            )
+            rgba = build_rgba_data_array(
+                r,
+                g,
+                b,
+                a,
+                coords_x=log_data.coords["x"],
+                coords_y=log_data.coords["y"],
+                product_name=band_config.product_name,
+            )
+            del log_data, r, g, b, a
+            gc.collect()
 
-        geotiff_path = geotiff_dir / f"{work_unit.image_id}.tif"
-        tmp_geotiff_path = geotiff_dir / f"{uuid.uuid4()}.tif"
-        try:
-            rgba.rio.to_raster(tmp_geotiff_path, driver="GTiff", compress="LZW")
-            tmp_geotiff_path.rename(geotiff_path)
-            logger.info("GeoTIFF written: %s", geotiff_path)
-        except Exception:
-            tmp_geotiff_path.unlink(missing_ok=True)
-            raise
-        del rgba
-        gc.collect()
+            geotiff_path = geotiff_dir / f"{work_unit.image_id}.tif"
+            tmp_geotiff_path = geotiff_dir / f"{uuid.uuid4()}.tif"
+            try:
+                rgba.rio.to_raster(tmp_geotiff_path, driver="GTiff", compress="LZW")
+                tmp_geotiff_path.rename(geotiff_path)
+                logger.info("GeoTIFF written: %s", geotiff_path)
+            except Exception:
+                tmp_geotiff_path.unlink(missing_ok=True)
+                raise
+            del rgba
+            gc.collect()
 
         # 3. Tiles.
         self._check_shutdown()
         logger.info("[GLM] %s: gdal2tiles", band_config.band_id)
-        tiles_output_dir = await asyncio.to_thread(
-            run_gdal2tiles,
-            geotiff_path,
-            tiles_dir,
-            zoom_levels=self.ZOOM_LEVELS,
-            processes=self.GDAL_PROCESSES,
-        )
+        with self._time_stage("tiling"):
+            tiles_output_dir = await asyncio.to_thread(
+                run_gdal2tiles,
+                geotiff_path,
+                tiles_dir,
+                zoom_levels=self.ZOOM_LEVELS,
+                processes=self.GDAL_PROCESSES,
+            )
 
-        self._check_shutdown()
-        await asyncio.to_thread(
-            fill_missing_tiles,
-            tiles_output_dir,
-            work_unit.bounds,
-            self.ZOOM_LEVELS,
-        )
+            self._check_shutdown()
+            await asyncio.to_thread(
+                fill_missing_tiles,
+                tiles_output_dir,
+                work_unit.bounds,
+                self.ZOOM_LEVELS,
+            )
 
         # 4. Uploads.
         # pylint: disable=duplicate-code
         self._check_shutdown()
         s3_prefix = f"{band_config.s3_tiles_prefix}/{geotiff_path.stem}"
         logger.info("[GLM] %s: upload tiles to %s", band_config.band_id, s3_prefix)
-        await self._s3_client.ensure_bucket_exists()
-        self._check_shutdown()
-        await self._s3_client.upload_directory(tiles_output_dir, s3_prefix)
+        with self._time_stage("upload"):
+            await self._s3_client.ensure_bucket_exists()
+            self._check_shutdown()
+            await self._s3_client.upload_directory(tiles_output_dir, s3_prefix)
 
-        self._check_shutdown()
-        logger.info("[GLM] %s: upload COG to %s", band_config.band_id, cog_key)
-        cog_uploaded = await self._s3_client.upload_file(cog_key, cog_path)
+            self._check_shutdown()
+            logger.info("[GLM] %s: upload COG to %s", band_config.band_id, cog_key)
+            cog_uploaded = await self._s3_client.upload_file(cog_key, cog_path)
         if not cog_uploaded:
             logger.warning(
                 "COG upload failed for %s (key=%s); continuing with tiles only",

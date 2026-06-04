@@ -162,8 +162,9 @@ class MetricsRepository:
         limit: int = 100,
         job_type: str | None = None,
         outcome: str | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Return the most recently finished jobs, newest first."""
+        """Return finished jobs newest-first, with limit/offset for pagination."""
         clauses = []
         params: list[Any] = []
         if job_type:
@@ -174,14 +175,60 @@ class MetricsRepository:
             params.append(outcome)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(max(1, min(limit, 1000)))
+        params.append(max(0, offset))
 
         with self._get_connection() as conn:
             rows = conn.execute(
                 f"SELECT * FROM job_metrics {where} "
-                "ORDER BY finished_at DESC LIMIT ?",
+                "ORDER BY finished_at DESC LIMIT ? OFFSET ?",
                 params,
             ).fetchall()
         return [self._job_to_dict(row) for row in rows]
+
+    def timing_series(
+        self, bucket: str = "hour", since: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Per time-bucket, per job_type timing for the trend charts.
+
+        Returns avg/p95 total seconds, job count, and average per-stage seconds
+        for each (bucket, job_type), computed over successful jobs only. Powers
+        the timing-evolution, p95-trend and per-stage stacked-area charts.
+        """
+        width = 10 if bucket == "day" else 13
+        clauses = ["outcome = 'success'"]
+        params: list[Any] = []
+        if since:
+            clauses.append("finished_at >= ?")
+            params.append(since)
+        where = " AND ".join(clauses)
+
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT substr(finished_at, 1, {width}) AS bucket, job_type, "
+                f"total_s, stage_timings_json FROM job_metrics WHERE {where} "
+                "ORDER BY bucket",
+                params,
+            ).fetchall()
+
+        groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
+        for row in rows:
+            groups.setdefault((row["bucket"], row["job_type"]), []).append(row)
+
+        series = []
+        for (bkt, jt), rs in groups.items():
+            stats = self._stats([r["total_s"] for r in rs])
+            series.append(
+                {
+                    "bucket": bkt,
+                    "job_type": jt,
+                    "count": len(rs),
+                    "avg_total_s": stats["avg"],
+                    "p95_total_s": stats["p95"],
+                    "stages": self._avg_stages(rs),
+                }
+            )
+        series.sort(key=lambda d: (d["bucket"], d["job_type"]))
+        return series
 
     def throughput(
         self, bucket: str = "hour", since: str | None = None
