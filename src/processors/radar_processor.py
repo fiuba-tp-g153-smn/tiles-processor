@@ -37,6 +37,36 @@ from processors.base_processor import ImageProcessor
 logger = getLogger(__name__)
 
 
+def _nearest_azimuth_indices(azimuths: np.ndarray, theta: np.ndarray) -> np.ndarray:
+    """Index of the nearest azimuth ray for each angle in ``theta`` (degrees).
+
+    Azimuth is circular, so the nearest ray to an angle is always one of the two
+    rays bracketing it in sorted order (predecessor/successor, wrapping across
+    0/360). We binary-search the insertion point and keep whichever bracket is
+    closer by circular distance. This is an exact replacement for a per-angle
+    ``argmin`` over circular distance, but runs in O(M log N) instead of O(M N)
+    (M = number of angles, N = number of rays) and is fully vectorized.
+
+    The returned indices reference the original (unsorted) ``azimuths`` array, so
+    callers can keep indexing the polar field with the radar's native ray order.
+    """
+    azimuths = np.asarray(azimuths, dtype=float)
+    order = np.argsort(azimuths)
+    az_sorted = azimuths[order]
+    n_rays = len(azimuths)
+
+    pos = np.searchsorted(az_sorted, theta)
+    left = (pos - 1) % n_rays
+    right = pos % n_rays
+
+    dist_left = np.abs(az_sorted[left] - theta)
+    dist_left = np.minimum(dist_left, 360.0 - dist_left)
+    dist_right = np.abs(az_sorted[right] - theta)
+    dist_right = np.minimum(dist_right, 360.0 - dist_right)
+
+    return order[np.where(dist_right < dist_left, right, left)]
+
+
 class RadarProcessor(ImageProcessor):
     """
     Processor for weather radar imagery (SINARAME H5 format).
@@ -352,11 +382,8 @@ class RadarProcessor(ImageProcessor):
         range_idx = np.searchsorted(ranges, r_grid.ravel())
         range_idx = np.clip(range_idx, 0, len(ranges) - 1)
 
-        azimuth_idx = np.zeros_like(theta_grid.ravel(), dtype=int)
-        for i, theta in enumerate(theta_grid.ravel()):
-            diff = np.abs(azimuths - theta)
-            diff = np.minimum(diff, 360 - diff)
-            azimuth_idx[i] = np.argmin(diff)
+        # Nearest azimuth ray per grid cell, vectorized (see _nearest_azimuth_indices).
+        azimuth_idx = _nearest_azimuth_indices(azimuths, theta_grid.ravel())
 
         outside_range = r_grid.ravel() > max_range_m
         bounds = (min_lon, max_lon, min_lat, max_lat)
