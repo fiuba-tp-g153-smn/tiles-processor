@@ -159,6 +159,19 @@ class ProgressTracker:
             )
             return {row["image_id"] for row in cursor.fetchall()}
 
+    def list_in_progress(self) -> list[dict]:
+        """Return all tracked entries, newest first (read-only, no TTL cleanup).
+
+        Used by the dashboard's live view; deliberately avoids ``_cleanup_stale``
+        so a read never mutates the workers' shared state.
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT image_id, band_id, status, created_at, updated_at "
+                "FROM processed_images ORDER BY updated_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def clear_all(self) -> None:
         """Clear all entries."""
         with self._get_connection() as conn:

@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>tiles-processor · performance</title>
+  <style>
+    :root {
+      --bg: #0e1116; --panel: #171b22; --line: #262c36; --fg: #d7dde5;
+      --muted: #8b94a3; --accent: #4aa3ff;
+      --ok: #2ecc71; --warn: #f1c40f; --err: #e74c3c; --info: #4aa3ff; --skip: #8b94a3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--fg);
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    header {
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+      padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--panel);
+      position: sticky; top: 0; z-index: 5;
+    }
+    h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+    h1 .accent { color: var(--accent); }
+    header .spacer { flex: 1; }
+    label { color: var(--muted); }
+    select, button {
+      background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+      border-radius: 6px; padding: 5px 9px; font: inherit; cursor: pointer;
+    }
+    button:hover, select:hover { border-color: var(--accent); }
+    #updated { color: var(--muted); font-size: 12px; }
+    main { padding: 18px; display: flex; flex-direction: column; gap: 18px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+    .card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+    .card .value { font-size: 24px; font-weight: 600; margin-top: 4px; }
+    section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+    section > h2 {
+      font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted);
+      margin: 0; padding: 11px 14px; border-bottom: 1px solid var(--line);
+    }
+    .section-body { padding: 6px 0; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 7px 12px; white-space: nowrap; }
+    th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+    tbody tr { border-top: 1px solid var(--line); }
+    tbody tr:hover { background: #1c222b; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pill { padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .pill.success { background: rgba(46,204,113,.15); color: var(--ok); }
+    .pill.error   { background: rgba(231,76,60,.15);  color: var(--err); }
+    .pill.dlq     { background: rgba(231,76,60,.28);  color: #ff8b7e; }
+    .pill.requeued{ background: rgba(241,196,15,.15); color: var(--warn); }
+    .pill.skipped { background: rgba(139,148,163,.18);color: var(--skip); }
+    .bar { display: flex; height: 12px; width: 220px; border-radius: 3px; overflow: hidden; background: #11151b; }
+    .bar > span { height: 100%; }
+    .legend { color: var(--muted); font-size: 11px; }
+    .muted { color: var(--muted); }
+    .err-text { color: #ff8b7e; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+    .empty { padding: 18px; color: var(--muted); }
+    .live-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; padding: 12px 14px; }
+    .live-stat { border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+    .live-stat .v { font-size: 20px; font-weight: 600; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>tiles-processor <span class="accent">· performance</span></h1>
+    <div class="spacer"></div>
+    <label>window
+      <select id="window">
+        <option value="0">all time</option>
+        <option value="24" selected>last 24h</option>
+        <option value="168">last 7d</option>
+      </select>
+    </label>
+    <label>refresh
+      <select id="interval">
+        <option value="0">off</option>
+        <option value="10" selected>10s</option>
+        <option value="30">30s</option>
+        <option value="60">60s</option>
+      </select>
+    </label>
+    <button id="refresh">↻ refresh</button>
+    <span id="updated">—</span>
+  </header>
+
+  <main>
+    <div class="cards" id="cards"></div>
+
+    <section>
+      <h2>live · queue &amp; in-progress</h2>
+      <div id="live"><div class="empty">loading…</div></div>
+    </section>
+
+    <section>
+      <h2>per job type · timing &amp; outcomes</h2>
+      <div class="section-body"><div id="summary"><div class="empty">loading…</div></div></div>
+    </section>
+
+    <section>
+      <h2>recent jobs</h2>
+      <div class="section-body"><div id="jobs"><div class="empty">loading…</div></div></div>
+    </section>
+  </main>
+
+  <script>
+    const STAGE_COLORS = {
+      read: "#6c5ce7", georef: "#4aa3ff", brightness_temp: "#00b894",
+      extract: "#6c5ce7", mapping: "#0984e3", science: "#00b894",
+      reproject: "#00cec9", cog: "#fdcb6e", geotiff: "#e17055",
+      tiling: "#e84393", upload: "#d63031",
+    };
+    const $ = (id) => document.getElementById(id);
+
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"]/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    }
+    function secs(v) { return (v == null) ? "—" : (v < 10 ? v.toFixed(2) : v.toFixed(1)) + "s"; }
+    function pct(v) { return (v * 100).toFixed(1) + "%"; }
+    function ago(iso) {
+      if (!iso) return "—";
+      const d = (Date.now() - new Date(iso).getTime()) / 1000;
+      if (d < 60) return Math.floor(d) + "s ago";
+      if (d < 3600) return Math.floor(d / 60) + "m ago";
+      if (d < 86400) return Math.floor(d / 3600) + "h ago";
+      return Math.floor(d / 86400) + "d ago";
+    }
+    async function getJSON(url) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(r.status + " " + url);
+      return r.json();
+    }
+    const win = () => $("window").value;
+
+    function renderCards(summary) {
+      const t = { total: 0, success: 0, error: 0, dlq: 0, requeued: 0, skipped: 0 };
+      for (const s of summary)
+        for (const k in t) t[k] += s.counts[k] || 0;
+      const rate = t.total ? (t.success / t.total) : 0;
+      const cards = [
+        ["jobs", t.total],
+        ["success rate", t.total ? pct(rate) : "—"],
+        ["failures", t.error + t.dlq],
+        ["dead-letter", t.dlq],
+        ["requeued", t.requeued],
+        ["skipped", t.skipped],
+        ["job types", summary.length],
+      ];
+      $("cards").innerHTML = cards.map(([l, v]) =>
+        `<div class="card"><div class="label">${l}</div><div class="value">${esc(v)}</div></div>`).join("");
+    }
+
+    function stageBar(stages) {
+      const entries = Object.entries(stages || {});
+      if (!entries.length) return '<span class="muted">—</span>';
+      const total = entries.reduce((a, [, v]) => a + v, 0) || 1;
+      const segs = entries.map(([name, v]) => {
+        const color = STAGE_COLORS[name] || "#888";
+        const w = (v / total * 100).toFixed(1);
+        return `<span style="width:${w}%;background:${color}" title="${esc(name)}: ${secs(v)}"></span>`;
+      }).join("");
+      const legend = entries.map(([name, v]) => `${esc(name)} ${secs(v)}`).join(" · ");
+      return `<div class="bar">${segs}</div><div class="legend" title="${esc(legend)}">${esc(legend)}</div>`;
+    }
+
+    function renderSummary(summary) {
+      if (!summary.length) { $("summary").innerHTML = '<div class="empty">no jobs recorded yet</div>'; return; }
+      const head = `<tr>
+        <th>job type</th><th class="num">n</th><th>outcomes</th><th class="num">err%</th>
+        <th class="num">avg</th><th class="num">min</th><th class="num">max</th><th class="num">p95</th>
+        <th class="num">net</th><th>stage breakdown</th><th>last</th></tr>`;
+      const rows = summary.map((s) => {
+        const c = s.counts;
+        const oc = ["success", "error", "dlq", "requeued", "skipped"]
+          .filter((k) => c[k]).map((k) => `<span class="pill ${k}">${c[k]}</span>`).join(" ");
+        return `<tr>
+          <td title="${esc(s.job_type)}">${esc(s.product_label || s.job_type)}</td>
+          <td class="num">${c.total}</td>
+          <td>${oc}</td>
+          <td class="num">${pct(s.error_rate)}</td>
+          <td class="num">${secs(s.total_s.avg)}</td>
+          <td class="num">${secs(s.total_s.min)}</td>
+          <td class="num">${secs(s.total_s.max)}</td>
+          <td class="num">${secs(s.total_s.p95)}</td>
+          <td class="num" title="avg download/network time">${secs(s.download_s.avg)}</td>
+          <td>${stageBar(s.stages)}</td>
+          <td class="muted">${ago(s.last_finished)}</td></tr>`;
+      }).join("");
+      $("summary").innerHTML = `<table><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function renderJobs(jobs) {
+      if (!jobs.length) { $("jobs").innerHTML = '<div class="empty">no jobs recorded yet</div>'; return; }
+      const head = `<tr>
+        <th>finished</th><th>job</th><th>scene</th><th>outcome</th>
+        <th class="num">total</th><th class="num">net</th><th>worker</th><th>detail</th></tr>`;
+      const rows = jobs.map((j) => {
+        const detail = j.outcome === "success"
+          ? `<span class="legend">${esc(Object.entries(j.stage_timings || {})
+              .map(([k, v]) => `${k} ${secs(v)}`).join(" · "))}</span>`
+          : `<span class="err-text" title="${esc(j.error_message || "")}">${esc(j.error_message || "")}</span>`;
+        return `<tr>
+          <td class="muted" title="${esc(j.finished_at)}">${ago(j.finished_at)}</td>
+          <td title="${esc(j.job_type)}">${esc(j.product_label || j.job_type)}</td>
+          <td class="muted">${esc(j.image_timestamp || j.image_id)}</td>
+          <td><span class="pill ${esc(j.outcome)}">${esc(j.outcome)}</span>${j.retry_count ? ` <span class="muted">r${j.retry_count}</span>` : ""}</td>
+          <td class="num">${secs(j.total_s)}</td>
+          <td class="num">${secs(j.download_s)}</td>
+          <td class="muted">${esc(j.worker_host || "")}</td>
+          <td>${detail}</td></tr>`;
+      }).join("");
+      $("jobs").innerHTML = `<table><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function renderLive(live) {
+      const q = live.queues || {};
+      const ip = live.in_progress || [];
+      const stat = (label, value, sub) =>
+        `<div class="live-stat"><div class="muted">${label}</div><div class="v">${esc(value)}</div>${sub ? `<div class="muted">${esc(sub)}</div>` : ""}</div>`;
+      const fmtq = (v) => (v == null ? "n/a" : v);
+      let html = '<div class="live-grid">';
+      html += stat("work queue", fmtq(q.work), "messages waiting");
+      html += stat("dead-letter queue", fmtq(q.dlq), "messages");
+      html += stat("in progress", ip.length, "jobs being processed");
+      html += "</div>";
+      if (ip.length) {
+        const rows = ip.map((p) =>
+          `<tr><td><span class="dot"></span>${esc(p.image_id)}</td><td class="muted">${esc(p.band_id)}</td>
+           <td class="muted">${esc(p.status || "")}</td><td class="muted">${ago(p.updated_at)}</td></tr>`).join("");
+        html += `<div class="section-body"><table><thead><tr><th>image</th><th>band</th><th>status</th><th>since</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      }
+      $("live").innerHTML = html;
+    }
+
+    async function loadLive() {
+      try {
+        renderLive(await getJSON("/api/live"));
+      } catch (e) {
+        $("live").innerHTML = '<div class="empty">live view unavailable</div>';
+      }
+    }
+
+    async function refresh() {
+      try {
+        const [summary, jobs] = await Promise.all([
+          getJSON(`/api/summary?hours=${win()}`),
+          getJSON(`/api/jobs?limit=60`),
+        ]);
+        renderCards(summary);
+        renderSummary(summary);
+        renderJobs(jobs);
+        $("updated").textContent = "updated " + new Date().toLocaleTimeString();
+      } catch (e) {
+        $("updated").textContent = "error: " + e.message;
+      }
+      loadLive();
+    }
+
+    let timer = null;
+    function schedule() {
+      if (timer) clearInterval(timer);
+      const s = parseInt($("interval").value, 10);
+      if (s > 0) timer = setInterval(refresh, s * 1000);
+    }
+    $("refresh").onclick = refresh;
+    $("interval").onchange = schedule;
+    $("window").onchange = refresh;
+    refresh();
+    schedule();
+  </script>
+</body>
+</html>
