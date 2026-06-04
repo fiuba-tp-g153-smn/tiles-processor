@@ -69,9 +69,14 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
         geotiff_dir = self._ensure_dir(work_dir / "geotiff")
         tiles_dir = self._ensure_dir(work_dir / "tiles")
 
-        clipped = await asyncio.to_thread(
-            self._load_and_prepare, grib_path, hour_start, hour_end, work_unit.bounds
-        )
+        with self._time_stage("load"):
+            clipped = await asyncio.to_thread(
+                self._load_and_prepare,
+                grib_path,
+                hour_start,
+                hour_end,
+                work_unit.bounds,
+            )
         self._check_shutdown()
 
         cog_path, geotiff_path = await asyncio.to_thread(
@@ -81,20 +86,23 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
         gc.collect()
         self._check_shutdown()
 
-        prewarped_path = await asyncio.to_thread(
-            prewarp_to_mercator_grid, geotiff_path, geotiff_dir, _MAX_ZOOM
-        )
+        with self._time_stage("prewarp"):
+            prewarped_path = await asyncio.to_thread(
+                prewarp_to_mercator_grid, geotiff_path, geotiff_dir, _MAX_ZOOM
+            )
         self._check_shutdown()
 
-        tiles_output_dir = await asyncio.to_thread(
-            run_gdal2tiles, prewarped_path, tiles_dir, _ZOOM_LEVELS, _GDAL_PROCESSES
-        )
-        await asyncio.to_thread(
-            fill_missing_tiles, tiles_output_dir, work_unit.bounds, _ZOOM_LEVELS
-        )
+        with self._time_stage("tiling"):
+            tiles_output_dir = await asyncio.to_thread(
+                run_gdal2tiles, prewarped_path, tiles_dir, _ZOOM_LEVELS, _GDAL_PROCESSES
+            )
+            await asyncio.to_thread(
+                fill_missing_tiles, tiles_output_dir, work_unit.bounds, _ZOOM_LEVELS
+            )
         self._check_shutdown()
 
-        await self._upload(cog_path, tiles_output_dir, forecast_ts, work_unit)
+        with self._time_stage("upload"):
+            await self._upload(cog_path, tiles_output_dir, forecast_ts, work_unit)
 
         # Cleanup intermediate files (WorkHandler cleans up the parent work_dir)
         self._cleanup_file(geotiff_path)
@@ -173,10 +181,12 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
     ) -> tuple[Path, Path]:
         """Generate COG and colorized GeoTIFF from the already-reprojected data."""
         logger.info("[ECMWF-TP] Step 4: Generating COG")
-        cog_path = save_as_cog(clipped, geotiff_dir, image_id)
+        with self._time_stage("cog"):
+            cog_path = save_as_cog(clipped, geotiff_dir, image_id)
 
         logger.info("[ECMWF-TP] Step 5: Generating colorized GeoTIFF")
-        geotiff_path = self._colorize_and_save(clipped, geotiff_dir, image_id)
+        with self._time_stage("geotiff"):
+            geotiff_path = self._colorize_and_save(clipped, geotiff_dir, image_id)
         return cog_path, geotiff_path
 
     def _colorize_and_save(

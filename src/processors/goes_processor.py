@@ -102,14 +102,18 @@ class GoesProcessor(ImageProcessor):
         # because Band2Processor overrides it with memory-optimized loading.
         self._check_shutdown()
         logger.info("Step 1: Georeferencing")
-        dataset = await asyncio.to_thread(self._apply_georeferencing, netcdf_path)
+        with self._time_stage("georef"):
+            dataset = await asyncio.to_thread(self._apply_georeferencing, netcdf_path)
 
         # 2. Brightness Temperature
         # NOTE: Uses self._compute_brightness_temperature (not the module function)
         # because Band2Processor overrides it with reflectance computation.
         self._check_shutdown()
         logger.info("Step 2: Brightness Temperature")
-        bt_data = await asyncio.to_thread(self._compute_brightness_temperature, dataset)
+        with self._time_stage("brightness_temp"):
+            bt_data = await asyncio.to_thread(
+                self._compute_brightness_temperature, dataset
+            )
 
         del dataset
         gc.collect()
@@ -130,56 +134,61 @@ class GoesProcessor(ImageProcessor):
         # 3a. Reproject + clip (shared between COG and GeoTIFF — done only once)
         self._check_shutdown()
         logger.info("Step 3a: Reproject and clip to bounds")
-        reprojected = await asyncio.to_thread(
-            self._reproject_and_clip, bt_data, work_unit.bounds
-        )
+        with self._time_stage("reproject"):
+            reprojected = await asyncio.to_thread(
+                self._reproject_and_clip, bt_data, work_unit.bounds
+            )
         del bt_data
         gc.collect()
 
         # 3b. COG — raw float32 scientific data, no colorization
         self._check_shutdown()
         logger.info("Step 3b: COG generation")
-        cog_path = await asyncio.to_thread(
-            save_as_cog, reprojected, geotiff_dir, work_unit.image_id
-        )
+        with self._time_stage("cog"):
+            cog_path = await asyncio.to_thread(
+                save_as_cog, reprojected, geotiff_dir, work_unit.image_id
+            )
 
         # 3c. GeoTIFF RGBA — dynamic vmax hook allows Band2Processor to override
         self._check_shutdown()
         logger.info("Step 3c: GeoTIFF generation")
         vmax = self._get_vmax(reprojected, band_config.vmax)
-        geotiff_path = await asyncio.to_thread(
-            self._colorize_and_save,
-            reprojected,
-            geotiff_dir,
-            work_unit.image_id,
-            band_config.vmin,
-            vmax,
-            band_config.product_name,
-            color_palette,
-        )
+        with self._time_stage("geotiff"):
+            geotiff_path = await asyncio.to_thread(
+                self._colorize_and_save,
+                reprojected,
+                geotiff_dir,
+                work_unit.image_id,
+                band_config.vmin,
+                vmax,
+                band_config.product_name,
+                color_palette,
+            )
         del reprojected
         gc.collect()
 
         # 4. Tile Generation
         self._check_shutdown()
         logger.info("Step 4: Tile Generation")
-        tiles_output_dir = await asyncio.to_thread(
-            self._generate_tiles, geotiff_path, tiles_dir
-        )
+        with self._time_stage("tiling"):
+            tiles_output_dir = await asyncio.to_thread(
+                self._generate_tiles, geotiff_path, tiles_dir
+            )
 
-        # 5. Upload tiles to S3
+        # 5. Upload tiles + COG to S3
         # pylint: disable=duplicate-code
         self._check_shutdown()
         logger.info("Step 5: Upload tiles to S3")
         s3_prefix = f"{band_config.s3_tiles_prefix}/{geotiff_path.stem}"
-        await self._s3_client.ensure_bucket_exists()
-        await self._s3_client.upload_directory(tiles_output_dir, s3_prefix)
-
-        # 5b. Upload COG to storage
-        self._check_shutdown()
-        logger.info("Step 5b: Upload COG to S3")
         cog_key = f"{band_config.s3_cog_prefix}/{work_unit.image_id}.tif"
-        cog_uploaded = await self._s3_client.upload_file(cog_key, cog_path)
+        with self._time_stage("upload"):
+            await self._s3_client.ensure_bucket_exists()
+            await self._s3_client.upload_directory(tiles_output_dir, s3_prefix)
+
+            # 5b. Upload COG to storage
+            self._check_shutdown()
+            logger.info("Step 5b: Upload COG to S3")
+            cog_uploaded = await self._s3_client.upload_file(cog_key, cog_path)
         if not cog_uploaded:
             logger.warning(
                 "COG upload failed for %s (key=%s); continuing with tiles only",

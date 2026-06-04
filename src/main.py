@@ -4,12 +4,14 @@ Tiles Processor - Main Entry Point
 This application processes GOES-19 satellite imagery using a RabbitMQ work queue.
 
 Modes:
-    worker   - Start a worker that consumes and processes work units
-    producer - Run the producer once to discover new images and publish work units
+    worker    - Start a worker that consumes and processes work units
+    producer  - Run the producer once to discover new images and publish work units
+    dashboard - Start the backoffice performance dashboard web server
 
 Usage:
-    python3 src/main.py worker    # Start a worker
-    python3 src/main.py producer  # Run producer once (for cron)
+    python3 src/main.py worker     # Start a worker
+    python3 src/main.py producer   # Run producer once (for cron)
+    python3 src/main.py dashboard  # Start the metrics dashboard
 
 The producer is designed to be run periodically (e.g., via cron or systemd timer)
 to discover new satellite images and publish work units to the queue.
@@ -35,12 +37,14 @@ def print_usage():
     print("Usage: python3 src/main.py <mode>")
     print()
     print("Modes:")
-    print("  worker   - Start a worker to process work units from the queue")
-    print("  producer - Run the producer to discover and publish new images")
+    print("  worker    - Start a worker to process work units from the queue")
+    print("  producer  - Run the producer to discover and publish new images")
+    print("  dashboard - Start the backoffice performance dashboard web server")
     print()
     print("Examples:")
-    print("  python3 src/main.py worker    # Start a worker")
-    print("  python3 src/main.py producer  # Discover and publish new images")
+    print("  python3 src/main.py worker     # Start a worker")
+    print("  python3 src/main.py producer   # Discover and publish new images")
+    print("  python3 src/main.py dashboard  # Start the metrics dashboard")
 
 
 def run_worker(config: Config) -> int:
@@ -69,6 +73,23 @@ def run_producer(config: Config) -> int:
         return EXIT_ERROR_CODE
 
 
+def run_dashboard(config: Config) -> int:
+    """Start the backoffice performance dashboard web server."""
+    logger = getLogger(__name__)
+    logger.info("Starting dashboard mode...")
+
+    try:
+        # Imported lazily so worker/producer don't require FastAPI/uvicorn.
+        # pylint: disable=import-outside-toplevel
+        from dashboard.server import run_dashboard as start_dashboard
+
+        start_dashboard(config)
+        return EXIT_SUCCESS_CODE
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.exception("Dashboard failed: %s", e)
+        return EXIT_ERROR_CODE
+
+
 def main() -> int:
     """Main entry point."""
     # Parse command line
@@ -91,6 +112,8 @@ def main() -> int:
             return run_worker(config)
         case "producer":
             return run_producer(config)
+        case "dashboard":
+            return run_dashboard(config)
         case _:
             logger.error("Unknown mode: %s", mode)
             print_usage()

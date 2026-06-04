@@ -12,6 +12,7 @@ from data_sources.ecmwf_producer_source import (
     ForecastNotAvailableError,
     TransientDownloadError,
 )
+from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from factories import (
@@ -21,7 +22,9 @@ from factories import (
 )
 from worker.ecmwf_grib_downloader import EcmwfGribDownloader
 from worker.inline_processor import InlineProcessor
+from worker.job_metrics_context import JobMetricsContext
 from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
+from models.job_metrics import JobOutcome
 from models.work_unit import WorkUnit
 from worker.work_handler import WorkHandler
 from health_server import HealthCheckServer
@@ -54,10 +57,12 @@ class Worker:  # pylint: disable=too-few-public-methods
         config: Config,
         mq_client: MessageQueueClient,
         handler: WorkHandler,
+        metrics_repository: Optional[MetricsRepository] = None,
     ):
         self._config = config
         self._mq_client = mq_client
         self._handler = handler
+        self._metrics_repository = metrics_repository
         self._running = True
         self._loop: Optional[AbstractEventLoop] = None
         self._health_server: Optional[HealthCheckServer] = None
@@ -146,15 +151,17 @@ class Worker:  # pylint: disable=too-few-public-methods
             True if message should be acknowledged
         """
         logger.info("Processing: %s", work_unit)
+        collector = JobMetricsContext(work_unit)
 
         try:
             # Run the async handler in the shared event loop
             if self._loop is None:
                 raise RuntimeError("Event loop is not initialized")
 
-            self._loop.run_until_complete(self._handler.handle(work_unit))
+            self._loop.run_until_complete(self._handler.handle(work_unit, collector))
 
             logger.info("Successfully processed %s", work_unit.image_id)
+            collector.mark_outcome(JobOutcome.SUCCESS)
             return True  # Acknowledge
 
         except ForecastNotAvailableError as e:
@@ -162,6 +169,7 @@ class Worker:  # pylint: disable=too-few-public-methods
                 "Forecast not yet available, skipping %s: %s", work_unit.image_id, e
             )
             self._handler.release_progress(work_unit)
+            collector.mark_outcome(JobOutcome.SKIPPED, str(e))
             return (
                 True  # Acknowledge without retry; producer will re-enqueue next cycle
             )
@@ -176,11 +184,13 @@ class Worker:  # pylint: disable=too-few-public-methods
             # If all workers crash before the requeued copy is processed,
             # ProgressTracker's TTL (JOB_TTL_MINUTES) eventually releases it.
             client.publish(work_unit)
+            collector.mark_outcome(JobOutcome.REQUEUED, str(e))
             return True  # Acknowledge original; copy is back in the queue
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             if not self._running:
                 logger.info("Shutdown interrupted processing of %s", work_unit.image_id)
+                # Leave outcome unset: the message is requeued, not terminal.
                 return False  # Don't ack - RabbitMQ will requeue on disconnect
 
             logger.exception("Error processing %s: %s", work_unit, e)
@@ -195,12 +205,26 @@ class Worker:  # pylint: disable=too-few-public-methods
                     retry_unit.max_retries,
                 )
                 client.publish(retry_unit)
+                collector.mark_outcome(JobOutcome.ERROR, str(e))
             else:
                 # Max retries exceeded, send to DLQ
                 logger.error("Max retries exceeded for %s, sending to DLQ", work_unit)
                 client.publish_to_dlq(work_unit, str(e))
+                collector.mark_outcome(JobOutcome.DLQ, str(e))
 
             return True  # Acknowledge (we've handled it via retry or DLQ)
+
+        finally:
+            self._record_metrics(collector)
+
+    def _record_metrics(self, collector: JobMetricsContext) -> None:
+        """Persist one metrics row. Never lets a metrics failure break the worker."""
+        if self._metrics_repository is None or not collector.has_outcome:
+            return
+        try:
+            self._metrics_repository.record(collector.build())
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("Failed to record job metrics")
 
 
 def _purge_stale_work_dirs(tmp_dir: Path) -> None:
@@ -260,6 +284,11 @@ def run_worker(config: Config) -> None:
     tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"
     progress_tracker = ProgressTracker(tracker_path)
 
+    # Create metrics repository (SQLite-based, shared with the dashboard)
+    metrics_repository: Optional[MetricsRepository] = None
+    if config.ENABLE_METRICS:
+        metrics_repository = MetricsRepository(Path(config.METRICS_DB_PATH))
+
     # Build inline processors (run in main process, need MQ access).
     # GRIB uploads use SEAWEEDFS_ECMWF_GRIB_TTL — independent from the output
     # TTL (SEAWEEDFS_ECMWF_TTL) so operators can keep raw GRIB inputs around
@@ -292,5 +321,5 @@ def run_worker(config: Config) -> None:
     )
 
     # Create and start worker
-    worker = Worker(config, mq_client, handler)
+    worker = Worker(config, mq_client, handler, metrics_repository)
     worker.start()

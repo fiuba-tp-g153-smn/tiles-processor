@@ -61,9 +61,10 @@ class EcmwfMslpProcessor(ImageProcessor):
         work_dir = self._ensure_dir(self._get_band_dir(work_unit) / work_unit.image_id)
         output_dir = self._ensure_dir(work_dir / "outputs")
 
-        clipped = await asyncio.to_thread(
-            self._load_and_prepare, grib_path, hour_end, work_unit.bounds
-        )
+        with self._time_stage("load"):
+            clipped = await asyncio.to_thread(
+                self._load_and_prepare, grib_path, hour_end, work_unit.bounds
+            )
         self._check_shutdown()
 
         cog_path, geojson_path = await asyncio.to_thread(
@@ -73,7 +74,8 @@ class EcmwfMslpProcessor(ImageProcessor):
         gc.collect()
         self._check_shutdown()
 
-        await self._upload(cog_path, geojson_path, forecast_ts, work_unit)
+        with self._time_stage("upload"):
+            await self._upload(cog_path, geojson_path, forecast_ts, work_unit)
 
         self._cleanup_file(cog_path)
         self._cleanup_file(geojson_path)
@@ -144,26 +146,28 @@ class EcmwfMslpProcessor(ImageProcessor):
     ) -> tuple[Path, Path]:
         """Generate the COG and the simplified-isobars GeoJSON."""
         logger.info("[ECMWF-MSLP] Step 4: Generating COG")
-        cog_path = save_as_cog(clipped, output_dir, image_id)
+        with self._time_stage("cog"):
+            cog_path = save_as_cog(clipped, output_dir, image_id)
 
         logger.info(
             "[ECMWF-MSLP] Step 5: Smoothing field (sigma=%.2f) and extracting isobars",
             self._smoothing_sigma,
         )
-        smoothed = smooth_field(clipped, sigma=self._smoothing_sigma)
-        features = extract_isolines(
-            smoothed,
-            step=_ISOBAR_STEP_HPA,
-            simplify_tolerance=self._isobar_simplify_tolerance,
-            value_property="pressure_hpa",
-        )
-        logger.info("[ECMWF-MSLP] Extracted %d isobar features", len(features))
+        with self._time_stage("geojson"):
+            smoothed = smooth_field(clipped, sigma=self._smoothing_sigma)
+            features = extract_isolines(
+                smoothed,
+                step=_ISOBAR_STEP_HPA,
+                simplify_tolerance=self._isobar_simplify_tolerance,
+                value_property="pressure_hpa",
+            )
+            logger.info("[ECMWF-MSLP] Extracted %d isobar features", len(features))
 
-        geojson_path = output_dir / f"{image_id}.json"
-        write_geojson(features, geojson_path)
+            geojson_path = output_dir / f"{image_id}.json"
+            write_geojson(features, geojson_path)
 
-        del smoothed, features
-        gc.collect()
+            del smoothed, features
+            gc.collect()
         return cog_path, geojson_path
 
     async def _upload(

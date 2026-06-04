@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tiles · Rendimiento</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:#111217; --panel:#181b1f; --panel-head:#1f2329; --panel-2:#1f2329;
+      --border:#2c3235; --text:#d8d9da; --text-strong:#ffffff; --muted:#767b85; --faint:#5b6066;
+      --green:#73bf69; --red:#f2495c; --yellow:#fade2a; --blue:#5794f2; --orange:#ff9830; --purple:#b877d9;
+      --sans:'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; }
+    body { background:var(--bg); color:var(--text); font-family:var(--sans); font-size:13px;
+      line-height:1.5; -webkit-font-smoothing:antialiased; }
+    /* ── Top nav ─────────────────────────────────────────────── */
+    header { position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:14px;
+      flex-wrap:wrap; padding:0 16px; height:52px;
+      background:var(--panel-head); border-bottom:1px solid var(--border); }
+    h1 { margin:0; font-size:15px; font-weight:600; color:var(--text-strong); letter-spacing:.2px;
+      display:flex; align-items:center; gap:9px; }
+    h1 .mark { width:9px; height:9px; border-radius:2px; background:var(--orange);
+      box-shadow:0 0 0 3px rgba(255,152,48,.18); }
+    h1 .dim { color:var(--muted); font-weight:400; }
+    .spacer { flex:1 1 auto; }
+    .ctl { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted);
+      text-transform:uppercase; letter-spacing:.06em; }
+    select, button { font-family:var(--sans); font-size:12px; color:var(--text); background:var(--bg);
+      border:1px solid var(--border); border-radius:2px; padding:5px 8px; cursor:pointer; }
+    select:hover, button:hover { border-color:var(--blue); }
+    button:disabled { color:var(--faint); border-color:var(--border); cursor:default; }
+    #updated { font-size:11px; color:var(--faint); }
+    /* ── Layout / panels ─────────────────────────────────────── */
+    main { padding:16px; display:flex; flex-direction:column; gap:16px; max-width:1540px; margin:0 auto; }
+    .panel { background:var(--panel); border:1px solid var(--border); border-radius:2px; }
+    .panel-head { display:flex; align-items:center; gap:8px; padding:8px 12px;
+      background:var(--panel-head); border-bottom:1px solid var(--border); border-radius:2px 2px 0 0; }
+    .panel-title { font-size:12.5px; font-weight:500; color:var(--text); }
+    .panel-body { padding:0; }
+    .scroll-x { overflow-x:auto; }
+    /* ── Info tooltip (Grafana-style ⓘ) ──────────────────────── */
+    .info { position:relative; display:inline-flex; width:15px; height:15px; align-items:center;
+      justify-content:center; border-radius:50%; border:1px solid var(--border); color:var(--muted);
+      font-size:10px; font-style:normal; cursor:help; user-select:none; }
+    .info:hover { color:var(--blue); border-color:var(--blue); }
+    .info:hover::after { content:attr(data-tip); position:absolute; top:150%; left:-4px; z-index:60;
+      width:max-content; max-width:320px; white-space:normal; text-align:left;
+      background:#0b0c0e; color:var(--text); border:1px solid var(--border); border-radius:3px;
+      padding:9px 11px; font-size:11px; line-height:1.5; box-shadow:0 6px 18px rgba(0,0,0,.55); }
+    .info:hover::before { content:""; position:absolute; top:120%; left:3px; z-index:61;
+      border:5px solid transparent; border-bottom-color:var(--border); }
+    /* ── Stat cards ──────────────────────────────────────────── */
+    .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); }
+    .card { padding:12px 14px; border-right:1px solid var(--border); border-bottom:1px solid var(--border); }
+    .card .label { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+    .card .value { font-size:30px; font-weight:600; color:var(--text-strong); line-height:1.15; margin-top:5px; }
+    .card .value.red { color:var(--red); } .card .value.orange { color:var(--orange); }
+    /* ── Tables ──────────────────────────────────────────────── */
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:7px 11px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    thead th { text-align:center;          /* every column name centered (required) */
+      font-size:11px; font-weight:500; color:var(--muted); background:var(--panel-2);
+      border-bottom:1px solid var(--border); cursor:pointer; user-select:none;
+      position:sticky; top:0; }
+    thead th:hover { color:var(--text); }
+    thead th.active { color:var(--blue); }
+    th .caret { color:var(--blue); font-size:10px; }
+    tbody tr { border-bottom:1px solid var(--border); }
+    tbody tr:last-child { border-bottom:0; }
+    tbody tr:hover { background:var(--panel-2); }
+    td { color:var(--text); }
+    td.num { text-align:center; }
+    td.l { text-align:left; }
+    td.strong { color:var(--text-strong); }
+    .muted { color:var(--muted); }
+    .scrollbox { max-height:460px; overflow-y:auto; }
+    .ip-scroll { max-height:240px; overflow-y:auto; }   /* cap pending-work list height */
+    /* ── Pills, bars ─────────────────────────────────────────── */
+    .pill { font-size:10.5px; font-weight:600; padding:1px 7px; border-radius:3px; }
+    .pill.success { color:var(--green); background:rgba(115,191,105,.15); }
+    .pill.error   { color:var(--orange); background:rgba(255,152,48,.15); }
+    .pill.dlq     { color:#fff; background:var(--red); }
+    .pill.requeued{ color:var(--yellow); background:rgba(250,222,42,.15); }
+    .pill.skipped { color:var(--muted); background:rgba(118,123,133,.18); }
+    .bar { display:flex; height:10px; width:200px; border-radius:2px; overflow:hidden;
+      background:#0d0e11; border:1px solid var(--border); margin:0 auto; }
+    .bar > span { height:100%; }
+    .legend { font-size:10px; color:var(--muted); margin-top:3px; max-width:240px; white-space:normal; line-height:1.35; }
+    .err-text { color:var(--red); max-width:340px; overflow:hidden; text-overflow:ellipsis;
+      display:inline-block; vertical-align:bottom; }
+    .empty { padding:18px; color:var(--muted); }
+    .note { font-size:11px; color:var(--faint); padding:9px 12px; display:flex; gap:10px; align-items:center; }
+    /* ── Live ────────────────────────────────────────────────── */
+    .live-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); }
+    .live-stat { padding:12px 14px; border-right:1px solid var(--border); }
+    .live-stat .k { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+    .live-stat .v { font-size:22px; font-weight:600; color:var(--text-strong); }
+    .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green); margin-right:7px; }
+    /* ── Charts ──────────────────────────────────────────────── */
+    .chart-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:1px; background:var(--border); }
+    .chart-cell { background:var(--panel); padding:0 0 12px; }
+    .cell-head { display:flex; align-items:center; gap:7px; padding:8px 12px 0; }
+    .cell-head span.t { font-size:13px; font-weight:500; color:var(--text-strong); }
+    .chart-cell .sub { padding:1px 12px 8px; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase;
+      color:var(--muted); display:flex; gap:8px; align-items:center; }
+    .chart-box { position:relative; height:240px; padding:0 8px; }
+    @media (max-width:900px){ .chart-grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span class="mark"></span> Tiles <span class="dim">· Panel de rendimiento</span></h1>
+    <div class="spacer"></div>
+    <span class="ctl">ventana
+      <select id="window"><option value="0">todo</option><option value="24" selected>24h</option><option value="168">7d</option></select>
+    </span>
+    <span class="ctl">intervalo
+      <select id="bucket"><option value="hour" selected>hora</option><option value="day">día</option></select>
+    </span>
+    <span class="ctl">auto
+      <select id="interval"><option value="0">no</option><option value="10" selected>10s</option><option value="30">30s</option><option value="60">60s</option></select>
+    </span>
+    <button id="refresh">↻ actualizar</button>
+    <span id="updated">—</span>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="panel-head"><span class="panel-title">Resumen general</span>
+        <span class="info" data-tip="Totales del período seleccionado (ventana): trabajos finalizados, tasa de éxito, fallos, descartes (DLQ), reencolados y omitidos, más la cantidad de tipos de trabajo activos.">ⓘ</span>
+      </div>
+      <div class="cards" id="cards"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-title">En vivo · cola y en proceso</span>
+        <span class="info" data-tip="Estado en tiempo real: profundidad de la cola de trabajo y de la cola de descartes (RabbitMQ), y los trabajos que se están procesando ahora mismo (rastreador de progreso). Muestra 'n/a' si RabbitMQ no responde.">ⓘ</span>
+      </div>
+      <div id="live"><div class="empty">cargando…</div></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-title">Tendencias de tiempos</span>
+        <span class="info" data-tip="Cómo evolucionan los tiempos de procesamiento a lo largo del tiempo, agrupados por intervalo (hora/día) y tipo de trabajo. Se calculan solo sobre trabajos exitosos.">ⓘ</span>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-cell">
+          <div class="cell-head"><span class="t">Evolución de tiempos</span>
+            <span class="info" data-tip="Tiempo total promedio (descarga + procesamiento) por tipo de trabajo en cada intervalo.">ⓘ</span></div>
+          <div class="sub">tiempo total promedio por tipo de trabajo</div>
+          <div class="chart-box"><canvas id="chTiming"></canvas></div>
+        </div>
+        <div class="chart-cell">
+          <div class="cell-head"><span class="t">Throughput</span>
+            <span class="info" data-tip="Cantidad de trabajos finalizados por intervalo, apilados por tipo de trabajo (incluye todos los resultados).">ⓘ</span></div>
+          <div class="sub">trabajos finalizados por intervalo (apilado)</div>
+          <div class="chart-box"><canvas id="chThroughput"></canvas></div>
+        </div>
+        <div class="chart-cell">
+          <div class="cell-head"><span class="t">Desglose por etapa</span>
+            <span class="info" data-tip="Segundos promedio en cada etapa del pipeline (georref., COG, teselado, subida, etc.) para el tipo de trabajo seleccionado.">ⓘ</span></div>
+          <div class="sub">segundos promedio por etapa · <select id="stageType"></select></div>
+          <div class="chart-box"><canvas id="chStages"></canvas></div>
+        </div>
+        <div class="chart-cell">
+          <div class="cell-head"><span class="t">Latencia p95</span>
+            <span class="info" data-tip="Percentil 95 del tiempo total por tipo: detecta regresiones de cola (los peores casos) que el promedio oculta.">ⓘ</span></div>
+          <div class="sub">tiempo total p95 por tipo</div>
+          <div class="chart-box"><canvas id="chP95"></canvas></div>
+        </div>
+      </div>
+      <div id="chartNote" class="note"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-title">Throughput · cada 10 min</span>
+        <span class="info" data-tip="Evolución del throughput en una ventana corta con intervalos de 10 minutos: trabajos finalizados por cada bloque de 10 min y por tipo de trabajo. Útil para ver picos y huecos recientes que la vista por hora suaviza.">ⓘ</span>
+        <span class="spacer"></span>
+        <span class="ctl">rango
+          <select id="tpWindow"><option value="1">1h</option><option value="3">3h</option><option value="6" selected>6h</option><option value="12">12h</option></select>
+        </span>
+      </div>
+      <div class="chart-box" style="height:260px;padding:10px 10px 14px;"><canvas id="chTp10"></canvas></div>
+      <div id="tp10Note" class="note"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-title">Por tipo de trabajo · tiempos y resultados</span>
+        <span class="info" data-tip="Estadísticas agregadas por tipo de trabajo: conteos por resultado, % de error y distribución de tiempos (prom/mín/máx/p95). Los tiempos se calculan solo sobre trabajos exitosos. Clic en una columna para ordenar.">ⓘ</span>
+      </div>
+      <div class="panel-body scroll-x"><div id="summary"><div class="empty">cargando…</div></div></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="panel-title">Trabajos recientes</span>
+        <span class="info" data-tip="Últimos trabajos finalizados (todos los resultados), del más nuevo al más viejo. Clic en las columnas para ordenar; 'cargar más' trae las siguientes 50 filas.">ⓘ</span>
+      </div>
+      <div class="scroll-x"><div class="scrollbox" id="jobs"><div class="empty">cargando…</div></div></div>
+      <div class="note">
+        <button id="loadMore">cargar 50 más</button>
+        <span id="jobsCount" class="muted"></span>
+        <span>· el orden aplica a las filas cargadas</span>
+      </div>
+    </section>
+  </main>
+
+  <script>
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const JOBS_PAGE = 50;
+
+  // Grafana "classic" series palette
+  const TYPE_PALETTE = ["#73bf69","#5794f2","#fade2a","#ff9830","#f2495c","#b877d9",
+    "#37a2a4","#705da0","#e0b400","#6ed0e0","#ef843c","#1f78c1"];
+  const STAGE_COLORS = {
+    read:"#8e8e8e", load:"#8e8e8e", aggregate:"#b877d9", georef:"#5794f2",
+    extract:"#b877d9", mapping:"#6ed0e0", brightness_temp:"#6ed0e0", reproject:"#37a2a4",
+    rgba:"#37872d", cog:"#ff9830", geotiff:"#ef843c", prewarp:"#e0b400",
+    secondary_cog:"#fade2a", geojson:"#73bf69", tiling:"#f2495c", upload:"#c4162a",
+  };
+  // Spanish display labels (raw API value still used for CSS class / color / grouping)
+  const OUTCOME_LABELS = { success:"Éxito", error:"Error", dlq:"DLQ", requeued:"Reencolado", skipped:"Omitido" };
+  const STAGE_LABELS = {
+    read:"Lectura", load:"Carga", aggregate:"Agregación", georef:"Georref.",
+    extract:"Extracción", mapping:"Mapeo", brightness_temp:"Temp. brillo", reproject:"Reproyección",
+    rgba:"RGBA", cog:"COG", geotiff:"GeoTIFF", prewarp:"Prewarp",
+    secondary_cog:"COG sec.", geojson:"GeoJSON", tiling:"Teselado", upload:"Subida",
+  };
+  const PRODUCT_TERMS = {
+    "Cloud Tops":"Tope de nubes", "Water Vapor":"Vapor de agua", "Visible":"Visible",
+    "GLM Lightning":"Rayos GLM", "Horizontal Reflectivity":"Reflectividad horizontal",
+    "Radial Velocity":"Velocidad radial", "Cross-correlation Coefficient":"Coef. correlación cruzada",
+    "Differential Reflectivity":"Reflectividad diferencial", "Specific Differential Phase":"Fase dif. específica",
+    "Differential Phase":"Fase diferencial", "Spectrum Width":"Ancho espectral",
+    "Total Power":"Potencia total", "Reflectivity":"Reflectividad",
+  };
+  function prod(label) {
+    let s = label || "";
+    for (const [en, es] of Object.entries(PRODUCT_TERMS)) s = s.split(en).join(es);
+    return s;
+  }
+  const stageLabel = (s) => STAGE_LABELS[s] || s;
+
+  const _typeColors = {};
+  function typeColor(t) {
+    if (!(t in _typeColors))
+      _typeColors[t] = TYPE_PALETTE[Object.keys(_typeColors).length % TYPE_PALETTE.length];
+    return _typeColors[t];
+  }
+  const stageColor = (s) => STAGE_COLORS[s] || "#8e8e8e";
+
+  // ── formatting helpers ───────────────────────────────────
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+  const secs = (v) => (v == null ? "—" : (v < 10 ? v.toFixed(2) : v.toFixed(1)) + "s");
+  const pct = (v) => (v == null ? "—" : (v * 100).toFixed(1) + "%");
+  function ago(iso) {
+    if (!iso) return "—";
+    const d = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (!isFinite(d)) return "—";
+    if (d < 60) return "hace " + Math.floor(d) + "s";
+    if (d < 3600) return "hace " + Math.floor(d/60) + "m";
+    if (d < 86400) return "hace " + Math.floor(d/3600) + "h";
+    return "hace " + Math.floor(d/86400) + "d";
+  }
+  function fmtBucket(b) {
+    if (b.length >= 15) return b.slice(5,10) + " " + b.slice(11,13) + ":" + b.slice(14,15) + "0"; // 10-min
+    if (b.length >= 13) return b.slice(5,10) + " " + b.slice(11,13) + "h"; // hora
+    return b.slice(5,10); // día
+  }
+  async function getJSON(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.status + " " + url);
+    return r.json();
+  }
+  const win = () => $("window").value;
+  const bucket = () => $("bucket").value;
+
+  // ── generic sortable table (centered headers) ────────────
+  function renderTable(mount, columns, rows, state) {
+    function draw() {
+      const sorted = rows.slice();
+      const col = columns.find((c) => c.key === state.key);
+      if (col) {
+        sorted.sort((a, b) => {
+          const va = col.get(a), vb = col.get(b);
+          const num = typeof va === "number" && typeof vb === "number";
+          let r = num ? (va - vb) : String(va ?? "").localeCompare(String(vb ?? ""));
+          return state.dir === "desc" ? -r : r;
+        });
+      }
+      const head = "<tr>" + columns.map((c) => {
+        const active = state.key === c.key;
+        const caret = active ? (state.dir === "desc" ? " ▼" : " ▲") : "";
+        return `<th data-k="${c.key}" class="${active ? "active" : ""}">${esc(c.label)}<span class="caret">${caret}</span></th>`;
+      }).join("") + "</tr>";
+      const body = sorted.map((row) => "<tr>" + columns.map((c) =>
+        `<td class="${c.cls || ""}">${c.fmt ? c.fmt(row) : esc(c.get(row))}</td>`).join("") + "</tr>").join("");
+      mount.innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+      mount.querySelectorAll("th").forEach((th) => {
+        th.onclick = () => {
+          const k = th.dataset.k;
+          if (state.key === k) state.dir = state.dir === "desc" ? "asc" : "desc";
+          else { state.key = k; state.dir = "desc"; }
+          draw();
+        };
+      });
+    }
+    draw();
+  }
+
+  function stageBar(stages) {
+    const entries = Object.entries(stages || {});
+    if (!entries.length) return '<span class="muted">—</span>';
+    const total = entries.reduce((a, [, v]) => a + v, 0) || 1;
+    const segs = entries.map(([n, v]) =>
+      `<span style="width:${(v/total*100).toFixed(1)}%;background:${stageColor(n)}" title="${esc(stageLabel(n))}: ${secs(v)}"></span>`).join("");
+    const legend = entries.map(([n, v]) => `${esc(stageLabel(n))} ${secs(v)}`).join(" · ");
+    return `<div class="bar">${segs}</div><div class="legend">${esc(legend)}</div>`;
+  }
+  const stageTotal = (stages) => Object.values(stages || {}).reduce((a, v) => a + v, 0);
+
+  // ── stat cards ───────────────────────────────────────────
+  function renderCards(summary) {
+    const t = { total:0, success:0, error:0, dlq:0, requeued:0, skipped:0 };
+    summary.forEach((s) => Object.keys(t).forEach((k) => (t[k] += s.counts[k] || 0)));
+    const rate = t.total ? t.success / t.total : null;
+    const cards = [
+      ["Trabajos", t.total, ""],
+      ["Tasa de éxito", t.total ? pct(rate) : "—", ""],
+      ["Fallos", t.error + t.dlq, (t.error + t.dlq) > 0 ? "orange" : ""],
+      ["Descartes (DLQ)", t.dlq, t.dlq > 0 ? "red" : ""],
+      ["Reencolados", t.requeued, ""],
+      ["Omitidos", t.skipped, ""],
+      ["Tipos", summary.length, ""],
+    ];
+    $("cards").innerHTML = cards.map(([l, v, cls]) =>
+      `<div class="card"><div class="label">${l}</div><div class="value ${cls}">${esc(v)}</div></div>`).join("");
+  }
+
+  // ── summary table ────────────────────────────────────────
+  const summarySort = { key: "n", dir: "desc" };
+  const SUMMARY_COLS = [
+    { key:"type", label:"tipo de trabajo", cls:"l strong", get:(s)=>s.product_label||s.job_type,
+      fmt:(s)=>`<span title="${esc(s.job_type)}">${esc(prod(s.product_label||s.job_type))}</span>` },
+    { key:"n", label:"n", cls:"num", get:(s)=>s.counts.total },
+    { key:"outcomes", label:"resultados", cls:"num", get:(s)=>(s.counts.error+s.counts.dlq),
+      fmt:(s)=>["success","error","dlq","requeued","skipped"].filter((k)=>s.counts[k])
+        .map((k)=>`<span class="pill ${k}" title="${esc(OUTCOME_LABELS[k]||k)}">${s.counts[k]}</span>`).join(" ") || '<span class="muted">—</span>' },
+    { key:"err", label:"% error", cls:"num", get:(s)=>s.error_rate, fmt:(s)=>pct(s.error_rate) },
+    { key:"avg", label:"prom", cls:"num", get:(s)=>s.total_s.avg, fmt:(s)=>secs(s.total_s.avg) },
+    { key:"min", label:"mín", cls:"num", get:(s)=>s.total_s.min, fmt:(s)=>secs(s.total_s.min) },
+    { key:"max", label:"máx", cls:"num", get:(s)=>s.total_s.max, fmt:(s)=>secs(s.total_s.max) },
+    { key:"p95", label:"p95", cls:"num", get:(s)=>s.total_s.p95, fmt:(s)=>secs(s.total_s.p95) },
+    { key:"net", label:"red", cls:"num", get:(s)=>s.download_s.avg, fmt:(s)=>secs(s.download_s.avg) },
+    { key:"stages", label:"desglose por etapa", cls:"num", get:(s)=>stageTotal(s.stages), fmt:(s)=>stageBar(s.stages) },
+    { key:"last", label:"último", cls:"num muted", get:(s)=>s.last_finished, fmt:(s)=>ago(s.last_finished) },
+  ];
+  function renderSummary(summary) {
+    if (!summary.length) { $("summary").innerHTML = '<div class="empty">aún no hay trabajos registrados</div>'; return; }
+    renderTable($("summary"), SUMMARY_COLS, summary, summarySort);
+  }
+
+  // ── recent jobs (paginated + sortable) ───────────────────
+  let jobsRows = [];
+  const jobsSort = { key: "finished", dir: "desc" };
+  const JOB_COLS = [
+    { key:"finished", label:"finalizado", cls:"num muted", get:(j)=>j.finished_at,
+      fmt:(j)=>`<span title="${esc(j.finished_at)}">${ago(j.finished_at)}</span>` },
+    { key:"job", label:"trabajo", cls:"l strong", get:(j)=>j.product_label||j.job_type,
+      fmt:(j)=>`<span title="${esc(j.job_type)}">${esc(prod(j.product_label||j.job_type))}</span>` },
+    { key:"scene", label:"escena", cls:"l muted", get:(j)=>j.image_timestamp||j.image_id },
+    { key:"outcome", label:"resultado", cls:"num", get:(j)=>j.outcome,
+      fmt:(j)=>`<span class="pill ${esc(j.outcome)}">${esc(OUTCOME_LABELS[j.outcome]||j.outcome)}</span>${j.retry_count?` <span class="muted">r${j.retry_count}</span>`:""}` },
+    { key:"total", label:"total", cls:"num", get:(j)=>j.total_s, fmt:(j)=>secs(j.total_s) },
+    { key:"net", label:"red", cls:"num", get:(j)=>j.download_s, fmt:(j)=>secs(j.download_s) },
+    { key:"worker", label:"nodo", cls:"l muted", get:(j)=>j.worker_host||"" },
+    { key:"detail", label:"detalle", cls:"l", get:(j)=>j.total_s ?? 0, fmt:(j)=>
+      j.outcome === "success"
+        ? `<span class="legend">${esc(Object.entries(j.stage_timings||{}).map(([k,v])=>`${stageLabel(k)} ${secs(v)}`).join(" · "))}</span>`
+        : `<span class="err-text" title="${esc(j.error_message||"")}">${esc(j.error_message||"")}</span>` },
+  ];
+  function renderJobs() {
+    if (!jobsRows.length) { $("jobs").innerHTML = '<div class="empty">aún no hay trabajos registrados</div>'; }
+    else renderTable($("jobs"), JOB_COLS, jobsRows, jobsSort);
+    $("jobsCount").textContent = `${jobsRows.length} cargados`;
+  }
+  async function loadJobs(reset) {
+    if (reset) {
+      jobsRows = await getJSON(`/api/jobs?limit=${Math.max(JOBS_PAGE, jobsRows.length)}&offset=0`);
+    } else {
+      const more = await getJSON(`/api/jobs?limit=${JOBS_PAGE}&offset=${jobsRows.length}`);
+      jobsRows = jobsRows.concat(more);
+      $("loadMore").disabled = more.length < JOBS_PAGE;
+    }
+    renderJobs();
+  }
+
+  // ── live ─────────────────────────────────────────────────
+  function renderLive(live) {
+    const q = live.queues || {}, ip = live.in_progress || [];
+    const fmtq = (v) => (v == null ? "n/a" : v);
+    const stat = (k, v, sub) =>
+      `<div class="live-stat"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="k">${sub}</div></div>`;
+    let html = '<div class="live-grid">';
+    html += stat("cola de trabajo", fmtq(q.work), "en espera");
+    html += stat("descartes (DLQ)", fmtq(q.dlq), "mensajes");
+    html += stat("en proceso", ip.length, "procesándose ahora");
+    html += "</div>";
+    if (ip.length) {
+      const rows = ip.map((p) =>
+        `<tr><td class="l"><span class="dot"></span>${esc(p.image_id)}</td><td class="l muted">${esc(p.band_id)}</td>
+         <td class="l muted">${esc(p.status||"")}</td><td class="num muted">${ago(p.updated_at)}</td></tr>`).join("");
+      html += `<div class="scroll-x ip-scroll"><table><thead><tr><th class="active">imagen</th><th>banda</th><th>estado</th><th>desde</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+    $("live").innerHTML = html;
+  }
+  async function loadLive() {
+    try { renderLive(await getJSON("/api/live")); }
+    catch { $("live").innerHTML = '<div class="empty">vista en vivo no disponible</div>'; }
+  }
+
+  // ── charts ───────────────────────────────────────────────
+  const charts = {};
+  const HAS_CHART = typeof window.Chart !== "undefined";
+  if (HAS_CHART) {
+    Chart.defaults.font.family = "'Inter', sans-serif";
+    Chart.defaults.font.size = 11;
+    Chart.defaults.color = "#767b85";
+    Chart.defaults.plugins.legend.labels.boxWidth = 10;
+    Chart.defaults.plugins.legend.labels.boxHeight = 10;
+    Chart.defaults.plugins.legend.labels.color = "#d8d9da";
+  }
+  const GRID = "rgba(204,204,220,.09)";
+  function baseOpts(stacked, unit = "s") {
+    return {
+      responsive:true, maintainAspectRatio:false, animation:false,
+      interaction:{ mode:"index", intersect:false },
+      plugins:{ legend:{ position:"bottom", labels:{ usePointStyle:true, padding:10 } } },
+      scales:{
+        x:{ stacked:!!stacked, grid:{ color:GRID }, ticks:{ maxRotation:0, autoSkip:true, maxTicksLimit:10 } },
+        y:{ stacked:!!stacked, beginAtZero:true, grid:{ color:GRID }, ticks:{ callback:(v)=>v + unit } },
+      },
+    };
+  }
+  function pivot(rows, valueKey) {
+    const buckets = [...new Set(rows.map((r) => r.bucket))].sort();
+    const types = [...new Set(rows.map((r) => r.job_type))].sort();
+    const m = {};
+    rows.forEach((r) => (m[r.bucket + "|" + r.job_type] = r[valueKey]));
+    return { buckets, types, at:(b, t) => (m[b + "|" + t] ?? null) };
+  }
+  function lineData(rows, valueKey) {
+    const p = pivot(rows, valueKey);
+    return {
+      labels: p.buckets.map(fmtBucket),
+      datasets: p.types.map((t) => ({
+        label: t, data: p.buckets.map((b) => p.at(b, t)),
+        borderColor: typeColor(t), backgroundColor: typeColor(t),
+        tension:0.25, spanGaps:true, pointRadius:2, borderWidth:1.8,
+      })),
+    };
+  }
+  function upsert(id, type, data, options) {
+    if (!HAS_CHART) return;
+    if (charts[id]) { charts[id].data = data; charts[id].options = options; charts[id].update(); }
+    else charts[id] = new Chart($(id), { type, data, options });
+  }
+  function updateTimingChart(series) { upsert("chTiming", "line", lineData(series, "avg_total_s"), baseOpts(false)); }
+  function updateP95Chart(series)    { upsert("chP95", "line", lineData(series, "p95_total_s"), baseOpts(false)); }
+  function updateThroughputChart(rows) {
+    const p = pivot(rows, "count");
+    const data = { labels:p.buckets.map(fmtBucket),
+      datasets:p.types.map((t) => ({ label:t, data:p.buckets.map((b)=>p.at(b,t) || 0),
+        backgroundColor:typeColor(t), borderWidth:0 })) };
+    upsert("chThroughput", "bar", data, baseOpts(true, ""));
+  }
+  function updateStageChart(series) {
+    const types = [...new Set(series.map((r) => r.job_type))].sort();
+    const sel = $("stageType");
+    const prev = sel.value;
+    sel.innerHTML = types.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    if (types.includes(prev)) sel.value = prev;
+    const chosen = sel.value || types[0];
+    const rows = series.filter((r) => r.job_type === chosen);
+    const buckets = [...new Set(rows.map((r) => r.bucket))].sort();
+    const stageNames = [...new Set(rows.flatMap((r) => Object.keys(r.stages || {})))];
+    const byBucket = {}; rows.forEach((r) => (byBucket[r.bucket] = r.stages || {}));
+    const data = { labels:buckets.map(fmtBucket),
+      datasets: stageNames.map((s) => ({ label:stageLabel(s), data:buckets.map((b)=>(byBucket[b]||{})[s] ?? 0),
+        borderColor:stageColor(s), backgroundColor:stageColor(s) + "66", fill:true,
+        tension:0.25, pointRadius:0, borderWidth:1 })) };
+    upsert("chStages", "line", data, baseOpts(true));
+  }
+
+  let lastSeries = [];
+  $("stageType").onchange = () => updateStageChart(lastSeries);
+
+  async function loadCharts() {
+    if (!HAS_CHART) { $("chartNote").textContent = "No se pudo cargar Chart.js (¿sin conexión?) — las tablas siguen funcionando."; return; }
+    const [series, thr] = await Promise.all([
+      getJSON(`/api/timeseries?bucket=${bucket()}&hours=${win()}`),
+      getJSON(`/api/throughput?bucket=${bucket()}&hours=${win()}`),
+    ]);
+    lastSeries = series;
+    updateTimingChart(series);
+    updateP95Chart(series);
+    updateStageChart(series);
+    updateThroughputChart(thr);
+    $("chartNote").textContent = series.length ? "" : "Aún no hay trabajos exitosos en esta ventana.";
+  }
+
+  // 10-minute throughput evolution (own short window, independent of the global one)
+  function updateTp10Chart(rows) {
+    upsert("chTp10", "line", lineData(rows, "count"), baseOpts(false, ""));
+  }
+  async function loadTp10() {
+    if (!HAS_CHART) { $("tp10Note").textContent = "Chart.js no disponible."; return; }
+    const rows = await getJSON(`/api/throughput?bucket=10min&hours=${$("tpWindow").value}`);
+    updateTp10Chart(rows);
+    $("tp10Note").textContent = rows.length ? "" : "Sin trabajos en este rango.";
+  }
+
+  // ── orchestration ────────────────────────────────────────
+  async function refresh() {
+    try {
+      const summary = await getJSON(`/api/summary?hours=${win()}`);
+      renderCards(summary);
+      renderSummary(summary);
+      await Promise.all([loadJobs(true), loadCharts(), loadLive(), loadTp10()]);
+      $("updated").textContent = "actualizado " + new Date().toLocaleTimeString();
+      $("loadMore").disabled = jobsRows.length < JOBS_PAGE;
+    } catch (e) {
+      $("updated").textContent = "error: " + e.message;
+    }
+  }
+  let timer = null;
+  function schedule() {
+    if (timer) clearInterval(timer);
+    const s = parseInt($("interval").value, 10);
+    if (s > 0) timer = setInterval(refresh, s * 1000);
+  }
+  $("refresh").onclick = refresh;
+  $("interval").onchange = schedule;
+  $("window").onchange = refresh;
+  $("bucket").onchange = loadCharts;
+  $("tpWindow").onchange = loadTp10;
+  $("loadMore").onclick = () => loadJobs(false);
+  refresh();
+  schedule();
+  </script>
+</body>
+</html>

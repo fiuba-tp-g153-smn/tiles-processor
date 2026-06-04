@@ -116,7 +116,8 @@ class RadarProcessor(ImageProcessor):
         try:
             # Read radar data with PyART
             self._check_shutdown()
-            radar = self._read_radar(h5_path)
+            with self._time_stage("read"):
+                radar = self._read_radar(h5_path)
 
             # Get field name from radar object
             field_name = self._get_field_name(radar, product_id)
@@ -149,39 +150,43 @@ class RadarProcessor(ImageProcessor):
                 sweep_dir.mkdir(parents=True, exist_ok=True)
 
                 # Extract polar data for this sweep
-                polar_data = self._extract_polar_data(
-                    radar, sweep_idx, field_name, product_id
-                )
+                with self._time_stage("extract"):
+                    polar_data = self._extract_polar_data(
+                        radar, sweep_idx, field_name, product_id
+                    )
 
                 # Compute cartesian mapping once (shared between COG and GeoTIFF)
-                mapping = self._compute_cartesian_mapping(
-                    polar_data["ranges"],
-                    polar_data["azimuths"],
-                    polar_data["radar_lat"],
-                    polar_data["radar_lon"],
-                )
+                with self._time_stage("mapping"):
+                    mapping = self._compute_cartesian_mapping(
+                        polar_data["ranges"],
+                        polar_data["azimuths"],
+                        polar_data["radar_lat"],
+                        polar_data["radar_lon"],
+                    )
                 range_idx, azimuth_idx, outside_range, bounds, grid_size = mapping
 
                 # Create COG (raw float32 field values) before colorizing
                 cog_path = sweep_dir / f"{sweep_id}_cog.tif"
-                self._save_polar_cog(
-                    polar_data["data"],
-                    range_idx,
-                    azimuth_idx,
-                    outside_range,
-                    bounds,
-                    grid_size,
-                    cog_path,
-                )
+                with self._time_stage("cog"):
+                    self._save_polar_cog(
+                        polar_data["data"],
+                        range_idx,
+                        azimuth_idx,
+                        outside_range,
+                        bounds,
+                        grid_size,
+                        cog_path,
+                    )
 
                 # Create GeoTIFF (RGBA, colorized) using the same mapping
                 geotiff_path = sweep_dir / f"{sweep_id}.tif"
-                self._polar_to_geotiff_with_mapping(
-                    polar_data,
-                    mapping,
-                    geotiff_path,
-                    palette,
-                )
+                with self._time_stage("geotiff"):
+                    self._polar_to_geotiff_with_mapping(
+                        polar_data,
+                        mapping,
+                        geotiff_path,
+                        palette,
+                    )
 
                 del polar_data
                 gc.collect()
@@ -189,7 +194,8 @@ class RadarProcessor(ImageProcessor):
                 # Generate tiles
                 self._check_shutdown()
                 tiles_dir = sweep_dir / "tiles"
-                self._generate_tiles(geotiff_path, tiles_dir)
+                with self._time_stage("tiling"):
+                    self._generate_tiles(geotiff_path, tiles_dir)
 
                 # Upload tiles to S3
                 self._check_shutdown()
@@ -198,7 +204,8 @@ class RadarProcessor(ImageProcessor):
                     f"{product_config.s3_tiles_prefix}/{parsed['radar_id']}/{parsed['variable']}/"
                     f"{elevation_id}/{parsed['timestamp']}"
                 )
-                await self._upload_tiles(tiles_dir, s3_prefix)
+                with self._time_stage("upload"):
+                    await self._upload_tiles(tiles_dir, s3_prefix)
 
                 # Upload COG to storage
                 self._check_shutdown()
@@ -206,7 +213,8 @@ class RadarProcessor(ImageProcessor):
                     f"{product_config.s3_cog_prefix}/{parsed['radar_id']}/{parsed['variable']}/"
                     f"{elevation_id}/{parsed['timestamp']}.tif"
                 )
-                cog_uploaded = await self._s3_client.upload_file(cog_key, cog_path)
+                with self._time_stage("upload"):
+                    cog_uploaded = await self._s3_client.upload_file(cog_key, cog_path)
                 if not cog_uploaded:
                     logger.warning(
                         "[RADAR] COG upload failed for %s (key=%s); continuing",

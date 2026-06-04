@@ -120,8 +120,9 @@ class TestWorkerIntegration:
             # Verify acknowledgement
             assert result is True
 
-            # Verify handler was called
-            mock_handler.handle.assert_called_once_with(work_unit)
+            # Verify handler was called with the work unit (plus the per-job
+            # metrics collector the worker now threads through as 2nd arg).
+            mock_handler.handle.assert_called_once_with(work_unit, mock.ANY)
 
             # Verify no retry or DLQ publish since processing succeeded
             mock_rabbitmq.publish.assert_not_called()
