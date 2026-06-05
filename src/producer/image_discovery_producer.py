@@ -75,6 +75,11 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         bounds = self._config.get_bounds()
         total_published = 0
 
+        # Reclaim entries stuck in PROCESSING past the TTL once per tick — kept
+        # off the per-source read path so lookups stay pure reads. This is what
+        # lets crashed / dead-lettered images become rediscoverable.
+        self._progress_tracker.cleanup_stale()
+
         # Process each registered data source
         for data_source in self._data_source_registry.get_all():
             if not self._is_source_enabled(data_source):
@@ -176,7 +181,10 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             data_source.source_id,
         )
 
-        # Get in-progress images from SQLite
+        # Get in-progress images from SQLite. The dedup below is check-then-act
+        # (read here, mark_in_progress after discovery): safe because there is a
+        # single producer and APScheduler runs each job with max_instances=1, so
+        # the same (image_id, band_id) is never discovered concurrently.
         in_progress = self._progress_tracker.get_in_progress_images(band_id)
         logger.info(
             "Found %d images in progress for %s",

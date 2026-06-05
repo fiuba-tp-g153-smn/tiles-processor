@@ -15,6 +15,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from clients.sqlite_utils import sqlite_connection
 from models.job_metrics import JobMetrics
 
 logger = logging.getLogger(__name__)
@@ -53,19 +54,13 @@ class MetricsRepository:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
-        """Open a connection with the same settings as ProgressTracker."""
-        conn = sqlite3.connect(
-            str(self._db_path),
-            timeout=30.0,  # Wait up to 30s for a write lock
-            isolation_level=None,  # Autocommit mode
-        )
-        conn.row_factory = sqlite3.Row
-        return conn
+    def _connect(self):
+        """Open a short-lived connection (see ``clients.sqlite_utils``)."""
+        return sqlite_connection(self._db_path)
 
     def _init_db(self) -> None:
         """Create the schema and enable WAL for concurrent access."""
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS job_metrics (
@@ -119,7 +114,7 @@ class MetricsRepository:
         columns = ", ".join((*self._COLUMNS, "stage_timings_json"))
 
         try:
-            with self._get_connection() as conn:
+            with self._connect() as conn:
                 conn.execute(
                     f"INSERT INTO job_metrics ({columns}) VALUES ({placeholders})",
                     values,
@@ -177,7 +172,7 @@ class MetricsRepository:
         params.append(max(1, min(limit, 1000)))
         params.append(max(0, offset))
 
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT * FROM job_metrics {where} "
                 "ORDER BY finished_at DESC LIMIT ? OFFSET ?",
@@ -202,7 +197,7 @@ class MetricsRepository:
             params.append(since)
         where = " AND ".join(clauses)
 
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT substr(finished_at, 1, {width}) AS bucket, job_type, "
                 f"total_s, stage_timings_json FROM job_metrics WHERE {where} "
@@ -241,7 +236,7 @@ class MetricsRepository:
         width = {"day": 10, "10min": 15}.get(bucket, 13)
         where = "WHERE finished_at >= ?" if since else ""
         params = [since] if since else []
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT substr(finished_at, 1, {width}) AS bucket, job_type, "
                 f"COUNT(*) AS count FROM job_metrics {where} "
@@ -257,7 +252,7 @@ class MetricsRepository:
             params: list[Any] = [since]
         else:
             params = []
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             return conn.execute(query, params).fetchall()
 
     def _summarize_type(self, job_type: str, rows: list[sqlite3.Row]) -> dict[str, Any]:

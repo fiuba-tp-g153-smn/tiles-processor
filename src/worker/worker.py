@@ -234,7 +234,16 @@ def _purge_stale_work_dirs(tmp_dir: Path) -> None:
     """
     if not tmp_dir.exists():
         return
-    keep = {"progress_tracker.db", "progress_tracker.db-journal"}
+    # Only directories are purged below, so the SQLite files (and their WAL
+    # sidecars) are preserved regardless; listed for clarity.
+    keep = {
+        "progress_tracker.db",
+        "progress_tracker.db-wal",
+        "progress_tracker.db-shm",
+        "metrics.db",
+        "metrics.db-wal",
+        "metrics.db-shm",
+    }
     for entry in tmp_dir.iterdir():
         if entry.name in keep:
             continue

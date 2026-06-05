@@ -1,30 +1,40 @@
 """
 In-progress work tracker using SQLite for atomic operations.
 
-This module provides a robust tracker to record which images are currently
-being processed. It uses SQLite to ensure atomic transactions and safe
-concurrenct access from multiple processes/workers.
+This module records which images are currently queued or being processed so the
+producer can deduplicate work. It uses SQLite (WAL, 30s busy timeout, autocommit)
+for safe concurrent access from multiple processes/workers.
+
+State machine:
+- ``IN_PROGRESS``: queued by the producer, not yet picked up — never expired.
+- ``PROCESSING``: a worker is actively on it — reclaimed by ``cleanup_stale`` once
+  it sits untouched longer than the TTL (covers crashes / dead-letter / stuck retries).
+
+The database file must live on a local shared volume (same host as the producer,
+workers and dashboard); SQLite file locking / WAL do not work over a network
+filesystem (NFS/SMB).
 """
 
 import logging
-import sqlite3
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 from typing import Set
+
+from clients.sqlite_utils import sqlite_connection
 
 logger = logging.getLogger(__name__)
 
 
 class ProgressTracker:
     """
-    Tracks in-progress image processing to avoid duplicate work units.
+    Tracks queued/in-progress image processing to avoid duplicate work units.
 
     Uses SQLite for atomic operations and concurrency safety.
     Tracks:
     - image_id: The image being processed
     - band_id: Which band is being processed
-    - status: Current status (IN_PROGRESS, COMPLETED)
-    - created_at: Timestamp when processing started
+    - status: Current status (IN_PROGRESS, PROCESSING)
+    - created_at: Timestamp when the entry was created
     - updated_at: Timestamp of last update
     """
 
@@ -56,19 +66,13 @@ class ProgressTracker:
 
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
-        """Get a database connection."""
-        conn = sqlite3.connect(
-            str(self._db_path),
-            timeout=30.0,  # Wait up to 30s for lock
-            isolation_level=None,  # Autocommit mode
-        )
-        conn.row_factory = sqlite3.Row
-        return conn
+    def _connect(self):
+        """Open a short-lived connection (see ``clients.sqlite_utils``)."""
+        return sqlite_connection(self._db_path)
 
     def _init_db(self) -> None:
         """Initialize the database schema."""
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS processed_images (
@@ -85,42 +89,34 @@ class ProgressTracker:
             # Index for cleanup queries
             conn.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_created_at 
+                CREATE INDEX IF NOT EXISTS idx_created_at
                 ON processed_images(created_at)
             """
             )
 
-            # Enable WAL mode for better concurrency
+            # Enable WAL mode for better concurrency (persistent on the file)
             conn.execute("PRAGMA journal_mode=WAL")
 
-    def _cleanup_stale(self) -> None:
-        """Remove entries in PROCESSING state older than ttl."""
+    def cleanup_stale(self) -> None:
+        """Reclaim entries stuck in PROCESSING longer than the TTL.
+
+        Only PROCESSING rows expire — IN_PROGRESS rows (queued, not yet picked
+        up) are left alone. Call this periodically (e.g. once per producer tick),
+        NOT on read paths, so lookups stay pure reads and don't take write locks.
+        """
         cutoff = datetime.now(UTC) - self._ttl
-        with self._get_connection() as conn:
-            # Only clean up items that are PROCESSING and older than TTL
-            # IN_PROGRESS items (in queue) should NOT be expired
+        with self._connect() as conn:
             conn.execute(
                 "DELETE FROM processed_images WHERE status = 'PROCESSING' AND updated_at < ?",
                 (cutoff,),
             )
 
-    def is_in_progress(self, image_id: str, band_id: str) -> bool:
-        """Check if an image is currently being processed."""
-        self._cleanup_stale()  # Clean up before checking
-
-        with self._get_connection() as conn:
-            cursor = conn.execute(
-                "SELECT 1 FROM processed_images WHERE image_id = ? AND band_id = ?",
-                (image_id, band_id),
-            )
-            return cursor.fetchone() is not None
-
     def mark_in_progress(self, image_id: str, band_id: str) -> None:
-        """Mark an image as in-progress."""
-        with self._get_connection() as conn:
+        """Mark an image as in-progress (queued by the producer)."""
+        with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO processed_images 
+                INSERT OR REPLACE INTO processed_images
                 (image_id, band_id, status, created_at, updated_at)
                 VALUES (?, ?, 'IN_PROGRESS', ?, ?)
                 """,
@@ -128,11 +124,16 @@ class ProgressTracker:
             )
 
     def mark_processing(self, image_id: str, band_id: str) -> None:
-        """Mark an image as currently being processed by a worker."""
-        with self._get_connection() as conn:
+        """Mark an image as currently being processed by a worker.
+
+        Transitions the row to PROCESSING and refreshes ``updated_at``, arming the
+        TTL: if the worker then crashes / dead-letters / stalls, ``cleanup_stale``
+        reclaims the row so the image becomes rediscoverable.
+        """
+        with self._connect() as conn:
             conn.execute(
                 """
-                UPDATE processed_images 
+                UPDATE processed_images
                 SET status = 'PROCESSING', updated_at = ?
                 WHERE image_id = ? AND band_id = ?
                 """,
@@ -142,7 +143,7 @@ class ProgressTracker:
 
     def mark_completed(self, image_id: str, band_id: str) -> None:
         """Mark an image as completed (remove from tracking)."""
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             conn.execute(
                 "DELETE FROM processed_images WHERE image_id = ? AND band_id = ?",
                 (image_id, band_id),
@@ -150,10 +151,12 @@ class ProgressTracker:
         logger.debug("Marked completed: %s:%s", band_id, image_id)
 
     def get_in_progress_images(self, band_id: str) -> Set[str]:
-        """Get all in-progress image IDs for a band."""
-        self._cleanup_stale()
+        """Get all tracked image IDs for a band (pure read, no cleanup).
 
-        with self._get_connection() as conn:
+        Stale-entry reclamation is done separately via ``cleanup_stale`` so this
+        lookup never acquires a write lock.
+        """
+        with self._connect() as conn:
             cursor = conn.execute(
                 "SELECT image_id FROM processed_images WHERE band_id = ?", (band_id,)
             )
@@ -162,10 +165,10 @@ class ProgressTracker:
     def list_in_progress(self) -> list[dict]:
         """Return all tracked entries, newest first (read-only, no TTL cleanup).
 
-        Used by the dashboard's live view; deliberately avoids ``_cleanup_stale``
+        Used by the dashboard's live view; deliberately avoids ``cleanup_stale``
         so a read never mutates the workers' shared state.
         """
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 "SELECT image_id, band_id, status, created_at, updated_at "
                 "FROM processed_images ORDER BY updated_at DESC"
@@ -174,6 +177,6 @@ class ProgressTracker:
 
     def clear_all(self) -> None:
         """Clear all entries."""
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             conn.execute("DELETE FROM processed_images")
         logger.info("Cleared all entries from tracker")

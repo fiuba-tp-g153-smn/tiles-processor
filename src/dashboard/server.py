@@ -15,6 +15,7 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from clients.metrics_repository import MetricsRepository
+from clients.progress_tracker import ProgressTracker
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -31,15 +32,11 @@ def _since_from_hours(hours: int | None) -> str | None:
     return (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
 
 
-def _in_progress(config: Config) -> list[dict]:
+def _read_in_progress(tracker: ProgressTracker | None) -> list[dict]:
     """Read the workers' in-progress jobs (best-effort, never raises)."""
-    # Imported lazily so the module stays importable without the heavy clients.
-    from clients.progress_tracker import (  # pylint: disable=import-outside-toplevel
-        ProgressTracker,
-    )
-
+    if tracker is None:
+        return []
     try:
-        tracker = ProgressTracker(Path(config.TMP_DIR) / "progress_tracker.db")
         return tracker.list_in_progress()
     except Exception:  # pylint: disable=broad-exception-caught
         logger.warning("Could not read in-progress jobs", exc_info=True)
@@ -84,6 +81,16 @@ def _queue_depths(config: Config) -> dict:
 def create_app(config: Config) -> FastAPI:
     """Build the FastAPI app wired to the metrics repository."""
     repo = MetricsRepository(Path(config.METRICS_DB_PATH))
+
+    # Built once and reused by the live view (every /api/live), rather than
+    # reconstructed per request. Degrades to None if the file can't be opened.
+    try:
+        progress_tracker: ProgressTracker | None = ProgressTracker(
+            Path(config.TMP_DIR) / "progress_tracker.db"
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.warning("Could not open progress tracker", exc_info=True)
+        progress_tracker = None
 
     app = FastAPI(title="tiles-processor metrics", docs_url=None, redoc_url=None)
 
@@ -134,7 +141,7 @@ def create_app(config: Config) -> FastAPI:
     def api_live() -> dict:
         return {
             "queues": _queue_depths(config),
-            "in_progress": _in_progress(config),
+            "in_progress": _read_in_progress(progress_tracker),
         }
 
     return app
