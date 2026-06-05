@@ -8,6 +8,8 @@ live view, ``progress_tracker.db`` and RabbitMQ) that the workers write.
 
 import logging
 import secrets
+from collections.abc import Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 
@@ -20,7 +22,9 @@ from fastapi.security import APIKeyHeader
 
 from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
+from clients.rabbitmq_client import RabbitMQClient
 from config import Config
+from dashboard.queue_monitor import QueueDepthMonitor
 from dashboard.schemas import (
     HealthStatus,
     ImportResult,
@@ -74,42 +78,30 @@ def _read_in_progress(tracker: ProgressTracker | None) -> list[dict]:
         return []
 
 
-def _queue_depths(config: Config) -> dict:
-    """Probe RabbitMQ queue depths via a short-lived passive declare.
+def _make_rabbitmq_connector(config: Config) -> Callable[[], RabbitMQClient]:
+    """Build a fast-fail factory that connects a fresh RabbitMQ client.
 
-    Degrades to ``None`` counts when RabbitMQ is unreachable so the dashboard
-    shows "n/a" rather than erroring.
+    Uses a single quick attempt (not ``create_rabbitmq_client``, which retries
+    for ~45s) so the dashboard never blocks /api/live when the broker is down.
     """
-    from clients.rabbitmq_client import (  # pylint: disable=import-outside-toplevel
-        RabbitMQClient,
-    )
 
-    client = RabbitMQClient(
-        host=config.RABBITMQ_HOST,
-        port=config.RABBITMQ_PORT,
-        username=config.RABBITMQ_USER,
-        password=config.RABBITMQ_PASSWORD,
-        queue_name=config.RABBITMQ_QUEUE,
-        dlq_name=config.RABBITMQ_DLQ,
-        dlx_name=config.RABBITMQ_DLX,
-    )
-    try:
+    def connect() -> RabbitMQClient:
+        client = RabbitMQClient(
+            host=config.RABBITMQ_HOST,
+            port=config.RABBITMQ_PORT,
+            username=config.RABBITMQ_USER,
+            password=config.RABBITMQ_PASSWORD,
+            queue_name=config.RABBITMQ_QUEUE,
+            dlq_name=config.RABBITMQ_DLQ,
+            dlx_name=config.RABBITMQ_DLX,
+        )
         client.connect(max_retries=1, retry_delay=0)
-        return {
-            "work": client.get_queue_size(config.RABBITMQ_QUEUE),
-            "dlq": client.get_queue_size(config.RABBITMQ_DLQ),
-        }
-    except Exception:  # pylint: disable=broad-exception-caught
-        logger.warning("Queue depth probe failed", exc_info=True)
-        return {"work": None, "dlq": None}
-    finally:
-        try:
-            client.close()
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
+        return client
+
+    return connect
 
 
-def create_app(config: Config) -> FastAPI:
+def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
     """Build the FastAPI app wired to the metrics repository."""
     repo = MetricsRepository(Path(config.METRICS_DB_PATH))
 
@@ -123,6 +115,17 @@ def create_app(config: Config) -> FastAPI:
         logger.warning("Could not open progress tracker", exc_info=True)
         progress_tracker = None
 
+    # One persistent, reused RabbitMQ connection for queue-depth probes (instead
+    # of opening/closing one per /api/live poll). Connects lazily on first use.
+    queue_monitor = QueueDepthMonitor(
+        _make_rabbitmq_connector(config), config.RABBITMQ_QUEUE, config.RABBITMQ_DLQ
+    )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        queue_monitor.close()
+
     app = FastAPI(
         title="tiles-processor metrics API",
         description=(
@@ -132,6 +135,7 @@ def create_app(config: Config) -> FastAPI:
         ),
         version="1.0.0",
         openapi_tags=_OPENAPI_TAGS,
+        lifespan=lifespan,
     )
 
     # The visualizer browser app calls this API from a different origin.
@@ -269,7 +273,7 @@ def create_app(config: Config) -> FastAPI:
     )
     def api_live() -> dict:
         return {
-            "queues": _queue_depths(config),
+            "queues": queue_monitor.depths(),
             "in_progress": _read_in_progress(progress_tracker),
         }
 
