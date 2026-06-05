@@ -1,8 +1,9 @@
-"""FastAPI server for the backoffice performance dashboard.
+"""FastAPI server for the backoffice performance dashboard metrics API.
 
-Serves a single raw-HTML page plus JSON endpoints backed by the metrics
-database. The dashboard is read-only: it opens the shared ``metrics.db`` (and,
-for the live view, ``progress_tracker.db`` and RabbitMQ) that the workers write.
+Exposes read-only JSON endpoints backed by the metrics database; the UI itself
+lives in the separate ``visualizer`` Angular app, which consumes these endpoints
+cross-origin (hence CORS). The API opens the shared ``metrics.db`` (and, for the
+live view, ``progress_tracker.db`` and RabbitMQ) that the workers write.
 """
 
 import logging
@@ -11,14 +12,12 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from clients.metrics_repository import MetricsRepository
 from config import Config
 
 logger = logging.getLogger(__name__)
-
-_TEMPLATES = Path(__file__).parent / "templates"
 
 
 def _since_from_hours(hours: int | None) -> str | None:
@@ -81,13 +80,18 @@ def _queue_depths(config: Config) -> dict:
 def create_app(config: Config) -> FastAPI:
     """Build the FastAPI app wired to the metrics repository."""
     repo = MetricsRepository(Path(config.METRICS_DB_PATH))
-    index_html = (_TEMPLATES / "index.html").read_text(encoding="utf-8")
 
     app = FastAPI(title="tiles-processor metrics", docs_url=None, redoc_url=None)
 
-    @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return index_html
+    # The visualizer browser app calls this API from a different origin. The
+    # endpoints are read-only GETs with no credentials, so a configurable
+    # allow-list (default "*") is safe.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.DASHBOARD_CORS_ORIGINS,
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
 
     @app.get("/health")
     def health() -> dict:

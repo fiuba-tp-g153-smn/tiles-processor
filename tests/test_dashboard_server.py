@@ -67,6 +67,7 @@ def client(tmp_path):
         METRICS_DB_PATH=str(db),
         LOG_LEVEL="INFO",
         DASHBOARD_PORT=8090,
+        DASHBOARD_CORS_ORIGINS=["*"],
         TMP_DIR=str(tmp_path),
         # Point RabbitMQ at a closed port so the live probe fails fast and
         # degrades to n/a (exercises graceful degradation).
@@ -81,12 +82,20 @@ def client(tmp_path):
     return fastapi_testclient.TestClient(create_app(cfg))
 
 
-def test_index_serves_html(client):
-    r = client.get("/")
+def test_root_returns_404(client):
+    # The HTML UI moved to the visualizer app; only the JSON API remains.
+    assert client.get("/").status_code == 404
+
+
+def test_cors_header_present(client):
+    # The visualizer consumes this API cross-origin, so responses must carry
+    # an Access-Control-Allow-Origin header.
+    r = client.get("/api/summary", headers={"Origin": "http://localhost:6010"})
     assert r.status_code == 200
-    assert "Rendimiento" in r.text  # Spanish UI
-    assert "Trabajos recientes" in r.text
-    assert "chTiming" in r.text  # chart canvas present
+    assert r.headers.get("access-control-allow-origin") in (
+        "*",
+        "http://localhost:6010",
+    )
 
 
 def test_health(client):

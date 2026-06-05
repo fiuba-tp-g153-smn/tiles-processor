@@ -86,6 +86,13 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             "metrics_db_path", str(Path(self.TMP_DIR) / "metrics.db")
         )
         self.DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "6020"))
+        # Allowed CORS origins for the metrics API (the visualizer consumes it
+        # cross-origin). Comma-separated; "*" allows any origin.
+        self.DASHBOARD_CORS_ORIGINS: list[str] = [
+            origin.strip()
+            for origin in os.getenv("DASHBOARD_CORS_ORIGINS", "*").split(",")
+            if origin.strip()
+        ]
 
         # Radar Configuration
         # Path to directory containing .H5 radar files
@@ -237,4 +244,5 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("ENABLE_METRICS: %s", self.ENABLE_METRICS)
         logger.info("METRICS_DB_PATH: %s", self.METRICS_DB_PATH)
         logger.info("DASHBOARD_PORT: %s", self.DASHBOARD_PORT)
+        logger.info("DASHBOARD_CORS_ORIGINS: %s", self.DASHBOARD_CORS_ORIGINS)
         logger.info("=====================")
