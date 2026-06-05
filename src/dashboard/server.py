@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from config import Config
+from db.migrate import ensure_migrations
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,10 @@ def create_app(config: Config) -> FastAPI:
 
 def run_dashboard(config: Config) -> None:
     """Run the dashboard web server (blocking)."""
+    # Apply DB migrations before opening the (Alembic-owned) databases. Kept out
+    # of create_app so the app stays test-constructible without migrations.
+    ensure_migrations(config)
+
     app = create_app(config)
     logger.info("Starting dashboard on port %d", config.DASHBOARD_PORT)
     uvicorn.run(

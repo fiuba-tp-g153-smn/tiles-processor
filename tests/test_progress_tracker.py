@@ -3,9 +3,18 @@ import sys
 import threading
 from datetime import timedelta
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from clients.progress_tracker import ProgressTracker
+from db.migrate import run_migrations
+
+
+@pytest.fixture(autouse=True)
+def _migrate_schema(tmp_path):
+    """Alembic owns the schema now; apply it to the temp ``p.db`` before each test."""
+    run_migrations(tmp_path / "m.db", tmp_path / "p.db")
 
 
 def _status(tracker: ProgressTracker, image_id: str) -> str | None:

@@ -61,41 +61,13 @@ class ProgressTracker:
         else:
             self._ttl = timedelta(hours=2)  # Default
 
-        # Ensure parent directory exists
+        # Ensure parent directory exists. The schema itself is owned by Alembic
+        # (see migrations/progress) and applied by the one-shot ``migrate`` step.
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        self._init_db()
 
     def _connect(self):
         """Open a short-lived connection (see ``clients.sqlite_utils``)."""
         return sqlite_connection(self._db_path)
-
-    def _init_db(self) -> None:
-        """Initialize the database schema."""
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS processed_images (
-                    image_id TEXT NOT NULL,
-                    band_id TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (image_id, band_id)
-                )
-            """
-            )
-
-            # Index for cleanup queries
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_created_at
-                ON processed_images(created_at)
-            """
-            )
-
-            # Enable WAL mode for better concurrency (persistent on the file)
-            conn.execute("PRAGMA journal_mode=WAL")
 
     def cleanup_stale(self) -> None:
         """Reclaim entries stuck in PROCESSING longer than the TTL.

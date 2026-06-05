@@ -7,11 +7,13 @@ Modes:
     worker    - Start a worker that consumes and processes work units
     producer  - Run the producer once to discover new images and publish work units
     dashboard - Start the backoffice performance dashboard web server
+    migrate   - Apply database schema migrations (Alembic) and exit
 
 Usage:
     python3 src/main.py worker     # Start a worker
     python3 src/main.py producer   # Run producer once (for cron)
     python3 src/main.py dashboard  # Start the metrics dashboard
+    python3 src/main.py migrate    # Upgrade the SQLite databases to head
 
 The producer is designed to be run periodically (e.g., via cron or systemd timer)
 to discover new satellite images and publish work units to the queue.
@@ -24,6 +26,7 @@ import sys
 from logging import getLogger
 
 from config import Config
+from db.migrate import ensure_migrations
 from logging_config import setup_logging
 from producer.image_discovery_producer import run_producer as start_producer
 from worker.worker import run_worker as start_worker
@@ -40,11 +43,13 @@ def print_usage():
     print("  worker    - Start a worker to process work units from the queue")
     print("  producer  - Run the producer to discover and publish new images")
     print("  dashboard - Start the backoffice performance dashboard web server")
+    print("  migrate   - Apply database schema migrations (Alembic) and exit")
     print()
     print("Examples:")
     print("  python3 src/main.py worker     # Start a worker")
     print("  python3 src/main.py producer   # Discover and publish new images")
     print("  python3 src/main.py dashboard  # Start the metrics dashboard")
+    print("  python3 src/main.py migrate    # Upgrade the SQLite databases to head")
 
 
 def run_worker(config: Config) -> int:
@@ -90,6 +95,20 @@ def run_dashboard(config: Config) -> int:
         return EXIT_ERROR_CODE
 
 
+def run_migrate(config: Config) -> int:
+    """Apply database schema migrations and exit."""
+    logger = getLogger(__name__)
+    logger.info("Starting migrate mode...")
+
+    try:
+        ensure_migrations(config)
+        logger.info("Database migrations applied successfully")
+        return EXIT_SUCCESS_CODE
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.exception("Migration failed: %s", e)
+        return EXIT_ERROR_CODE
+
+
 def main() -> int:
     """Main entry point."""
     # Parse command line
@@ -114,6 +133,8 @@ def main() -> int:
             return run_producer(config)
         case "dashboard":
             return run_dashboard(config)
+        case "migrate":
+            return run_migrate(config)
         case _:
             logger.error("Unknown mode: %s", mode)
             print_usage()

@@ -43,6 +43,10 @@ RUN .venv/bin/pip install --no-cache-dir --upgrade arm-pyart
 COPY src/ ./src/
 COPY settings.json ./settings.json
 
+# Alembic migration environment (used by `python3 src/main.py migrate`)
+COPY alembic.ini ./alembic.ini
+COPY migrations/ ./migrations/
+
 # Use the venv for all subsequent commands
 ENV PATH="/app/.venv/bin:$PATH"
 

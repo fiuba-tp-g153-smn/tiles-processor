@@ -1,5 +1,10 @@
 import os
+import sys
+from types import SimpleNamespace
+
 import pytest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 # Set default environment variables for tests
 # These are set before any other imports to ensure config.py picks them up
@@ -26,3 +31,21 @@ def mock_env_vars(monkeypatch):
     though the global setdefault above handles import-time config.
     """
     pass
+
+
+@pytest.fixture
+def migrated_dbs(tmp_path):
+    """Apply migrations to temp metrics + progress DBs and return their paths.
+
+    Schema is owned by Alembic now (the repositories no longer self-create
+    tables), so DB tests migrate first via the same ``run_migrations`` helper the
+    ``migrate`` entrypoint uses.
+    """
+    # Imported here so the heavy Alembic/SQLAlchemy import is only paid by the
+    # tests that actually touch a database.
+    from db.migrate import run_migrations  # pylint: disable=import-outside-toplevel
+
+    metrics = tmp_path / "metrics.db"
+    progress = tmp_path / "progress_tracker.db"
+    run_migrations(metrics, progress)
+    return SimpleNamespace(metrics=metrics, progress=progress)

@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
+from db.migrate import run_migrations
 from models.job_metrics import JobMetrics
 
 # FastAPI/uvicorn are optional deps; skip cleanly if not installed.
@@ -62,6 +63,8 @@ def _seed(db_path):
 @pytest.fixture()
 def client(tmp_path):
     db = tmp_path / "metrics.db"
+    # Alembic owns the schema; create both DBs the dashboard opens.
+    run_migrations(db, tmp_path / "progress_tracker.db")
     _seed(db)
     cfg = SimpleNamespace(
         METRICS_DB_PATH=str(db),

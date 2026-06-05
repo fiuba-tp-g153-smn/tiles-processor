@@ -51,54 +51,13 @@ class MetricsRepository:
 
     def __init__(self, db_path: Path):
         self._db_path = db_path.with_suffix(".db")  # Ensure .db extension
+        # Ensure parent directory exists. The schema itself is owned by Alembic
+        # (see migrations/metrics) and applied by the one-shot ``migrate`` step.
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
 
     def _connect(self):
         """Open a short-lived connection (see ``clients.sqlite_utils``)."""
         return sqlite_connection(self._db_path)
-
-    def _init_db(self) -> None:
-        """Create the schema and enable WAL for concurrent access."""
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS job_metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    work_unit_id TEXT,
-                    image_id TEXT NOT NULL,
-                    data_source_id TEXT NOT NULL,
-                    processor_id TEXT,
-                    band_id TEXT,
-                    job_type TEXT NOT NULL,
-                    product_label TEXT,
-                    image_timestamp TEXT,
-                    outcome TEXT NOT NULL,
-                    worker_host TEXT,
-                    started_at TEXT NOT NULL,
-                    finished_at TEXT NOT NULL,
-                    retry_count INTEGER DEFAULT 0,
-                    error_message TEXT,
-                    download_s REAL,
-                    process_s REAL,
-                    total_s REAL,
-                    stage_timings_json TEXT
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_metrics_type_finished "
-                "ON job_metrics(job_type, finished_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_metrics_finished "
-                "ON job_metrics(finished_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_metrics_outcome "
-                "ON job_metrics(outcome)"
-            )
-            conn.execute("PRAGMA journal_mode=WAL")
 
     def record(self, metrics: JobMetrics) -> None:
         """Insert one finished-job record.

@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import pytest
 
 from clients.progress_tracker import ProgressTracker
+from db.migrate import run_migrations
 from data_sources import DataSourceRegistry
 from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
 from models.band_config import BAND_CONFIGS, BandConfig
@@ -42,6 +43,8 @@ def mock_config():
 @pytest.fixture
 def progress_tracker(tmp_path):
     db_path = tmp_path / "progress_tracker.db"
+    # Alembic owns the schema now; create it before the tracker is used.
+    run_migrations(tmp_path / "metrics.db", db_path)
     return ProgressTracker(db_path, ttl=timedelta(minutes=20))
 
 

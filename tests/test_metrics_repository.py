@@ -3,10 +3,19 @@ import sqlite3
 import sys
 import threading
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from clients.metrics_repository import MetricsRepository
+from db.migrate import run_migrations
 from models.job_metrics import JobMetrics, JobOutcome
+
+
+@pytest.fixture(autouse=True)
+def _migrate_schema(tmp_path):
+    """Alembic owns the schema now; apply it to the temp DB before each test."""
+    run_migrations(tmp_path / "metrics.db", tmp_path / "progress_tracker.db")
 
 
 def _make_metrics(
