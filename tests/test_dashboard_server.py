@@ -67,7 +67,6 @@ def client(tmp_path):
         METRICS_DB_PATH=str(db),
         LOG_LEVEL="INFO",
         DASHBOARD_PORT=8090,
-        DASHBOARD_CORS_ORIGINS=["*"],
         TMP_DIR=str(tmp_path),
         # Point RabbitMQ at a closed port so the live probe fails fast and
         # degrades to n/a (exercises graceful degradation).

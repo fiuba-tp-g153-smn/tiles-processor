@@ -19,6 +19,10 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
+# Origins allowed to call the metrics API cross-origin (the visualizer). The
+# endpoints are read-only GETs with no credentials, so "*" is safe.
+_CORS_ORIGINS = ["*"]
+
 
 def _since_from_hours(hours: int | None) -> str | None:
     """Convert a lookback window in hours to an ISO8601 cutoff (None = all time)."""
@@ -88,7 +92,7 @@ def create_app(config: Config) -> FastAPI:
     # allow-list (default "*") is safe.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=config.DASHBOARD_CORS_ORIGINS,
+        allow_origins=_CORS_ORIGINS,
         allow_methods=["GET"],
         allow_headers=["*"],
     )
