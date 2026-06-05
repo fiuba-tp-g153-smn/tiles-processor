@@ -40,6 +40,7 @@ glmtools = { git = "https://github.com/deeplycloudy/glmtools.git" }
 fastapi = "0.136.3"
 uvicorn = "0.49.0"
 alembic = "^1.18.4"
+orjson = "^3.11.9"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"
@@ -55,6 +56,8 @@ types-pytz = "^2026.1.1.20260304"
 
 [tool.pylint.main]
 init-hook = "import sys; sys.path.insert(0, 'src')"
+# orjson is a C extension; let pylint import it so it sees orjson.dumps etc.
+extension-pkg-allow-list = ["orjson"]
 
 [tool.pylint.design]
 max-attributes = 30

@@ -70,6 +70,7 @@ def client(tmp_path):
         METRICS_DB_PATH=str(db),
         LOG_LEVEL="INFO",
         DASHBOARD_PORT=8090,
+        DASHBOARD_API_KEY="test-key",
         TMP_DIR=str(tmp_path),
         # Point RabbitMQ at a closed port so the live probe fails fast and
         # degrades to n/a (exercises graceful degradation).
@@ -84,9 +85,13 @@ def client(tmp_path):
     return fastapi_testclient.TestClient(create_app(cfg))
 
 
-def test_root_returns_404(client):
-    # The HTML UI moved to the visualizer app; only the JSON API remains.
-    assert client.get("/").status_code == 404
+_API_KEY = {"X-API-Key": "test-key"}
+
+
+def test_root_returns_status(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok", "service": "tiles-processor-metrics"}
 
 
 def test_cors_header_present(client):
@@ -167,3 +172,129 @@ def test_live_degrades_when_rabbitmq_down(client, tmp_path):
         "20260521320209",
         "RMA12_DBZH_20260114T170328Z",
     }
+
+
+def _empty_client(db_dir, api_key="test-key"):
+    """A dashboard client over a freshly-migrated, empty metrics DB."""
+    db_dir.mkdir(parents=True, exist_ok=True)
+    metrics = db_dir / "metrics.db"
+    run_migrations(metrics, db_dir / "progress_tracker.db")
+    cfg = SimpleNamespace(
+        METRICS_DB_PATH=str(metrics),
+        LOG_LEVEL="INFO",
+        DASHBOARD_PORT=8090,
+        DASHBOARD_API_KEY=api_key,
+        TMP_DIR=str(db_dir),
+        RABBITMQ_HOST="127.0.0.1",
+        RABBITMQ_PORT=1,
+        RABBITMQ_USER="guest",
+        RABBITMQ_PASSWORD="guest",
+        RABBITMQ_QUEUE="tiles_queue",
+        RABBITMQ_DLQ="tiles_dlq",
+        RABBITMQ_DLX="tiles_dlx",
+    )
+    return fastapi_testclient.TestClient(create_app(cfg))
+
+
+def test_swagger_and_openapi_available(client):
+    docs = client.get("/docs")
+    assert docs.status_code == 200
+    assert "swagger" in docs.text.lower()
+
+    spec = client.get("/openapi.json").json()
+    assert "/api/export" in spec["paths"]
+    assert "/api/import" in spec["paths"]
+    # the import path documents the 409 mismatch response
+    assert "409" in spec["paths"]["/api/import"]["post"]["responses"]
+
+
+def test_export_returns_versioned_dump(client):
+    data = client.get("/api/export").json()
+    assert data["version"] == "metrics_0001"
+    assert data["window_hours"] is None
+    assert data["count"] == 4 and len(data["jobs"]) == 4
+    a_job = next(j for j in data["jobs"] if j["outcome"] == "success")
+    assert a_job["stage_timings"]["georef"] == pytest.approx(3.2)
+
+
+def test_export_schema_documented_without_response_model(client):
+    # /api/export returns a raw Response (orjson) for memory, but the schema is
+    # still advertised in OpenAPI so Swagger renders it.
+    spec = client.get("/openapi.json").json()
+    schema = spec["paths"]["/api/export"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]
+    assert "MetricsExport" in schema.get("$ref", "")
+    assert "MetricsExport" in spec["components"]["schemas"]
+
+
+def test_export_is_gzip_compressed(client):
+    r = client.get("/api/export", headers={"Accept-Encoding": "gzip"})
+    assert r.status_code == 200
+    assert r.headers.get("content-encoding") == "gzip"
+    assert r.json()["count"] == 4  # body still decodes to the same JSON
+
+
+def test_export_window_filter_narrows_results(client):
+    # Seeded rows are dated 2026-06-04, so a 1h window excludes them while an
+    # all-time export returns every row.
+    assert len(client.get("/api/export?hours=1").json()["jobs"]) == 0
+    assert len(client.get("/api/export").json()["jobs"]) == 4
+
+
+def test_import_round_trip_is_idempotent(client, tmp_path):
+    dump = client.get("/api/export").json()
+    target = _empty_client(tmp_path / "target")
+
+    first = target.post("/api/import", json=dump, headers=_API_KEY).json()
+    assert first == {"version": "metrics_0001", "inserted": 4, "skipped": 0}
+    assert len(target.get("/api/jobs?limit=10").json()) == 4
+
+    # Re-importing the same dump inserts nothing (idempotent skip-duplicates).
+    second = target.post("/api/import", json=dump, headers=_API_KEY).json()
+    assert second == {"version": "metrics_0001", "inserted": 0, "skipped": 4}
+    assert len(target.get("/api/jobs?limit=10").json()) == 4
+
+
+def test_import_requires_api_key(client):
+    dump = client.get("/api/export").json()
+    assert client.post("/api/import", json=dump).status_code == 401  # missing
+    assert (
+        client.post(
+            "/api/import", json=dump, headers={"X-API-Key": "wrong"}
+        ).status_code
+        == 401
+    )
+    assert client.post("/api/import", json=dump, headers=_API_KEY).status_code == 200
+
+
+def test_import_disabled_when_no_key_configured(tmp_path):
+    # A dashboard with no DASHBOARD_API_KEY fails closed on writes (503).
+    target = _empty_client(tmp_path / "nokey", api_key="")
+    dump = {
+        "version": "metrics_0001",
+        "exported_at": "2026-06-05T10:00:00+00:00",
+        "window_hours": None,
+        "count": 0,
+        "jobs": [],
+    }
+    assert target.post("/api/import", json=dump, headers=_API_KEY).status_code == 503
+
+
+def test_import_rejects_version_mismatch(client):
+    dump = client.get("/api/export").json()
+    dump["version"] = "metrics_9999"
+    r = client.post("/api/import", json=dump, headers=_API_KEY)
+    assert r.status_code == 409
+    assert "does not match" in r.json()["detail"]
+
+
+def test_import_rejects_malformed_body(client):
+    bad = {
+        "version": "metrics_0001",
+        "exported_at": "2026-06-05T10:00:00+00:00",
+        "window_hours": None,
+        "count": 1,
+        "jobs": [{"image_id": "only-this-field"}],  # missing required columns
+    }
+    assert client.post("/api/import", json=bad, headers=_API_KEY).status_code == 422

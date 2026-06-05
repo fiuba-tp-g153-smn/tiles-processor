@@ -86,6 +86,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             "metrics_db_path", str(Path(self.TMP_DIR) / "metrics.db")
         )
         self.DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "6020"))
+        # API key required by the dashboard's write endpoints (e.g. /api/import).
+        # Empty disables writes (they fail closed with 503). Reads stay open.
+        self.DASHBOARD_API_KEY: str = os.getenv("DASHBOARD_API_KEY", "")
 
         # Radar Configuration
         # Path to directory containing .H5 radar files
@@ -237,4 +240,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("ENABLE_METRICS: %s", self.ENABLE_METRICS)
         logger.info("METRICS_DB_PATH: %s", self.METRICS_DB_PATH)
         logger.info("DASHBOARD_PORT: %s", self.DASHBOARD_PORT)
+        logger.info(
+            "DASHBOARD_API_KEY: %s", "set" if self.DASHBOARD_API_KEY else "unset"
+        )
         logger.info("=====================")

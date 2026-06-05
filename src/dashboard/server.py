@@ -7,23 +7,53 @@ live view, ``progress_tracker.db`` and RabbitMQ) that the workers write.
 """
 
 import logging
+import secrets
 from datetime import datetime, UTC, timedelta
 from pathlib import Path
 
+import orjson
 import uvicorn
-from fastapi import FastAPI, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.security import APIKeyHeader
 
 from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from config import Config
+from dashboard.schemas import (
+    HealthStatus,
+    ImportResult,
+    JobRecord,
+    JobTypeSummary,
+    LiveStatus,
+    MetricsExport,
+    RootStatus,
+    ThroughputBucket,
+    TimingSeriesPoint,
+)
 from db.migrate import ensure_migrations
 
 logger = logging.getLogger(__name__)
 
+# Write endpoints authenticate with this header (matches the stack convention).
+_API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+
 # Origins allowed to call the metrics API cross-origin (the visualizer). The
-# endpoints are read-only GETs with no credentials, so "*" is safe.
+# read endpoints have no credentials, so "*" is safe; /api/import is an
+# unauthenticated write (matches the otherwise-open posture — restrict network
+# exposure or add an API key if reachable beyond the backoffice).
 _CORS_ORIGINS = ["*"]
+
+# Swagger tag groups (rendered at /docs).
+_OPENAPI_TAGS = [
+    {"name": "metrics", "description": "Read-only performance-metric aggregations."},
+    {
+        "name": "backup",
+        "description": "Full export and idempotent import of job metrics.",
+    },
+    {"name": "meta", "description": "Service metadata and health checks."},
+]
 
 
 def _since_from_hours(hours: int | None) -> str | None:
@@ -93,57 +123,239 @@ def create_app(config: Config) -> FastAPI:
         logger.warning("Could not open progress tracker", exc_info=True)
         progress_tracker = None
 
-    app = FastAPI(title="tiles-processor metrics", docs_url=None, redoc_url=None)
+    app = FastAPI(
+        title="tiles-processor metrics API",
+        description=(
+            "Performance metrics for the tiles-processor pipeline (read-only "
+            "aggregations that back the visualizer dashboard) plus a full "
+            "export/import for backup and copy-between-environments."
+        ),
+        version="1.0.0",
+        openapi_tags=_OPENAPI_TAGS,
+    )
 
-    # The visualizer browser app calls this API from a different origin. The
-    # endpoints are read-only GETs with no credentials, so a configurable
-    # allow-list (default "*") is safe.
+    # The visualizer browser app calls this API from a different origin.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_CORS_ORIGINS,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
-    @app.get("/health")
+    # Compress large JSON bodies (the all-time export gzips ~10x); only kicks in
+    # above the size threshold so small responses are untouched.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+    def require_api_key(provided: str | None = Security(_API_KEY_HEADER)) -> None:
+        """Authenticate a write request via the ``X-API-Key`` header.
+
+        Fail-closed: if no key is configured the endpoint is disabled (503);
+        otherwise a missing/incorrect key is rejected (401, constant-time compare).
+        """
+        expected = config.DASHBOARD_API_KEY
+        if not expected:
+            raise HTTPException(
+                status_code=503,
+                detail="Writes are disabled: DASHBOARD_API_KEY is not configured",
+            )
+        if not provided or not secrets.compare_digest(provided, expected):
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+    _hours = Query(
+        None,
+        ge=0,
+        description="Lookback window in hours; 0 or absent = all time, 24 = 24h, 168 = 7d.",
+        examples=[24],
+    )
+
+    @app.get(
+        "/",
+        response_model=RootStatus,
+        tags=["meta"],
+        summary="Service status",
+    )
+    def root() -> dict:
+        return {"status": "ok", "service": "tiles-processor-metrics"}
+
+    @app.get(
+        "/health",
+        response_model=HealthStatus,
+        tags=["meta"],
+        summary="Liveness probe",
+    )
     def health() -> dict:
         return {"status": "ok"}
 
-    @app.get("/api/summary")
-    def api_summary(hours: int | None = Query(None, ge=0)) -> list[dict]:
+    @app.get(
+        "/api/summary",
+        response_model=list[JobTypeSummary],
+        tags=["metrics"],
+        summary="Aggregated statistics per job type",
+        description=(
+            "Counts by outcome, error rate, and avg/min/max/p95 timings per "
+            "job type (timings over successful jobs)."
+        ),
+    )
+    def api_summary(hours: int | None = _hours) -> list[dict]:
         return repo.summary(_since_from_hours(hours))
 
-    @app.get("/api/jobs")
+    @app.get(
+        "/api/jobs",
+        response_model=list[JobRecord],
+        tags=["metrics"],
+        summary="Recent finished jobs (paginated)",
+        description="Finished jobs newest-first, with limit/offset paging and optional filters.",
+    )
     def api_jobs(
-        limit: int = Query(50, ge=1, le=1000),
-        offset: int = Query(0, ge=0),
-        job_type: str | None = Query(None, alias="type"),
-        outcome: str | None = Query(None),
+        limit: int = Query(
+            50, ge=1, le=1000, description="Max rows to return.", examples=[50]
+        ),
+        offset: int = Query(
+            0, ge=0, description="Rows to skip (paging).", examples=[0]
+        ),
+        job_type: str | None = Query(
+            None,
+            alias="type",
+            description="Filter by job type.",
+            examples=["goes19_abi_band_13"],
+        ),
+        outcome: str | None = Query(
+            None, description="Filter by outcome.", examples=["dlq"]
+        ),
     ) -> list[dict]:
         return repo.recent_jobs(
             limit=limit, offset=offset, job_type=job_type, outcome=outcome
         )
 
-    @app.get("/api/throughput")
+    @app.get(
+        "/api/throughput",
+        response_model=list[ThroughputBucket],
+        tags=["metrics"],
+        summary="Finished-job counts per time bucket",
+        description="Count of finished jobs per (time bucket, job_type).",
+    )
     def api_throughput(
-        bucket: str = Query("hour"),
-        hours: int | None = Query(None, ge=0),
+        bucket: str = Query(
+            "hour", description="Bucket width: hour, day or 10min.", examples=["hour"]
+        ),
+        hours: int | None = _hours,
     ) -> list[dict]:
         return repo.throughput(bucket=bucket, since=_since_from_hours(hours))
 
-    @app.get("/api/timeseries")
+    @app.get(
+        "/api/timeseries",
+        response_model=list[TimingSeriesPoint],
+        tags=["metrics"],
+        summary="Per-bucket timing series (successful jobs)",
+        description="Avg/p95 total seconds and per-stage averages per (bucket, job_type).",
+    )
     def api_timeseries(
-        bucket: str = Query("hour"),
-        hours: int | None = Query(None, ge=0),
+        bucket: str = Query(
+            "hour", description="Bucket width: hour, day or 10min.", examples=["hour"]
+        ),
+        hours: int | None = _hours,
     ) -> list[dict]:
         return repo.timing_series(bucket=bucket, since=_since_from_hours(hours))
 
-    @app.get("/api/live")
+    @app.get(
+        "/api/live",
+        response_model=LiveStatus,
+        tags=["metrics"],
+        summary="Live queue depths and in-progress jobs",
+        description=(
+            "Real-time RabbitMQ queue depths (null when the broker is unreachable) "
+            "and the jobs currently queued/processing."
+        ),
+    )
     def api_live() -> dict:
         return {
             "queues": _queue_depths(config),
             "in_progress": _read_in_progress(progress_tracker),
         }
+
+    @app.get(
+        "/api/export",
+        responses={200: {"model": MetricsExport, "description": "The metrics dump."}},
+        tags=["backup"],
+        summary="Export all metrics (optionally windowed)",
+        description=(
+            "Full dump of job records (optionally limited to the last `hours`), "
+            "tagged with the database's Alembic schema `version`. Feed the result "
+            "straight to POST /api/import."
+        ),
+    )
+    def api_export(hours: int | None = _hours) -> Response:
+        # Serialized straight to bytes with orjson (no response_model) so a large
+        # all-time export skips building one Pydantic model per row and a second
+        # encode pass; the payload is already JSON-native. Schema documented above;
+        # GZipMiddleware compresses the body on the wire.
+        jobs = repo.export_jobs(_since_from_hours(hours))
+        payload = {
+            "version": repo.schema_version(),
+            "exported_at": datetime.now(UTC).isoformat(),
+            "window_hours": hours,
+            "count": len(jobs),
+            "jobs": jobs,
+        }
+        return Response(orjson.dumps(payload), media_type="application/json")
+
+    @app.post(
+        "/api/import",
+        response_model=ImportResult,
+        tags=["backup"],
+        summary="Import metrics (idempotent)",
+        description=(
+            "Insert exported job records, skipping duplicates (keyed on "
+            "work_unit_id + image_id + finished_at + outcome) so re-importing the "
+            "same export is a no-op. Rejects a payload whose `version` does not "
+            "match this database's schema revision. **Requires** the `X-API-Key` header."
+        ),
+        dependencies=[Depends(require_api_key)],
+        responses={
+            401: {
+                "description": "Missing or invalid X-API-Key header.",
+                "content": {
+                    "application/json": {
+                        "example": {"detail": "Invalid or missing API key"}
+                    }
+                },
+            },
+            409: {
+                "description": "Schema version mismatch — payload from a different schema.",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "detail": "Export version 'metrics_0001' does not "
+                            "match database schema 'metrics_0002'"
+                        }
+                    }
+                },
+            },
+            422: {"description": "Malformed payload (validation error)."},
+            503: {
+                "description": "Writes disabled — DASHBOARD_API_KEY is not configured.",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "detail": "Writes are disabled: DASHBOARD_API_KEY is not configured"
+                        }
+                    }
+                },
+            },
+        },
+    )
+    def api_import(payload: MetricsExport) -> dict:
+        current = repo.schema_version()
+        if payload.version != current:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Export version {payload.version!r} does not match database "
+                    f"schema {current!r}"
+                ),
+            )
+        result = repo.import_jobs([job.model_dump() for job in payload.jobs])
+        return {"version": current, **result}
 
     return app
 

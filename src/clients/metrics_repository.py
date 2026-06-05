@@ -204,6 +204,79 @@ class MetricsRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    # --------------------------------------------------------- export / import
+
+    def schema_version(self) -> str | None:
+        """Current Alembic revision stamped in the database (None if unmanaged).
+
+        This is the schema "version" carried by an export so an import can refuse
+        a payload shaped for a different schema.
+        """
+        try:
+            with self._connect() as conn:
+                row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+        except sqlite3.Error:
+            return None
+        return row["version_num"] if row else None
+
+    def export_jobs(self, since: str | None = None) -> list[dict[str, Any]]:
+        """Return every ``job_metrics`` row matching the window, newest first."""
+        rows = self._select("SELECT * FROM job_metrics", since)
+        jobs = [self._job_to_dict(row) for row in rows]
+        jobs.sort(key=lambda job: job["finished_at"], reverse=True)
+        return jobs
+
+    def import_jobs(self, jobs: list[dict[str, Any]]) -> dict[str, int]:
+        """Idempotently insert exported job rows, skipping duplicates.
+
+        Duplicates are detected by the natural key
+        ``(work_unit_id, image_id, finished_at, outcome)`` against both the
+        existing table and rows already accepted in this batch, so re-importing
+        the same export is a no-op. The source ``id`` is ignored (a fresh
+        autoincrement is assigned) and ``stage_timings`` is re-serialized to JSON.
+
+        Returns ``{"inserted": n, "skipped": m}``.
+        """
+        columns = ", ".join((*self._COLUMNS, "stage_timings_json"))
+        placeholders = ", ".join("?" for _ in range(len(self._COLUMNS) + 1))
+        insert_sql = f"INSERT INTO job_metrics ({columns}) VALUES ({placeholders})"
+
+        skipped = 0
+        with self._connect() as conn:
+            seen = {
+                (r["work_unit_id"], r["image_id"], r["finished_at"], r["outcome"])
+                for r in conn.execute(
+                    "SELECT work_unit_id, image_id, finished_at, outcome FROM job_metrics"
+                )
+            }
+            to_insert: list[list[Any]] = []
+            for job in jobs:
+                key = (
+                    job.get("work_unit_id"),
+                    job.get("image_id"),
+                    job.get("finished_at"),
+                    job.get("outcome"),
+                )
+                if key in seen:
+                    skipped += 1
+                    continue
+                seen.add(key)
+                values = [job.get(col) for col in self._COLUMNS]
+                stages = job.get("stage_timings")
+                values.append(json.dumps(stages) if stages else None)
+                to_insert.append(values)
+
+            if to_insert:
+                try:
+                    conn.execute("BEGIN")
+                    conn.executemany(insert_sql, to_insert)
+                    conn.execute("COMMIT")
+                except sqlite3.Error:
+                    conn.execute("ROLLBACK")
+                    raise
+
+        return {"inserted": len(to_insert), "skipped": skipped}
+
     def _select(self, query: str, since: str | None) -> list[sqlite3.Row]:
         """Run a SELECT optionally filtered to finished_at >= since."""
         if since:
