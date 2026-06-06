@@ -6,7 +6,9 @@ producer can deduplicate work. It uses SQLite (WAL, 30s busy timeout, autocommit
 for safe concurrent access from multiple processes/workers.
 
 State machine:
-- ``IN_PROGRESS``: queued by the producer, not yet picked up — never expired.
+- ``IN_PROGRESS``: queued by the producer, not yet picked up. Reclaimed by
+  ``reclaim_orphan_in_progress`` ONLY when the producer confirms the work queue is
+  empty — then a still-queued row is an orphan from a lost/purged publish.
 - ``PROCESSING``: a worker is actively on it — reclaimed by ``cleanup_stale`` once
   it sits untouched longer than the TTL (covers crashes / dead-letter / stuck retries).
 
@@ -82,6 +84,30 @@ class ProgressTracker:
                 "DELETE FROM processed_images WHERE status = 'PROCESSING' AND updated_at < ?",
                 (cutoff,),
             )
+
+    def reclaim_orphan_in_progress(self, older_than: timedelta | None = None) -> int:
+        """Delete IN_PROGRESS rows older than ``older_than`` (default: the TTL).
+
+        Call this ONLY when the work queue is confirmed empty: a still-IN_PROGRESS
+        row then has no message waiting in the queue and no worker on it (those are
+        PROCESSING), so it is an orphan from a lost/purged publish — safe to reclaim
+        so the image becomes rediscoverable. The age floor guards the brief
+        receive→``mark_processing`` window. Returns the number of rows deleted.
+        """
+        # `is None` (not `or`) so an explicit timedelta(0) means "no grace", since
+        # timedelta(0) is falsy.
+        grace = self._ttl if older_than is None else older_than
+        cutoff = datetime.now(UTC) - grace
+        with self._connect() as conn:
+            deleted = conn.execute(
+                "DELETE FROM processed_images WHERE status = 'IN_PROGRESS' AND updated_at < ?",
+                (cutoff,),
+            ).rowcount
+        if deleted:
+            logger.info(
+                "Reclaimed %d orphan IN_PROGRESS row(s) (work queue empty)", deleted
+            )
+        return deleted
 
     def mark_in_progress(self, image_id: str, band_id: str) -> None:
         """Mark an image as in-progress (queued by the producer)."""

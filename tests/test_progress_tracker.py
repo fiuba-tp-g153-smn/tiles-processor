@@ -67,11 +67,42 @@ def test_cleanup_spares_fresh_processing(tmp_path):
 
 
 def test_cleanup_spares_in_progress_even_when_old(tmp_path):
-    # IN_PROGRESS (queued, not yet picked up) must never be reclaimed by the TTL.
+    # cleanup_stale only reclaims PROCESSING; IN_PROGRESS is left to the
+    # queue-gated reclaim_orphan_in_progress.
     tracker = ProgressTracker(tmp_path / "p.db", ttl=timedelta(seconds=0))
     tracker.mark_in_progress("img1", "band_13")
 
     tracker.cleanup_stale()
+    assert tracker.get_in_progress_images("band_13") == {"img1"}
+
+
+def test_reclaim_orphan_in_progress_deletes_stale(tmp_path):
+    # Called only when the work queue is empty: a stale IN_PROGRESS row is an
+    # orphan (lost/purged message) and is reclaimed.
+    tracker = ProgressTracker(tmp_path / "p.db")
+    tracker.mark_in_progress("img1", "band_13")
+
+    assert tracker.reclaim_orphan_in_progress(timedelta(seconds=0)) == 1
+    assert tracker.get_in_progress_images("band_13") == set()
+
+
+def test_reclaim_orphan_in_progress_spares_fresh(tmp_path):
+    # A just-queued row is younger than the age floor -> kept (guards the brief
+    # receive -> mark_processing window).
+    tracker = ProgressTracker(tmp_path / "p.db")
+    tracker.mark_in_progress("img1", "band_13")
+
+    assert tracker.reclaim_orphan_in_progress(timedelta(hours=1)) == 0
+    assert tracker.get_in_progress_images("band_13") == {"img1"}
+
+
+def test_reclaim_orphan_never_touches_processing(tmp_path):
+    # A PROCESSING row (a worker is on it) is never an orphan — left to cleanup_stale.
+    tracker = ProgressTracker(tmp_path / "p.db")
+    tracker.mark_in_progress("img1", "band_13")
+    tracker.mark_processing("img1", "band_13")
+
+    assert tracker.reclaim_orphan_in_progress(timedelta(seconds=0)) == 0
     assert tracker.get_in_progress_images("band_13") == {"img1"}
 
 

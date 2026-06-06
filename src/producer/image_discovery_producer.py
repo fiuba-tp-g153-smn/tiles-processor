@@ -81,6 +81,13 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         # lets crashed / dead-lettered images become rediscoverable.
         self._progress_tracker.cleanup_stale()
 
+        # Queued (IN_PROGRESS) rows whose message is gone (work queue fully
+        # drained) are orphans from a lost/purged publish — reclaim them so the
+        # image is rediscoverable. Gated on an empty queue so a backlog (a cold
+        # start can take ~15 h) is never mistaken for an orphan and re-enqueued.
+        if self._work_queue_empty():
+            self._progress_tracker.reclaim_orphan_in_progress()
+
         # Process each registered data source
         for data_source in self._data_source_registry.get_all():
             if not self._is_source_enabled(data_source):
@@ -106,6 +113,21 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
 
         logger.info("Total work units published: %d", total_published)
         return total_published
+
+    def _work_queue_empty(self) -> bool:
+        """True only if the work queue is confirmed drained.
+
+        Fail-safe: if the depth can't be read, treat the queue as non-empty so we
+        never reclaim in-progress rows on uncertainty.
+        """
+        try:
+            return self._mq_client.get_queue_size(self._config.RABBITMQ_QUEUE) == 0
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Could not read work queue depth; skipping orphan reclaim",
+                exc_info=True,
+            )
+            return False
 
     def _is_source_enabled(  # pylint: disable=too-many-return-statements
         self, data_source: DataSource
