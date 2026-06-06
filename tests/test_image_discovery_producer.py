@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import pytest
 
 from clients.progress_tracker import ProgressTracker
+from db.migrate import run_migrations
 from data_sources import DataSourceRegistry
 from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
 from models.band_config import BAND_CONFIGS, BandConfig
@@ -42,6 +43,8 @@ def mock_config():
 @pytest.fixture
 def progress_tracker(tmp_path):
     db_path = tmp_path / "progress_tracker.db"
+    # Alembic owns the schema now; create it before the tracker is used.
+    run_migrations(tmp_path / "metrics.db", db_path)
     return ProgressTracker(db_path, ttl=timedelta(minutes=20))
 
 
@@ -221,3 +224,50 @@ class TestDuplicatePrevention:
 
         published_unit = mq_client.publish.call_args[0][0]
         assert published_unit.image_id == new_image.image_id
+
+
+class TestOrphanReclaim:
+    """Orphan IN_PROGRESS rows are reclaimed only when the work queue is empty."""
+
+    @staticmethod
+    def _producer(mock_config, tracker, mq_client):
+        producer = ImageDiscoveryProducer.__new__(ImageDiscoveryProducer)
+        producer._config = mock_config
+        producer._mq_client = mq_client
+        producer._progress_tracker = tracker
+        producer._data_source_registry = DataSourceRegistry()  # no sources
+        producer._s3_client = AsyncMock()
+        producer._s3_client.list_prefixes = AsyncMock(return_value=[])
+        return producer
+
+    @pytest.mark.asyncio
+    async def test_orphan_reclaimed_when_queue_empty(self, mock_config, tmp_path):
+        db_path = tmp_path / "progress_tracker.db"
+        run_migrations(tmp_path / "metrics.db", db_path)
+        # ttl=0 => the orphan is immediately past the age floor.
+        tracker = ProgressTracker(db_path, ttl=timedelta(seconds=0))
+        tracker.mark_in_progress("orphan", "band_13")
+
+        mock_config.RABBITMQ_QUEUE = "tiles_work_queue"
+        mq_client = MagicMock()
+        mq_client.get_queue_size.return_value = 0  # work queue drained
+
+        await self._producer(mock_config, tracker, mq_client).discover_and_publish()
+
+        assert tracker.list_in_progress() == []  # orphan reclaimed
+
+    @pytest.mark.asyncio
+    async def test_orphan_kept_when_queue_not_empty(self, mock_config, tmp_path):
+        db_path = tmp_path / "progress_tracker.db"
+        run_migrations(tmp_path / "metrics.db", db_path)
+        tracker = ProgressTracker(db_path, ttl=timedelta(seconds=0))
+        tracker.mark_in_progress("orphan", "band_13")
+
+        mock_config.RABBITMQ_QUEUE = "tiles_work_queue"
+        mq_client = MagicMock()
+        mq_client.get_queue_size.return_value = 5  # backlog (e.g. cold start)
+
+        await self._producer(mock_config, tracker, mq_client).discover_and_publish()
+
+        # Not reclaimed: a non-empty queue means it might just be backlogged.
+        assert {r["image_id"] for r in tracker.list_in_progress()} == {"orphan"}

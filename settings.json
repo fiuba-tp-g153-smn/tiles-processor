@@ -1,6 +1,7 @@
 {
   "timezone": "America/Argentina/Buenos_Aires",
   "tile_retention_days": 30,
+  "metrics_max_rows": 1000000,
   "radar_input_dir": "/app/data/radar_h5",
   "glm_folder_input_dir": "/app/data/glm_h5",
   "glm_accum_minutes": 10,
@@ -10,6 +11,7 @@
   "wrf_input_dir": "/app/data/wrf_nc",
   "ecmwf_mslp_smoothing_sigma": 1.5,
   "features": {
+    "enable_metrics": true,
     "enable_band_13": true,
     "enable_band_9": true,
     "enable_band_2": true,
@@ -23,16 +25,16 @@
     "enable_radar_VRAD": true,
     "enable_ecmwf_precipitation": true,
     "enable_ecmwf_mean_sea_level_pressure": true,
-    "enable_wrf_Colmax": true,
-    "enable_wrf_Rafagas": true,
-    "enable_wrf_Campo900hPa": true,
-    "enable_wrf_Precipitacion1h": true,
-    "enable_wrf_MUCAPE": true,
-    "enable_wrf_AguaPrecipitable": true,
-    "enable_wrf_JetCapasBajas": true,
-    "enable_wrf_CortanteNivelesBajos": true,
-    "enable_wrf_CAPE_BRN": true,
-    "enable_wrf_Granizo": true
+    "enable_wrf_Colmax": false,
+    "enable_wrf_Rafagas": false,
+    "enable_wrf_Campo900hPa": false,
+    "enable_wrf_Precipitacion1h": false,
+    "enable_wrf_MUCAPE": false,
+    "enable_wrf_AguaPrecipitable": false,
+    "enable_wrf_JetCapasBajas": false,
+    "enable_wrf_CortanteNivelesBajos": false,
+    "enable_wrf_CAPE_BRN": false,
+    "enable_wrf_Granizo": false
   },
   "bounds": {
     "minx": -110.0,

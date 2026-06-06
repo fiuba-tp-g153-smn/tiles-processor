@@ -15,6 +15,7 @@ from data_sources.ecmwf_producer_source import (
 from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from config import Config
+from db.migrate import ensure_migrations
 from factories import (
     create_data_source_registry,
     create_rabbitmq_client,
@@ -234,7 +235,16 @@ def _purge_stale_work_dirs(tmp_dir: Path) -> None:
     """
     if not tmp_dir.exists():
         return
-    keep = {"progress_tracker.db", "progress_tracker.db-journal"}
+    # Only directories are purged below, so the SQLite files (and their WAL
+    # sidecars) are preserved regardless; listed for clarity.
+    keep = {
+        "progress_tracker.db",
+        "progress_tracker.db-wal",
+        "progress_tracker.db-shm",
+        "metrics.db",
+        "metrics.db-wal",
+        "metrics.db-shm",
+    }
     for entry in tmp_dir.iterdir():
         if entry.name in keep:
             continue
@@ -256,6 +266,10 @@ def run_worker(config: Config) -> None:
     Args:
         config: Application configuration
     """
+    # Apply DB migrations before building any repository (Alembic owns the
+    # schema). Serialized across processes by a file lock; a no-op once at head.
+    ensure_migrations(config)
+
     data_source_registry = create_data_source_registry(config)
     mq_client = create_rabbitmq_client(config)
 

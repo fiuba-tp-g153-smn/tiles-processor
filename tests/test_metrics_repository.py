@@ -3,10 +3,19 @@ import sqlite3
 import sys
 import threading
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from clients.metrics_repository import MetricsRepository
+from db.migrate import run_migrations
 from models.job_metrics import JobMetrics, JobOutcome
+
+
+@pytest.fixture(autouse=True)
+def _migrate_schema(tmp_path):
+    """Alembic owns the schema now; apply it to the temp DB before each test."""
+    run_migrations(tmp_path / "metrics.db", tmp_path / "progress_tracker.db")
 
 
 def _make_metrics(
@@ -128,3 +137,31 @@ def test_concurrent_writes_do_not_collide(tmp_path):
     count = conn.execute("SELECT COUNT(*) FROM job_metrics").fetchone()[0]
     conn.close()
     assert count == writers * per_writer
+
+
+def test_prune_to_max_rows_keeps_newest(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    for i in range(5):  # ids 1..5; img4 is newest
+        repo.record(_make_metrics(image_id=f"img{i}"))
+
+    assert repo.prune_to_max_rows(2) == 3  # keep the 2 newest, delete 3
+    remaining = {job["image_id"] for job in repo.recent_jobs(limit=10)}
+    assert remaining == {"img3", "img4"}
+
+
+def test_prune_to_max_rows_noop_when_under_cap(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    repo.record(_make_metrics(image_id="a"))
+    repo.record(_make_metrics(image_id="b"))
+
+    assert repo.prune_to_max_rows(5) == 0
+    assert len(repo.recent_jobs(limit=10)) == 2
+
+
+def test_prune_to_max_rows_handles_zero_and_empty(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    assert repo.prune_to_max_rows(5) == 0  # empty table
+
+    repo.record(_make_metrics(image_id="a"))
+    assert repo.prune_to_max_rows(0) == 0  # max_rows <= 0 is a no-op
+    assert len(repo.recent_jobs(limit=10)) == 1

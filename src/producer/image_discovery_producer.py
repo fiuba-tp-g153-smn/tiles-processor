@@ -1,6 +1,6 @@
 """Producer that discovers new images and publishes work units."""
 
-from asyncio import Event, get_running_loop, run
+from asyncio import Event, get_running_loop, run, to_thread
 from logging import getLogger
 from signal import SIGINT, SIGTERM
 from datetime import datetime, UTC, timedelta
@@ -11,8 +11,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from clients.message_queue_client import MessageQueueClient
+from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from config import Config
+from db.migrate import ensure_migrations
 from data_sources import (
     DataSource,
     DataSourceRegistry,
@@ -75,6 +77,18 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         bounds = self._config.get_bounds()
         total_published = 0
 
+        # Reclaim entries stuck in PROCESSING past the TTL once per tick — kept
+        # off the per-source read path so lookups stay pure reads. This is what
+        # lets crashed / dead-lettered images become rediscoverable.
+        self._progress_tracker.cleanup_stale()
+
+        # Queued (IN_PROGRESS) rows whose message is gone (work queue fully
+        # drained) are orphans from a lost/purged publish — reclaim them so the
+        # image is rediscoverable. Gated on an empty queue so a backlog (a cold
+        # start can take ~15 h) is never mistaken for an orphan and re-enqueued.
+        if self._work_queue_empty():
+            self._progress_tracker.reclaim_orphan_in_progress()
+
         # Process each registered data source
         for data_source in self._data_source_registry.get_all():
             if not self._is_source_enabled(data_source):
@@ -100,6 +114,21 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
 
         logger.info("Total work units published: %d", total_published)
         return total_published
+
+    def _work_queue_empty(self) -> bool:
+        """True only if the work queue is confirmed drained.
+
+        Fail-safe: if the depth can't be read, treat the queue as non-empty so we
+        never reclaim in-progress rows on uncertainty.
+        """
+        try:
+            return self._mq_client.get_queue_size(self._config.RABBITMQ_QUEUE) == 0
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Could not read work queue depth; skipping orphan reclaim",
+                exc_info=True,
+            )
+            return False
 
     def _is_source_enabled(  # pylint: disable=too-many-return-statements
         self, data_source: DataSource
@@ -176,7 +205,10 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             data_source.source_id,
         )
 
-        # Get in-progress images from SQLite
+        # Get in-progress images from SQLite. The dedup below is check-then-act
+        # (read here, mark_in_progress after discovery): safe because there is a
+        # single producer and APScheduler runs each job with max_instances=1, so
+        # the same (image_id, band_id) is never discovered concurrently.
         in_progress = self._progress_tracker.get_in_progress_images(band_id)
         logger.info(
             "Found %d images in progress for %s",
@@ -312,6 +344,10 @@ def run_producer(config: Config) -> None:
     Args:
         config: Application configuration
     """
+    # Apply DB migrations before building the progress tracker (Alembic owns the
+    # schema). Serialized across processes by a file lock; a no-op once at head.
+    ensure_migrations(config)
+
     data_source_registry = create_data_source_registry(config)
 
     logger.info("Producer starting with APScheduler...")
@@ -323,6 +359,9 @@ def run_producer(config: Config) -> None:
     )
 
     mq_client = create_rabbitmq_client(config)
+
+    # Caps metrics.db growth to the newest METRICS_MAX_ROWS rows (pruned hourly).
+    metrics_repository = MetricsRepository(Path(config.METRICS_DB_PATH))
 
     # Start health check server
     def check_readiness() -> tuple[bool, str]:
@@ -365,6 +404,27 @@ def run_producer(config: Config) -> None:
         misfire_grace_time=60,
     )
 
+    async def prune_metrics_wrapper():
+        """Cap metrics.db to the newest METRICS_MAX_ROWS rows (off the event loop)."""
+        try:
+            await to_thread(
+                metrics_repository.prune_to_max_rows, config.METRICS_MAX_ROWS
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.exception("Error pruning metrics: %s", e)
+
+    # Hourly (independent of discovery): the OFFSET lookup is O(max_rows), so an
+    # hourly cadence amortizes it while overshoot between runs stays negligible.
+    scheduler.add_job(
+        prune_metrics_wrapper,
+        CronTrigger.from_crontab("0 * * * *"),
+        id="metrics_prune",
+        name="Prune metrics to row cap",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=60,
+    )
+
     # Run the scheduler
     async def run_scheduler():
         # Set up signal handlers within the event loop for async safety
@@ -378,6 +438,9 @@ def run_producer(config: Config) -> None:
         # causing duplicate work units (both runs see empty in-progress set)
         logger.info("Running initial image discovery...")
         await job_wrapper()
+
+        # Trim an already-oversized metrics.db promptly rather than up to an hour later.
+        await prune_metrics_wrapper()
 
         scheduler.start()
         logger.info("Producer scheduler started (schedule: %s)", cron_schedule)

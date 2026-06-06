@@ -73,6 +73,12 @@ class WorkHandler:
         total_start = perf_counter()
         logger.info("[HANDLER] Starting processing for %s", work_unit)
 
+        # Transition the producer's IN_PROGRESS row to PROCESSING so the tracker
+        # TTL can reclaim it if this worker crashes / dead-letters / stalls
+        # mid-job (otherwise the image would stay queued forever and never be
+        # rediscovered).
+        self._progress_tracker.mark_processing(work_unit.image_id, work_unit.band_id)
+
         # Get data source for download
         data_source = self._data_source_registry.get(work_unit.data_source_id)
 

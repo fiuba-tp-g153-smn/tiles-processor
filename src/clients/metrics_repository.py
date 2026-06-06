@@ -15,6 +15,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from clients.sqlite_utils import sqlite_connection
 from models.job_metrics import JobMetrics
 
 logger = logging.getLogger(__name__)
@@ -50,60 +51,13 @@ class MetricsRepository:
 
     def __init__(self, db_path: Path):
         self._db_path = db_path.with_suffix(".db")  # Ensure .db extension
+        # Ensure parent directory exists. The schema itself is owned by Alembic
+        # (see migrations/metrics) and applied by the one-shot ``migrate`` step.
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
-        """Open a connection with the same settings as ProgressTracker."""
-        conn = sqlite3.connect(
-            str(self._db_path),
-            timeout=30.0,  # Wait up to 30s for a write lock
-            isolation_level=None,  # Autocommit mode
-        )
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _init_db(self) -> None:
-        """Create the schema and enable WAL for concurrent access."""
-        with self._get_connection() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS job_metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    work_unit_id TEXT,
-                    image_id TEXT NOT NULL,
-                    data_source_id TEXT NOT NULL,
-                    processor_id TEXT,
-                    band_id TEXT,
-                    job_type TEXT NOT NULL,
-                    product_label TEXT,
-                    image_timestamp TEXT,
-                    outcome TEXT NOT NULL,
-                    worker_host TEXT,
-                    started_at TEXT NOT NULL,
-                    finished_at TEXT NOT NULL,
-                    retry_count INTEGER DEFAULT 0,
-                    error_message TEXT,
-                    download_s REAL,
-                    process_s REAL,
-                    total_s REAL,
-                    stage_timings_json TEXT
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_metrics_type_finished "
-                "ON job_metrics(job_type, finished_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_metrics_finished "
-                "ON job_metrics(finished_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_metrics_outcome "
-                "ON job_metrics(outcome)"
-            )
-            conn.execute("PRAGMA journal_mode=WAL")
+    def _connect(self):
+        """Open a short-lived connection (see ``clients.sqlite_utils``)."""
+        return sqlite_connection(self._db_path)
 
     def record(self, metrics: JobMetrics) -> None:
         """Insert one finished-job record.
@@ -119,7 +73,7 @@ class MetricsRepository:
         columns = ", ".join((*self._COLUMNS, "stage_timings_json"))
 
         try:
-            with self._get_connection() as conn:
+            with self._connect() as conn:
                 conn.execute(
                     f"INSERT INTO job_metrics ({columns}) VALUES ({placeholders})",
                     values,
@@ -132,6 +86,29 @@ class MetricsRepository:
             )
         except sqlite3.Error as exc:
             logger.warning("Failed to record job metrics: %s", exc)
+
+    def prune_to_max_rows(self, max_rows: int) -> int:
+        """Keep only the most recent ``max_rows`` rows (by id); delete older ones.
+
+        ``id`` is an autoincrement PK, so the newest rows have the highest ids. We
+        find the id of the ``max_rows``-th newest row and delete everything below
+        it — a fast primary-key range delete. Returns the number of rows deleted.
+        """
+        if max_rows <= 0:
+            return 0
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM job_metrics ORDER BY id DESC LIMIT 1 OFFSET ?",
+                (max_rows - 1,),
+            ).fetchone()
+            if row is None:
+                return 0  # table holds <= max_rows rows — nothing to prune
+            deleted = conn.execute(
+                "DELETE FROM job_metrics WHERE id < ?", (row["id"],)
+            ).rowcount
+        if deleted:
+            logger.info("Pruned %d job_metrics row(s); capped at %d", deleted, max_rows)
+        return deleted
 
     # ------------------------------------------------------------------ reads
 
@@ -177,7 +154,7 @@ class MetricsRepository:
         params.append(max(1, min(limit, 1000)))
         params.append(max(0, offset))
 
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT * FROM job_metrics {where} "
                 "ORDER BY finished_at DESC LIMIT ? OFFSET ?",
@@ -202,7 +179,7 @@ class MetricsRepository:
             params.append(since)
         where = " AND ".join(clauses)
 
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT substr(finished_at, 1, {width}) AS bucket, job_type, "
                 f"total_s, stage_timings_json FROM job_metrics WHERE {where} "
@@ -241,7 +218,7 @@ class MetricsRepository:
         width = {"day": 10, "10min": 15}.get(bucket, 13)
         where = "WHERE finished_at >= ?" if since else ""
         params = [since] if since else []
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT substr(finished_at, 1, {width}) AS bucket, job_type, "
                 f"COUNT(*) AS count FROM job_metrics {where} "
@@ -250,6 +227,79 @@ class MetricsRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    # --------------------------------------------------------- export / import
+
+    def schema_version(self) -> str | None:
+        """Current Alembic revision stamped in the database (None if unmanaged).
+
+        This is the schema "version" carried by an export so an import can refuse
+        a payload shaped for a different schema.
+        """
+        try:
+            with self._connect() as conn:
+                row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+        except sqlite3.Error:
+            return None
+        return row["version_num"] if row else None
+
+    def export_jobs(self, since: str | None = None) -> list[dict[str, Any]]:
+        """Return every ``job_metrics`` row matching the window, newest first."""
+        rows = self._select("SELECT * FROM job_metrics", since)
+        jobs = [self._job_to_dict(row) for row in rows]
+        jobs.sort(key=lambda job: job["finished_at"], reverse=True)
+        return jobs
+
+    def import_jobs(self, jobs: list[dict[str, Any]]) -> dict[str, int]:
+        """Idempotently insert exported job rows, skipping duplicates.
+
+        Duplicates are detected by the natural key
+        ``(work_unit_id, image_id, finished_at, outcome)`` against both the
+        existing table and rows already accepted in this batch, so re-importing
+        the same export is a no-op. The source ``id`` is ignored (a fresh
+        autoincrement is assigned) and ``stage_timings`` is re-serialized to JSON.
+
+        Returns ``{"inserted": n, "skipped": m}``.
+        """
+        columns = ", ".join((*self._COLUMNS, "stage_timings_json"))
+        placeholders = ", ".join("?" for _ in range(len(self._COLUMNS) + 1))
+        insert_sql = f"INSERT INTO job_metrics ({columns}) VALUES ({placeholders})"
+
+        skipped = 0
+        with self._connect() as conn:
+            seen = {
+                (r["work_unit_id"], r["image_id"], r["finished_at"], r["outcome"])
+                for r in conn.execute(
+                    "SELECT work_unit_id, image_id, finished_at, outcome FROM job_metrics"
+                )
+            }
+            to_insert: list[list[Any]] = []
+            for job in jobs:
+                key = (
+                    job.get("work_unit_id"),
+                    job.get("image_id"),
+                    job.get("finished_at"),
+                    job.get("outcome"),
+                )
+                if key in seen:
+                    skipped += 1
+                    continue
+                seen.add(key)
+                values = [job.get(col) for col in self._COLUMNS]
+                stages = job.get("stage_timings")
+                values.append(json.dumps(stages) if stages else None)
+                to_insert.append(values)
+
+            if to_insert:
+                try:
+                    conn.execute("BEGIN")
+                    conn.executemany(insert_sql, to_insert)
+                    conn.execute("COMMIT")
+                except sqlite3.Error:
+                    conn.execute("ROLLBACK")
+                    raise
+
+        return {"inserted": len(to_insert), "skipped": skipped}
+
     def _select(self, query: str, since: str | None) -> list[sqlite3.Row]:
         """Run a SELECT optionally filtered to finished_at >= since."""
         if since:
@@ -257,7 +307,7 @@ class MetricsRepository:
             params: list[Any] = [since]
         else:
             params = []
-        with self._get_connection() as conn:
+        with self._connect() as conn:
             return conn.execute(query, params).fetchall()
 
     def _summarize_type(self, job_type: str, rows: list[sqlite3.Row]) -> dict[str, Any]:
