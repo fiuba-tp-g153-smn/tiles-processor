@@ -265,7 +265,7 @@ class WrfProcessor(ImageProcessor):
             with self._time_stage("cog"):
                 cog_gcp_path = work_dir / f"{work_unit.image_id}_cog_gcp.tif"
                 self._save_float_geotiff_gcp(
-                    payload["primary"], payload["lat"], payload["lon"], cog_gcp_path
+                    payload["primary_cog"], payload["lat"], payload["lon"], cog_gcp_path
                 )
                 self._warp_to_epsg4326(
                     cog_gcp_path,
@@ -366,7 +366,11 @@ class WrfProcessor(ImageProcessor):
             # Threshold masking adds non-topographic NaN later; only the
             # original mask should get the brown nan_fill_color.
             topo_nan_mask = np.isnan(primary)
+            primary_raw = primary
             primary = self._apply_primary_masking(product_config.product_id, primary)
+            primary_cog = self._primary_cog_field(
+                product_config.product_id, primary_raw, primary
+            )
 
             barb_uv = None
             if product_config.barbs is not None:
@@ -408,6 +412,7 @@ class WrfProcessor(ImageProcessor):
             "lat": lat,
             "lon": lon,
             "primary": primary,
+            "primary_cog": primary_cog,
             "topo_nan_mask": topo_nan_mask,
             "barbs": barb_uv,
             "contours": contour_data,
@@ -431,6 +436,23 @@ class WrfProcessor(ImageProcessor):
         if hasattr(raw, "filled"):
             return np.ma.filled(raw, np.nan).astype(float)
         return np.array(raw, dtype=float)
+
+    @staticmethod
+    def _primary_cog_field(
+        product_id: str, primary_raw: np.ndarray, primary_masked: np.ndarray
+    ) -> np.ndarray:
+        """Float field written to the primary point-query COG.
+
+        For every product this is the *masked* primary (identical bytes to the
+        rendered raster) — no behavior change. The sole exception is
+        CortanteNivelesBajos: its colour scale starts at 10 kt, so the raster
+        masks <10 kt to NaN, but the point query should still report sub-10-kt
+        shear magnitudes. Return the converted-but-unmasked field for that one
+        product only. `shear_s1_s2` is in m s-1, hence the kt conversion here.
+        """
+        if product_id == "CortanteNivelesBajos":
+            return primary_raw * MS_TO_KT
+        return primary_masked
 
     @staticmethod
     def _apply_primary_masking(product_id: str, data: np.ndarray) -> np.ndarray:
