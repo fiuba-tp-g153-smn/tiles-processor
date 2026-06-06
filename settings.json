@@ -1,6 +1,7 @@
 {
   "timezone": "America/Argentina/Buenos_Aires",
   "tile_retention_days": 30,
+  "metrics_max_rows": 1000000,
   "radar_input_dir": "/app/data/radar_h5",
   "glm_folder_input_dir": "/app/data/glm_h5",
   "glm_accum_minutes": 10,

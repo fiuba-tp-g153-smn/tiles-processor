@@ -1,6 +1,6 @@
 """Producer that discovers new images and publishes work units."""
 
-from asyncio import Event, get_running_loop, run
+from asyncio import Event, get_running_loop, run, to_thread
 from logging import getLogger
 from signal import SIGINT, SIGTERM
 from datetime import datetime, UTC, timedelta
@@ -11,6 +11,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from clients.message_queue_client import MessageQueueClient
+from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from db.migrate import ensure_migrations
@@ -359,6 +360,9 @@ def run_producer(config: Config) -> None:
 
     mq_client = create_rabbitmq_client(config)
 
+    # Caps metrics.db growth to the newest METRICS_MAX_ROWS rows (pruned hourly).
+    metrics_repository = MetricsRepository(Path(config.METRICS_DB_PATH))
+
     # Start health check server
     def check_readiness() -> tuple[bool, str]:
         if not mq_client.is_connected:
@@ -400,6 +404,27 @@ def run_producer(config: Config) -> None:
         misfire_grace_time=60,
     )
 
+    async def prune_metrics_wrapper():
+        """Cap metrics.db to the newest METRICS_MAX_ROWS rows (off the event loop)."""
+        try:
+            await to_thread(
+                metrics_repository.prune_to_max_rows, config.METRICS_MAX_ROWS
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.exception("Error pruning metrics: %s", e)
+
+    # Hourly (independent of discovery): the OFFSET lookup is O(max_rows), so an
+    # hourly cadence amortizes it while overshoot between runs stays negligible.
+    scheduler.add_job(
+        prune_metrics_wrapper,
+        CronTrigger.from_crontab("0 * * * *"),
+        id="metrics_prune",
+        name="Prune metrics to row cap",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=60,
+    )
+
     # Run the scheduler
     async def run_scheduler():
         # Set up signal handlers within the event loop for async safety
@@ -413,6 +438,9 @@ def run_producer(config: Config) -> None:
         # causing duplicate work units (both runs see empty in-progress set)
         logger.info("Running initial image discovery...")
         await job_wrapper()
+
+        # Trim an already-oversized metrics.db promptly rather than up to an hour later.
+        await prune_metrics_wrapper()
 
         scheduler.start()
         logger.info("Producer scheduler started (schedule: %s)", cron_schedule)

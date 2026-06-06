@@ -87,6 +87,29 @@ class MetricsRepository:
         except sqlite3.Error as exc:
             logger.warning("Failed to record job metrics: %s", exc)
 
+    def prune_to_max_rows(self, max_rows: int) -> int:
+        """Keep only the most recent ``max_rows`` rows (by id); delete older ones.
+
+        ``id`` is an autoincrement PK, so the newest rows have the highest ids. We
+        find the id of the ``max_rows``-th newest row and delete everything below
+        it — a fast primary-key range delete. Returns the number of rows deleted.
+        """
+        if max_rows <= 0:
+            return 0
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM job_metrics ORDER BY id DESC LIMIT 1 OFFSET ?",
+                (max_rows - 1,),
+            ).fetchone()
+            if row is None:
+                return 0  # table holds <= max_rows rows — nothing to prune
+            deleted = conn.execute(
+                "DELETE FROM job_metrics WHERE id < ?", (row["id"],)
+            ).rowcount
+        if deleted:
+            logger.info("Pruned %d job_metrics row(s); capped at %d", deleted, max_rows)
+        return deleted
+
     # ------------------------------------------------------------------ reads
 
     def summary(self, since: str | None = None) -> list[dict[str, Any]]:

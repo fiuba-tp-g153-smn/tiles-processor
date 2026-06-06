@@ -85,6 +85,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.METRICS_DB_PATH: str = settings.get(
             "metrics_db_path", str(Path(self.TMP_DIR) / "metrics.db")
         )
+        # Hard cap on job_metrics rows (producer prunes to the newest N). ~0.6 KB/row,
+        # so 1,000,000 ≈ ~600 MB. Bounds metrics.db growth.
+        self.METRICS_MAX_ROWS: int = int(settings.get("metrics_max_rows", 1_000_000))
         self.DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "6020"))
         # API key required by the dashboard's write endpoints (e.g. /api/import).
         # Empty disables writes (they fail closed with 503). Reads stay open.
@@ -183,7 +186,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             "maxy": self.BOUNDS_MAXY,
         }
 
-    def log_config(self) -> None:
+    def log_config(self) -> None:  # pylint: disable=too-many-statements
         """Log the current configuration values."""
         logger = logging.getLogger(__name__)
         logger.info("=== Configuration ===")
@@ -239,6 +242,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("HEALTH_PORT: %s", self.HEALTH_PORT)
         logger.info("ENABLE_METRICS: %s", self.ENABLE_METRICS)
         logger.info("METRICS_DB_PATH: %s", self.METRICS_DB_PATH)
+        logger.info("METRICS_MAX_ROWS: %s", self.METRICS_MAX_ROWS)
         logger.info("DASHBOARD_PORT: %s", self.DASHBOARD_PORT)
         logger.info(
             "DASHBOARD_API_KEY: %s", "set" if self.DASHBOARD_API_KEY else "unset"
