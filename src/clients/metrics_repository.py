@@ -134,14 +134,19 @@ class MetricsRepository:
         summaries.sort(key=lambda s: s["counts"]["total"], reverse=True)
         return summaries
 
-    def recent_jobs(
+    def recent_jobs(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         limit: int = 100,
         job_type: str | None = None,
         outcome: str | None = None,
         offset: int = 0,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Return finished jobs newest-first, with limit/offset for pagination."""
+        """Return finished jobs newest-first, with limit/offset for pagination.
+
+        `since` (ISO8601 cutoff) keeps only jobs finished at or after it, for the
+        timeline's bounded window; ISO8601 sorts lexically so a string compare works.
+        """
         clauses = []
         params: list[Any] = []
         if job_type:
@@ -150,6 +155,9 @@ class MetricsRepository:
         if outcome:
             clauses.append("outcome = ?")
             params.append(outcome)
+        if since:
+            clauses.append("finished_at >= ?")
+            params.append(since)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(max(1, min(limit, 1000)))
         params.append(max(0, offset))

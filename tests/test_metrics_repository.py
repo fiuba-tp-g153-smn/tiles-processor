@@ -103,6 +103,30 @@ def test_recent_jobs_offset(tmp_path):
     assert [j["image_id"] for j in page2] == ["img2", "img1"]
 
 
+def test_recent_jobs_since_narrows_window(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    for i in range(5):  # finished at 00:00..00:04
+        repo.record(
+            _make_metrics(f"img{i}", finished_at=f"2026-06-04T00:0{i}:00+00:00")
+        )
+
+    recent = repo.recent_jobs(since="2026-06-04T00:03:00+00:00")
+    assert [j["image_id"] for j in recent] == [
+        "img4",
+        "img3",
+    ]  # >= cutoff, newest first
+
+
+def test_recent_jobs_since_combines_with_outcome(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    repo.record(_make_metrics("old", "success", "2026-06-04T00:00:00+00:00"))
+    repo.record(_make_metrics("new_ok", "success", "2026-06-04T05:00:00+00:00"))
+    repo.record(_make_metrics("new_dlq", "dlq", "2026-06-04T05:00:00+00:00"))
+
+    recent = repo.recent_jobs(since="2026-06-04T04:00:00+00:00", outcome="success")
+    assert [j["image_id"] for j in recent] == ["new_ok"]
+
+
 def test_concurrent_writes_do_not_collide(tmp_path):
     """Simulate several workers writing concurrently to one WAL database.
 

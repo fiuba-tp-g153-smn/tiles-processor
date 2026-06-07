@@ -208,7 +208,10 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
         response_model=list[JobRecord],
         tags=["metrics"],
         summary="Recent finished jobs (paginated)",
-        description="Finished jobs newest-first, with limit/offset paging and optional filters.",
+        description=(
+            "Finished jobs newest-first, with limit/offset paging, optional "
+            "type/outcome filters and an optional `hours` lookback window."
+        ),
     )
     def api_jobs(
         limit: int = Query(
@@ -226,9 +229,14 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
         outcome: str | None = Query(
             None, description="Filter by outcome.", examples=["dlq"]
         ),
+        hours: int | None = _hours,
     ) -> list[dict]:
         return repo.recent_jobs(
-            limit=limit, offset=offset, job_type=job_type, outcome=outcome
+            limit=limit,
+            offset=offset,
+            job_type=job_type,
+            outcome=outcome,
+            since=_since_from_hours(hours),
         )
 
     @app.get(

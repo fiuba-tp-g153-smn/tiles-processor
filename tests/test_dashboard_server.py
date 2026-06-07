@@ -157,6 +157,15 @@ def test_jobs_offset_paginates(client):
     assert ids1.isdisjoint(ids2)  # distinct pages
 
 
+def test_jobs_hours_window_narrows_results(client):
+    # Seeded rows are dated 2026-06-04, so a 1h window excludes them while the
+    # unwindowed query returns every row (mirrors the /api/export window test).
+    assert len(client.get("/api/jobs?hours=1").json()) == 0
+    assert len(client.get("/api/jobs").json()) == 4
+    # The window composes with the other filters.
+    assert len(client.get("/api/jobs?hours=1&type=radar_DBZH").json()) == 0
+
+
 def test_live_degrades_when_rabbitmq_down(client, tmp_path):
     # Seed in-progress jobs in the shared progress tracker.
     tracker = ProgressTracker(tmp_path / "progress_tracker.db")
