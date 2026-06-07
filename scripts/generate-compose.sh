@@ -243,29 +243,29 @@ for i in $(seq 1 "$NUM_WORKERS"); do
 WORKER
 done
 
-# Generate dashboard service (backoffice performance metrics web UI)
-cat >> "$OUTPUT_FILE" << DASHBOARD
-  # Dashboard - backoffice performance metrics web UI (read-only)
-  dashboard:
+# Generate metrics-api service (read-only status-metrics HTTP API)
+cat >> "$OUTPUT_FILE" << METRICS_API
+  # Metrics API - read-only status-metrics HTTP API (powers the /status UI)
+  metrics-api:
     image: tiles-processor
-    container_name: tiles-processor-dashboard
+    container_name: tiles-processor-metrics-api
     depends_on:
       rabbitmq:
         condition: service_healthy
     build:
       context: .
       dockerfile: Dockerfile
-    command: python3 src/main.py dashboard
+    command: python3 src/main.py metrics-api
     ports:
-      - "\${DASHBOARD_PORT:-6020}:6020"
+      - "\${METRICS_API_PORT:-6020}:6020"
     volumes:
       - ${APP_DATA_VOLUME}
       - ./settings.json:/app/settings.json:ro
     environment:
       - LOG_LEVEL=\${LOG_LEVEL}
       - DATA_DIR=\${DATA_DIR}
-      - DASHBOARD_PORT=6020
-      - DASHBOARD_API_KEY=\${DASHBOARD_API_KEY}
+      - METRICS_API_PORT=6020
+      - METRICS_API_KEY=\${METRICS_API_KEY}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
       - S3_TILES_DATA_BUCKET_NAME=\${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
@@ -288,7 +288,7 @@ cat >> "$OUTPUT_FILE" << DASHBOARD
       start_period: 15s
       start_interval: 1s
 
-DASHBOARD
+METRICS_API
 
 # Add volumes section
 if [ "$DEV_MODE" = true ]; then

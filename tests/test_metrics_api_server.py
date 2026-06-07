@@ -14,7 +14,7 @@ from models.job_metrics import JobMetrics
 # FastAPI/uvicorn are optional deps; skip cleanly if not installed.
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
-from dashboard.server import create_app
+from metrics_api.server import create_app
 
 
 def _seed(db_path):
@@ -63,14 +63,14 @@ def _seed(db_path):
 @pytest.fixture()
 def client(tmp_path):
     db = tmp_path / "metrics.db"
-    # Alembic owns the schema; create both DBs the dashboard opens.
+    # Alembic owns the schema; create both DBs the metrics API opens.
     run_migrations(db, tmp_path / "progress_tracker.db")
     _seed(db)
     cfg = SimpleNamespace(
         METRICS_DB_PATH=str(db),
         LOG_LEVEL="INFO",
-        DASHBOARD_PORT=8090,
-        DASHBOARD_API_KEY="test-key",
+        METRICS_API_PORT=8090,
+        METRICS_API_KEY="test-key",
         TMP_DIR=str(tmp_path),
         # Point RabbitMQ at a closed port so the live probe fails fast and
         # degrades to n/a (exercises graceful degradation).
@@ -201,15 +201,15 @@ def test_live_degrades_when_rabbitmq_down(client, tmp_path):
 
 
 def _empty_client(db_dir, api_key="test-key"):
-    """A dashboard client over a freshly-migrated, empty metrics DB."""
+    """A metrics-API client over a freshly-migrated, empty metrics DB."""
     db_dir.mkdir(parents=True, exist_ok=True)
     metrics = db_dir / "metrics.db"
     run_migrations(metrics, db_dir / "progress_tracker.db")
     cfg = SimpleNamespace(
         METRICS_DB_PATH=str(metrics),
         LOG_LEVEL="INFO",
-        DASHBOARD_PORT=8090,
-        DASHBOARD_API_KEY=api_key,
+        METRICS_API_PORT=8090,
+        METRICS_API_KEY=api_key,
         TMP_DIR=str(db_dir),
         RABBITMQ_HOST="127.0.0.1",
         RABBITMQ_PORT=1,
@@ -295,7 +295,7 @@ def test_import_requires_api_key(client):
 
 
 def test_import_disabled_when_no_key_configured(tmp_path):
-    # A dashboard with no DASHBOARD_API_KEY fails closed on writes (503).
+    # The metrics API with no METRICS_API_KEY fails closed on writes (503).
     target = _empty_client(tmp_path / "nokey", api_key="")
     dump = {
         "version": "metrics_0001",

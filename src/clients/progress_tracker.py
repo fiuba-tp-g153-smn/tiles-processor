@@ -13,7 +13,7 @@ State machine:
   it sits untouched longer than the TTL (covers crashes / dead-letter / stuck retries).
 
 The database file must live on a local shared volume (same host as the producer,
-workers and dashboard); SQLite file locking / WAL do not work over a network
+workers and metrics API); SQLite file locking / WAL do not work over a network
 filesystem (NFS/SMB).
 """
 
@@ -163,7 +163,7 @@ class ProgressTracker:
     def list_in_progress(self) -> list[dict]:
         """Return all tracked entries, newest first (read-only, no TTL cleanup).
 
-        Used by the dashboard's live view; deliberately avoids ``cleanup_stale``
+        Used by the metrics API's live view; deliberately avoids ``cleanup_stale``
         so a read never mutates the workers' shared state.
         """
         with self._connect() as conn:

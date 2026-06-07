@@ -1,4 +1,4 @@
-"""Persistent RabbitMQ connection for the dashboard's queue-depth probes.
+"""Persistent RabbitMQ connection for the metrics API's queue-depth probes.
 
 The ``/api/live`` endpoint reads the work/DLQ queue depths on every poll. Instead
 of opening and tearing down an AMQP connection each time (connection churn plus a
@@ -8,7 +8,7 @@ wall of pika logs), ``QueueDepthMonitor`` keeps **one** connection and reuses it
 ``/api/live`` handler in a worker-thread pool, so all broker I/O is confined to a
 single dedicated thread (a one-worker executor). The monitor reconnects when the
 connection drops and degrades to ``None`` counts when the broker is unreachable,
-so the dashboard shows "n/a" rather than erroring.
+so the metrics API reports "n/a" rather than erroring.
 """
 
 import logging

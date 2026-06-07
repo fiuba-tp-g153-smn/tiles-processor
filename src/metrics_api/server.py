@@ -1,4 +1,4 @@
-"""FastAPI server for the backoffice performance dashboard metrics API.
+"""FastAPI server for the status metrics API.
 
 Exposes read-only JSON endpoints backed by the metrics database; the UI itself
 lives in the separate ``visualizer`` Angular app, which consumes these endpoints
@@ -24,8 +24,8 @@ from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from clients.rabbitmq_client import RabbitMQClient
 from config import Config
-from dashboard.queue_monitor import QueueDepthMonitor
-from dashboard.schemas import (
+from metrics_api.queue_monitor import QueueDepthMonitor
+from metrics_api.schemas import (
     HealthStatus,
     ImportResult,
     JobRecord,
@@ -82,7 +82,7 @@ def _make_rabbitmq_connector(config: Config) -> Callable[[], RabbitMQClient]:
     """Build a fast-fail factory that connects a fresh RabbitMQ client.
 
     Uses a single quick attempt (not ``create_rabbitmq_client``, which retries
-    for ~45s) so the dashboard never blocks /api/live when the broker is down.
+    for ~45s) so the metrics API never blocks /api/live when the broker is down.
     """
 
     def connect() -> RabbitMQClient:
@@ -156,11 +156,11 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
         Fail-closed: if no key is configured the endpoint is disabled (503);
         otherwise a missing/incorrect key is rejected (401, constant-time compare).
         """
-        expected = config.DASHBOARD_API_KEY
+        expected = config.METRICS_API_KEY
         if not expected:
             raise HTTPException(
                 status_code=503,
-                detail="Writes are disabled: DASHBOARD_API_KEY is not configured",
+                detail="Writes are disabled: METRICS_API_KEY is not configured",
             )
         if not provided or not secrets.compare_digest(provided, expected):
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
@@ -213,7 +213,7 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
             "type/outcome filters and an optional `hours` lookback window."
         ),
     )
-    def api_jobs(
+    def api_jobs(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         limit: int = Query(
             50,
             ge=0,
@@ -360,11 +360,11 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
             },
             422: {"description": "Malformed payload (validation error)."},
             503: {
-                "description": "Writes disabled — DASHBOARD_API_KEY is not configured.",
+                "description": "Writes disabled — METRICS_API_KEY is not configured.",
                 "content": {
                     "application/json": {
                         "example": {
-                            "detail": "Writes are disabled: DASHBOARD_API_KEY is not configured"
+                            "detail": "Writes are disabled: METRICS_API_KEY is not configured"
                         }
                     }
                 },
@@ -387,17 +387,17 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
     return app
 
 
-def run_dashboard(config: Config) -> None:
-    """Run the dashboard web server (blocking)."""
+def run_metrics_api(config: Config) -> None:
+    """Run the metrics API web server (blocking)."""
     # Apply DB migrations before opening the (Alembic-owned) databases. Kept out
     # of create_app so the app stays test-constructible without migrations.
     ensure_migrations(config)
 
     app = create_app(config)
-    logger.info("Starting dashboard on port %d", config.DASHBOARD_PORT)
+    logger.info("Starting metrics API on port %d", config.METRICS_API_PORT)
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=config.DASHBOARD_PORT,
+        port=config.METRICS_API_PORT,
         log_level=config.LOG_LEVEL.lower(),
     )
