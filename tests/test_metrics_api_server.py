@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ from models.job_metrics import JobMetrics
 # FastAPI/uvicorn are optional deps; skip cleanly if not installed.
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
-from dashboard.server import create_app
+from metrics_api.server import PollSummaryMiddleware, create_app
 
 
 def _seed(db_path):
@@ -63,14 +64,14 @@ def _seed(db_path):
 @pytest.fixture()
 def client(tmp_path):
     db = tmp_path / "metrics.db"
-    # Alembic owns the schema; create both DBs the dashboard opens.
+    # Alembic owns the schema; create both DBs the metrics API opens.
     run_migrations(db, tmp_path / "progress_tracker.db")
     _seed(db)
     cfg = SimpleNamespace(
         METRICS_DB_PATH=str(db),
         LOG_LEVEL="INFO",
-        DASHBOARD_PORT=8090,
-        DASHBOARD_API_KEY="test-key",
+        METRICS_API_PORT=8090,
+        METRICS_API_KEY="test-key",
         TMP_DIR=str(tmp_path),
         # Point RabbitMQ at a closed port so the live probe fails fast and
         # degrades to n/a (exercises graceful degradation).
@@ -201,15 +202,15 @@ def test_live_degrades_when_rabbitmq_down(client, tmp_path):
 
 
 def _empty_client(db_dir, api_key="test-key"):
-    """A dashboard client over a freshly-migrated, empty metrics DB."""
+    """A metrics-API client over a freshly-migrated, empty metrics DB."""
     db_dir.mkdir(parents=True, exist_ok=True)
     metrics = db_dir / "metrics.db"
     run_migrations(metrics, db_dir / "progress_tracker.db")
     cfg = SimpleNamespace(
         METRICS_DB_PATH=str(metrics),
         LOG_LEVEL="INFO",
-        DASHBOARD_PORT=8090,
-        DASHBOARD_API_KEY=api_key,
+        METRICS_API_PORT=8090,
+        METRICS_API_KEY=api_key,
         TMP_DIR=str(db_dir),
         RABBITMQ_HOST="127.0.0.1",
         RABBITMQ_PORT=1,
@@ -295,7 +296,7 @@ def test_import_requires_api_key(client):
 
 
 def test_import_disabled_when_no_key_configured(tmp_path):
-    # A dashboard with no DASHBOARD_API_KEY fails closed on writes (503).
+    # The metrics API with no METRICS_API_KEY fails closed on writes (503).
     target = _empty_client(tmp_path / "nokey", api_key="")
     dump = {
         "version": "metrics_0001",
@@ -324,3 +325,46 @@ def test_import_rejects_malformed_body(client):
         "jobs": [{"image_id": "only-this-field"}],  # missing required columns
     }
     assert client.post("/api/import", json=bad, headers=_API_KEY).status_code == 422
+
+
+# --- PollSummaryMiddleware -------------------------------------------------
+# The debounce timing is verified manually (it needs a live event loop); these
+# cover the pure aggregation/formatting logic that builds the consolidated line.
+
+
+def test_poll_summary_emits_one_consolidated_line(caplog):
+    mw = PollSummaryMiddleware(app=None)
+    # Simulate a poll burst: throughput hit twice, arrival order preserved.
+    for path in ("/api/summary", "/api/throughput", "/api/throughput", "/api/jobs"):
+        mw._counts[path] += 1  # pylint: disable=protected-access
+    with caplog.at_level("INFO", logger="metrics_api.server"):
+        mw._emit()  # pylint: disable=protected-access
+    assert len(caplog.records) == 1
+    assert caplog.records[0].getMessage() == (
+        "served 4 request(s): /api/summary, /api/throughput, /api/jobs"
+    )
+    assert not mw._counts  # reset after emit  # pylint: disable=protected-access
+
+
+def test_poll_summary_emit_noop_when_empty(caplog):
+    mw = PollSummaryMiddleware(app=None)
+    with caplog.at_level("INFO", logger="metrics_api.server"):
+        mw._emit()  # pylint: disable=protected-access
+    assert caplog.records == []
+
+
+def test_poll_summary_records_health_probe():
+    mw = PollSummaryMiddleware(app=None)
+
+    async def record():
+        mw._record("/health")  # pylint: disable=protected-access
+
+    asyncio.run(record())  # _record needs a running loop to arm the debounce
+    assert mw._counts["/health"] == 1  # pylint: disable=protected-access
+
+
+def test_poll_summary_ignores_root_probe():
+    mw = PollSummaryMiddleware(app=None)
+    # The bare root ping returns before touching the event loop (loop-free).
+    mw._record("/")  # pylint: disable=protected-access
+    assert not mw._counts  # pylint: disable=protected-access

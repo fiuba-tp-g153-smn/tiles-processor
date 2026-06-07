@@ -298,7 +298,7 @@ def run_worker(config: Config) -> None:
     tracker_path = Path(config.TMP_DIR) / "progress_tracker.db"
     progress_tracker = ProgressTracker(tracker_path)
 
-    # Create metrics repository (SQLite-based, shared with the dashboard)
+    # Create metrics repository (SQLite-based, shared with the metrics API)
     metrics_repository: Optional[MetricsRepository] = None
     if config.ENABLE_METRICS:
         metrics_repository = MetricsRepository(Path(config.METRICS_DB_PATH))

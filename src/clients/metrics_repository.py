@@ -2,7 +2,7 @@
 
 Mirrors the proven concurrency setup of ``progress_tracker.py``: WAL journal,
 30s busy timeout and autocommit. Only worker processes write here (one small
-INSERT per finished job), while the dashboard reads concurrently — a load WAL
+INSERT per finished job), while the metrics API reads concurrently — a load WAL
 handles comfortably. The database file must live on a local shared volume
 (``${TMP_DIR}/metrics.db``), never a network filesystem.
 """
