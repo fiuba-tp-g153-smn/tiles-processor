@@ -6,8 +6,10 @@ cross-origin (hence CORS). The API opens the shared ``metrics.db`` (and, for the
 live view, ``progress_tracker.db`` and RabbitMQ) that the workers write.
 """
 
+import asyncio
 import logging
 import secrets
+from collections import Counter
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, UTC, timedelta
@@ -58,6 +60,54 @@ _OPENAPI_TAGS = [
     },
     {"name": "meta", "description": "Service metadata and health checks."},
 ]
+
+
+class PollSummaryMiddleware:  # pylint: disable=too-few-public-methods
+    """Coalesce a burst of near-simultaneous requests into one log line.
+
+    The dashboard polls several endpoints at once; rather than emitting one access
+    log per request (Uvicorn's, disabled here), accumulate the paths and, after a
+    short quiet window, emit a single consolidated line. Debounced: each request
+    cancels and reschedules the timer, so a whole burst becomes one line. The
+    ``/health`` probe is shown like any other request (it arrives alone, so it gets
+    its own line); only the bare root ``/`` ping is ignored. All state is touched
+    only on the event-loop thread (via ``call_later``), so no locking is needed.
+    """
+
+    _IGNORE = frozenset({"/"})
+
+    def __init__(self, app, *, window_s: float = 1.0):
+        self.app = app
+        self._window_s = window_s
+        self._counts: Counter[str] = Counter()
+        self._flush_handle: asyncio.TimerHandle | None = None
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+        self._record(scope["path"])
+
+    def _record(self, path: str) -> None:
+        """Count a served request and (re)arm the debounced flush."""
+        if path in self._IGNORE:
+            return
+        self._counts[path] += 1
+        loop = asyncio.get_running_loop()
+        if self._flush_handle is not None:
+            self._flush_handle.cancel()
+        self._flush_handle = loop.call_later(self._window_s, self._emit)
+
+    def _emit(self) -> None:
+        """Log one consolidated line for the burst and reset the counters."""
+        self._flush_handle = None
+        if not self._counts:
+            return
+        total = sum(self._counts.values())
+        paths = ", ".join(self._counts)  # insertion (arrival) order
+        self._counts.clear()
+        logger.info("served %d request(s): %s", total, paths)
 
 
 def _since_from_hours(hours: int | None) -> str | None:
@@ -149,6 +199,10 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
     # Compress large JSON bodies (the all-time export gzips ~10x); only kicks in
     # above the size threshold so small responses are untouched.
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+    # Uvicorn's per-request access log is disabled (run_metrics_api); instead emit
+    # one consolidated line per dashboard poll (the ~6 simultaneous requests).
+    app.add_middleware(PollSummaryMiddleware)
 
     def require_api_key(provided: str | None = Security(_API_KEY_HEADER)) -> None:
         """Authenticate a write request via the ``X-API-Key`` header.
@@ -400,4 +454,7 @@ def run_metrics_api(config: Config) -> None:
         host="0.0.0.0",
         port=config.METRICS_API_PORT,
         log_level=config.LOG_LEVEL.lower(),
+        # Per-request access logs are replaced by PollSummaryMiddleware's
+        # consolidated per-poll line (the /health probe is still shown there).
+        access_log=False,
     )
