@@ -157,6 +157,23 @@ def test_jobs_offset_paginates(client):
     assert ids1.isdisjoint(ids2)  # distinct pages
 
 
+def test_jobs_limit_zero_returns_all(client):
+    # 0 = sin límite: devuelve todas (la línea de tiempo carga el rango completo).
+    assert len(client.get("/api/jobs?limit=2").json()) == 2
+    assert len(client.get("/api/jobs?limit=0").json()) == 4
+
+
+def test_jobs_since_before_window(client):
+    # Seeded finished_at: 00:00:44, 01:00:44, 02:00:44 (goes) and 05:00:03 (radar).
+    # Half-open window [01:00, 03:00) → the two middle goes jobs.
+    rows = client.get(
+        "/api/jobs?limit=0"
+        "&since=2026-06-04T01:00:00%2B00:00"
+        "&before=2026-06-04T03:00:00%2B00:00"
+    ).json()
+    assert {j["image_id"] for j in rows} == {"i1", "i2"}
+
+
 def test_jobs_hours_window_narrows_results(client):
     # Seeded rows are dated 2026-06-04, so a 1h window excludes them while the
     # unwindowed query returns every row (mirrors the /api/export window test).

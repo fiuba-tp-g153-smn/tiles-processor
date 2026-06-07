@@ -215,7 +215,11 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
     )
     def api_jobs(
         limit: int = Query(
-            50, ge=1, le=1000, description="Max rows to return.", examples=[50]
+            50,
+            ge=0,
+            le=1000,
+            description="Max rows to return; 0 = sin límite (todas las del rango).",
+            examples=[50],
         ),
         offset: int = Query(
             0, ge=0, description="Rows to skip (paging).", examples=[0]
@@ -230,13 +234,24 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
             None, description="Filter by outcome.", examples=["dlq"]
         ),
         hours: int | None = _hours,
+        since: str | None = Query(
+            None,
+            description="ISO8601 lower bound (finished_at >= since); overrides `hours`.",
+            examples=["2026-06-01T00:00:00+00:00"],
+        ),
+        before: str | None = Query(
+            None,
+            description="ISO8601 upper bound (finished_at < before); for windowed loads.",
+            examples=["2026-06-08T00:00:00+00:00"],
+        ),
     ) -> list[dict]:
         return repo.recent_jobs(
             limit=limit,
             offset=offset,
             job_type=job_type,
             outcome=outcome,
-            since=_since_from_hours(hours),
+            since=since or _since_from_hours(hours),
+            before=before,
         )
 
     @app.get(

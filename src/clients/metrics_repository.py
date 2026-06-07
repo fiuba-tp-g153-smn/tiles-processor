@@ -141,11 +141,15 @@ class MetricsRepository:
         outcome: str | None = None,
         offset: int = 0,
         since: str | None = None,
+        before: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return finished jobs newest-first, with limit/offset for pagination.
 
-        `since` (ISO8601 cutoff) keeps only jobs finished at or after it, for the
-        timeline's bounded window; ISO8601 sorts lexically so a string compare works.
+        `since`/`before` (ISO8601 cutoffs) keep the half-open window
+        ``since <= finished_at < before`` — the timeline's lazy loader fetches
+        older chunks with both set; ISO8601 sorts lexically so string compares work.
+        `limit <= 0` means no limit (all matching rows) via SQLite ``LIMIT -1`` —
+        used by the timeline to load a full window; positive limits cap at 1000.
         """
         clauses = []
         params: list[Any] = []
@@ -158,8 +162,11 @@ class MetricsRepository:
         if since:
             clauses.append("finished_at >= ?")
             params.append(since)
+        if before:
+            clauses.append("finished_at < ?")
+            params.append(before)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(max(1, min(limit, 1000)))
+        params.append(-1 if limit <= 0 else max(1, min(limit, 1000)))
         params.append(max(0, offset))
 
         with self._connect() as conn:

@@ -127,6 +127,35 @@ def test_recent_jobs_since_combines_with_outcome(tmp_path):
     assert [j["image_id"] for j in recent] == ["new_ok"]
 
 
+def test_recent_jobs_limit_zero_returns_all(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    for i in range(5):
+        repo.record(
+            _make_metrics(f"img{i}", finished_at=f"2026-06-04T00:0{i}:00+00:00")
+        )
+
+    assert len(repo.recent_jobs(limit=2)) == 2  # positive limit still caps
+    assert len(repo.recent_jobs(limit=0)) == 5  # 0 = no limit (all rows)
+    # Composes with the window filter.
+    assert len(repo.recent_jobs(limit=0, since="2026-06-04T00:03:00+00:00")) == 2
+
+
+def test_recent_jobs_before_bounds_window(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    for i in range(5):  # finished at 00:00..00:04
+        repo.record(
+            _make_metrics(f"img{i}", finished_at=f"2026-06-04T00:0{i}:00+00:00")
+        )
+
+    # Half-open window [00:01, 00:03): img1, img2 (newest-first).
+    window = repo.recent_jobs(
+        limit=0,
+        since="2026-06-04T00:01:00+00:00",
+        before="2026-06-04T00:03:00+00:00",
+    )
+    assert [j["image_id"] for j in window] == ["img2", "img1"]
+
+
 def test_concurrent_writes_do_not_collide(tmp_path):
     """Simulate several workers writing concurrently to one WAL database.
 
