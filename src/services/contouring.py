@@ -208,7 +208,7 @@ def extract_barbs(
     return features
 
 
-BARB_ZOOM_STRIDES: dict[int, int] = {2: 90, 4: 50, 6: 16, 8: 9, 10: 30, 12: 45}
+BARB_ZOOM_STRIDES: dict[int, int] = {2: 150, 4: 38, 6: 16, 8: 9, 10: 9, 12: 9}
 
 _LAT_CLIP = 85.05112878
 
