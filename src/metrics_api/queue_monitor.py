@@ -91,7 +91,12 @@ class QueueDepthMonitor:
 
     def _ensure_client(self) -> RabbitMQClient:
         if self._client is None or not self._client.is_connected:
+            reconnecting = self._healthy is not None  # not the first-ever connect
             self._discard()
+            if reconnecting:
+                logger.info(
+                    "RabbitMQ queue-depth probe reconnecting after previous connection dropped"
+                )
             self._client = self._client_factory()
         return self._client
 

@@ -1,9 +1,12 @@
+import logging
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from metrics_api.queue_monitor import QueueDepthMonitor
+
+_RECONNECT_LOG = "reconnecting after previous connection dropped"
 
 
 class FakeClient:
@@ -75,6 +78,38 @@ def test_read_failure_reconnects_next_poll_without_backoff():
         }  # first read fails -> n/a
         assert monitor.depths() == {"work": 5, "dlq": 2}  # reconnects immediately
         assert len(made) == 2
+    finally:
+        monitor.close()
+
+
+def test_logs_on_reconnect(caplog):
+    made = []
+
+    def factory():
+        client = FakeClient({"work": 1, "dlq": 0})
+        made.append(client)
+        return client
+
+    monitor = QueueDepthMonitor(factory, "work", "dlq")
+    try:
+        monitor.depths()
+        made[-1].is_connected = False  # broker dropped the connection
+        with caplog.at_level(logging.INFO):
+            monitor.depths()
+        assert _RECONNECT_LOG in caplog.text
+    finally:
+        monitor.close()
+
+
+def test_no_reconnect_log_on_first_connect(caplog):
+    def factory():
+        return FakeClient({"work": 3, "dlq": 1})
+
+    monitor = QueueDepthMonitor(factory, "work", "dlq")
+    try:
+        with caplog.at_level(logging.INFO):
+            monitor.depths()
+        assert _RECONNECT_LOG not in caplog.text  # first connect is silent
     finally:
         monitor.close()
 
