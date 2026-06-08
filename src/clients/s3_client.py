@@ -447,8 +447,11 @@ class S3Client:
         failed_count = len(results) - success_count
 
         if failed_count > 0:
-            logger.warning(
-                "Upload completed with %d failures out of %d",
+            logger.error(
+                "Upload to %s/%s completed with %d failures out of %d "
+                "(per-file errors at DEBUG)",
+                self._bucket_name,
+                s3_prefix,
                 failed_count,
                 len(results),
             )
@@ -489,7 +492,9 @@ class S3Client:
             logger.debug("Uploaded via %s: %s", self._backend_label, s3_key)
             return True
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error("Failed to upload %s to %s: %s", file_path, s3_key, e)
+            # Per-file detail at DEBUG only: a transient backend outage can fail
+            # thousands of tile uploads; upload_directory logs a single summary.
+            logger.debug("Failed to upload %s to %s: %s", file_path, s3_key, e)
             return False
 
     async def upload_file(self, key: str, file_path: Path) -> bool:

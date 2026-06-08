@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import sys
 import os
 from unittest import mock
@@ -530,3 +531,47 @@ class TestS3ClientUploadFile:
 
         assert uploaded is True
         boto_client.put_object.assert_awaited_once()
+
+
+class TestS3ClientUploadDirectory:
+    """Tests for S3Client.upload_directory method."""
+
+    @pytest.mark.asyncio
+    async def test_upload_directory_caps_error_logging(self, tmp_path, caplog):
+        """A failing backend must not emit one ERROR per file (the 100k-line bug).
+
+        Per-file failures are logged at DEBUG; upload_directory emits a single
+        ERROR summary regardless of how many tiles failed.
+        """
+        tile_dir = tmp_path / "barbs" / "12" / "1"
+        tile_dir.mkdir(parents=True)
+        for i in range(5):
+            (tile_dir / f"{i}.json").write_bytes(b"{}")
+
+        override_backend = AsyncMock()
+        override_backend.upload.side_effect = RuntimeError("seaweedfs down")
+
+        s3_client = S3Client(
+            bucket_name="tiles-data",
+            endpoint_url="http://s3:9000",
+            access_key="user",
+            secret_key="pass",
+            tile_uploader_overwritten=override_backend,
+        )
+        boto_client = AsyncMock()
+        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+
+        with caplog.at_level(logging.DEBUG, logger="clients.s3_client"):
+            uploaded = await s3_client.upload_directory(tmp_path, "geojson/wrf/x")
+
+        s3_records = [r for r in caplog.records if r.name == "clients.s3_client"]
+        errors = [r for r in s3_records if r.levelno == logging.ERROR]
+        debug_failures = [
+            r
+            for r in s3_records
+            if r.levelno == logging.DEBUG and "Failed to upload" in r.message
+        ]
+
+        assert uploaded == 0
+        assert len(errors) == 1  # single summary, not one-per-file
+        assert len(debug_failures) == 5
