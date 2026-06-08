@@ -3,11 +3,13 @@ import pytz
 from datetime import datetime
 import sys
 import os
+from unittest import mock
 
 # Ensure src is in python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-from logging_config import TimezoneFormatter
+from config import Config
+from logging_config import TimezoneFormatter, setup_logging
 
 
 def test_timezone_formatter_utc():
@@ -38,3 +40,18 @@ def test_timezone_formatter_custom_tz():
 
     s = formatter.format(record)
     assert "2020-12-31 19:00:00-0500" in s
+
+
+def test_setup_logging_routes_warnings_through_logging():
+    """Python warnings must be captured by logging so the worker's
+    subprocess-stderr capture stops tagging library warnings as ERROR."""
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+    try:
+        with mock.patch("logging_config.logging.captureWarnings") as mock_capture:
+            setup_logging(Config())
+            mock_capture.assert_called_once_with(True)
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)

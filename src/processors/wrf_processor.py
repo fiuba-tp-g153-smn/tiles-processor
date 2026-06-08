@@ -4,6 +4,8 @@ import gc
 import shutil
 import subprocess
 import uuid
+import warnings
+from contextlib import contextmanager
 from logging import getLogger
 from pathlib import Path
 
@@ -12,6 +14,7 @@ import numpy as np
 import rasterio
 from rasterio.control import GroundControlPoint
 from rasterio.crs import CRS  # pylint: disable=no-name-in-module
+from rasterio.errors import NotGeoreferencedWarning
 
 from config import Config
 from factories import create_s3_client
@@ -572,6 +575,15 @@ class WrfProcessor(ImageProcessor):
         return gcps
 
     @staticmethod
+    @contextmanager
+    def _suppress_not_georeferenced_warning():
+        """GCP-tagged writers open without a transform on purpose; mute the
+        expected NotGeoreferencedWarning (GCPs are attached immediately after)."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", NotGeoreferencedWarning)
+            yield
+
+    @staticmethod
     def _save_rgba_geotiff(
         rgba: np.ndarray,
         lat: np.ndarray,
@@ -590,7 +602,7 @@ class WrfProcessor(ImageProcessor):
         gcps = WrfProcessor._build_gcps(lat, lon, WrfProcessor.GCP_STEP)
         tmp_path = output_path.parent / f"{uuid.uuid4()}.tif"
         try:
-            with rasterio.open(
+            with WrfProcessor._suppress_not_georeferenced_warning(), rasterio.open(
                 tmp_path,
                 "w",
                 driver="GTiff",
@@ -626,7 +638,7 @@ class WrfProcessor(ImageProcessor):
         gcps = WrfProcessor._build_gcps(lat, lon, WrfProcessor.GCP_STEP)
         tmp_path = output_path.parent / f"{uuid.uuid4()}.tif"
         try:
-            with rasterio.open(
+            with WrfProcessor._suppress_not_georeferenced_warning(), rasterio.open(
                 tmp_path,
                 "w",
                 driver="GTiff",

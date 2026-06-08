@@ -59,3 +59,8 @@ def setup_logging(config: Config):
     logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("aiobotocore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    # Route Python warnings (e.g. rasterio/ecCodes) through logging instead of
+    # raw stderr, so the worker's subprocess-stderr capture stops tagging them
+    # ERROR — they now arrive as WARNING-level lines on stdout.
+    logging.captureWarnings(True)
