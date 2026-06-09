@@ -80,6 +80,7 @@ def client(tmp_path):
         RABBITMQ_USER="guest",
         RABBITMQ_PASSWORD="guest",
         RABBITMQ_QUEUE="tiles_queue",
+        RABBITMQ_LIGHT_QUEUE="tiles_light_queue",
         RABBITMQ_DLQ="tiles_dlq",
         RABBITMQ_DLX="tiles_dlx",
     )
@@ -193,7 +194,7 @@ def test_live_degrades_when_rabbitmq_down(client, tmp_path):
     body = client.get("/api/live").json()
     assert set(body) == {"queues", "in_progress"}
     # RabbitMQ unreachable -> counts are n/a, not an error.
-    assert body["queues"] == {"work": None, "dlq": None}
+    assert body["queues"] == {"work": None, "light": None, "dlq": None}
     assert len(body["in_progress"]) == 2
     assert {p["image_id"] for p in body["in_progress"]} == {
         "20260521320209",
@@ -217,6 +218,7 @@ def _empty_client(db_dir, api_key="test-key"):
         RABBITMQ_USER="guest",
         RABBITMQ_PASSWORD="guest",
         RABBITMQ_QUEUE="tiles_queue",
+        RABBITMQ_LIGHT_QUEUE="tiles_light_queue",
         RABBITMQ_DLQ="tiles_dlq",
         RABBITMQ_DLX="tiles_dlx",
     )

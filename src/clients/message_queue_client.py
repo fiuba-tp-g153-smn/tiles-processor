@@ -29,12 +29,13 @@ class MessageQueueClient(ABC):
         """Close the connection to the message queue."""
 
     @abstractmethod
-    def publish(self, work_unit: WorkUnit) -> None:
+    def publish(self, work_unit: WorkUnit, queue_name: str | None = None) -> None:
         """
-        Publish a work unit to the work queue.
+        Publish a work unit to a work queue.
 
         Args:
             work_unit: The work unit to publish
+            queue_name: Target queue. Defaults to the client's main work queue.
         """
 
     @abstractmethod

@@ -32,12 +32,12 @@ def test_reuses_one_connection_across_polls():
 
     def factory():
         calls.append(1)
-        return FakeClient({"work": 3, "dlq": 1})
+        return FakeClient({"work": 3, "light": 5, "dlq": 1})
 
-    monitor = QueueDepthMonitor(factory, "work", "dlq")
+    monitor = QueueDepthMonitor(factory, "work", "dlq", "light")
     try:
-        assert monitor.depths() == {"work": 3, "dlq": 1}
-        assert monitor.depths() == {"work": 3, "dlq": 1}
+        assert monitor.depths() == {"work": 3, "light": 5, "dlq": 1}
+        assert monitor.depths() == {"work": 3, "light": 5, "dlq": 1}
         assert len(calls) == 1  # connection reused, not reconnected each poll
     finally:
         monitor.close()
@@ -47,11 +47,11 @@ def test_reconnects_when_connection_drops():
     made = []
 
     def factory():
-        client = FakeClient({"work": 1, "dlq": 0})
+        client = FakeClient({"work": 1, "light": 2, "dlq": 0})
         made.append(client)
         return client
 
-    monitor = QueueDepthMonitor(factory, "work", "dlq")
+    monitor = QueueDepthMonitor(factory, "work", "dlq", "light")
     try:
         monitor.depths()
         made[-1].is_connected = False  # simulate the broker dropping the connection
@@ -66,17 +66,22 @@ def test_read_failure_reconnects_next_poll_without_backoff():
     made = []
 
     def factory():
-        client = FakeClient({"work": 5, "dlq": 2}, fail_read=not made)
+        client = FakeClient({"work": 5, "light": 7, "dlq": 2}, fail_read=not made)
         made.append(client)
         return client
 
-    monitor = QueueDepthMonitor(factory, "work", "dlq")
+    monitor = QueueDepthMonitor(factory, "work", "dlq", "light")
     try:
         assert monitor.depths() == {
             "work": None,
+            "light": None,
             "dlq": None,
         }  # first read fails -> n/a
-        assert monitor.depths() == {"work": 5, "dlq": 2}  # reconnects immediately
+        assert monitor.depths() == {
+            "work": 5,
+            "light": 7,
+            "dlq": 2,
+        }  # reconnects immediately
         assert len(made) == 2
     finally:
         monitor.close()
@@ -86,11 +91,11 @@ def test_logs_on_reconnect(caplog):
     made = []
 
     def factory():
-        client = FakeClient({"work": 1, "dlq": 0})
+        client = FakeClient({"work": 1, "light": 2, "dlq": 0})
         made.append(client)
         return client
 
-    monitor = QueueDepthMonitor(factory, "work", "dlq")
+    monitor = QueueDepthMonitor(factory, "work", "dlq", "light")
     try:
         monitor.depths()
         made[-1].is_connected = False  # broker dropped the connection
@@ -103,9 +108,9 @@ def test_logs_on_reconnect(caplog):
 
 def test_no_reconnect_log_on_first_connect(caplog):
     def factory():
-        return FakeClient({"work": 3, "dlq": 1})
+        return FakeClient({"work": 3, "light": 5, "dlq": 1})
 
-    monitor = QueueDepthMonitor(factory, "work", "dlq")
+    monitor = QueueDepthMonitor(factory, "work", "dlq", "light")
     try:
         with caplog.at_level(logging.INFO):
             monitor.depths()
@@ -122,18 +127,20 @@ def test_degrades_and_backs_off_when_broker_down():
         calls.append(1)
         raise RuntimeError("broker down")
 
-    monitor = QueueDepthMonitor(factory, "work", "dlq", monotonic=lambda: clock["t"])
+    monitor = QueueDepthMonitor(
+        factory, "work", "dlq", "light", monotonic=lambda: clock["t"]
+    )
     try:
-        assert monitor.depths() == {"work": None, "dlq": None}
+        assert monitor.depths() == {"work": None, "light": None, "dlq": None}
         assert len(calls) == 1
 
         # Within the backoff window: returns n/a without re-attempting a connect.
-        assert monitor.depths() == {"work": None, "dlq": None}
+        assert monitor.depths() == {"work": None, "light": None, "dlq": None}
         assert len(calls) == 1
 
         # After the backoff elapses: tries to connect again.
         clock["t"] = QueueDepthMonitor._RECONNECT_BACKOFF_S + 1
-        assert monitor.depths() == {"work": None, "dlq": None}
+        assert monitor.depths() == {"work": None, "light": None, "dlq": None}
         assert len(calls) == 2
     finally:
         monitor.close()

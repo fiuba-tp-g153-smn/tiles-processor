@@ -164,6 +164,7 @@ class QueueDepths(BaseModel):
     """RabbitMQ queue depths; ``null`` when the broker is unreachable."""
 
     work: int | None = None
+    light: int | None = None
     dlq: int | None = None
 
 
@@ -186,7 +187,7 @@ class LiveStatus(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "queues": {"work": 3, "dlq": 0},
+                "queues": {"work": 3, "light": 5, "dlq": 0},
                 "in_progress": [
                     {
                         "image_id": "RMA12_DBZH_20260114T170328Z",

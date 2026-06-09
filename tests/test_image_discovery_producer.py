@@ -16,7 +16,18 @@ from data_sources import DataSourceRegistry
 from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
 from models.band_config import BAND_CONFIGS, BandConfig
 from producer.image_discovery_producer import ImageDiscoveryProducer
+from producer.queue_router import QueueRouter
 from config import Config
+
+
+def _make_router() -> QueueRouter:
+    """Router where GOES units map to the normal queue (no WRF products light)."""
+    return QueueRouter(
+        normal_queue="tiles_work_queue",
+        light_queue="tiles_light_queue",
+        all_radar_light=True,
+        light_wrf_products=frozenset(),
+    )
 
 
 @pytest.fixture
@@ -122,6 +133,7 @@ class TestDuplicatePrevention:
         producer._mq_client = mq_client
         producer._progress_tracker = progress_tracker
         producer._data_source_registry = registry
+        producer._router = _make_router()
         producer._s3_client = AsyncMock()
         producer._s3_client.list_prefixes = AsyncMock(return_value=[])
 
@@ -157,6 +169,7 @@ class TestDuplicatePrevention:
         producer._mq_client = mq_client
         producer._progress_tracker = progress_tracker
         producer._data_source_registry = registry
+        producer._router = _make_router()
         producer._s3_client = AsyncMock()
         producer._s3_client.list_prefixes = AsyncMock(return_value=[])
 
@@ -199,6 +212,7 @@ class TestDuplicatePrevention:
         producer._mq_client = mq_client
         producer._progress_tracker = progress_tracker
         producer._data_source_registry = registry
+        producer._router = _make_router()
         producer._s3_client = AsyncMock()
         producer._s3_client.list_prefixes = AsyncMock(return_value=[])
 
@@ -224,6 +238,8 @@ class TestDuplicatePrevention:
 
         published_unit = mq_client.publish.call_args[0][0]
         assert published_unit.image_id == new_image.image_id
+        # GOES units are routed to the normal queue.
+        assert mq_client.publish.call_args.kwargs["queue_name"] == "tiles_work_queue"
 
 
 class TestOrphanReclaim:
@@ -236,6 +252,7 @@ class TestOrphanReclaim:
         producer._mq_client = mq_client
         producer._progress_tracker = tracker
         producer._data_source_registry = DataSourceRegistry()  # no sources
+        producer._router = _make_router()
         producer._s3_client = AsyncMock()
         producer._s3_client.list_prefixes = AsyncMock(return_value=[])
         return producer
@@ -249,8 +266,9 @@ class TestOrphanReclaim:
         tracker.mark_in_progress("orphan", "band_13")
 
         mock_config.RABBITMQ_QUEUE = "tiles_work_queue"
+        mock_config.RABBITMQ_LIGHT_QUEUE = "tiles_light_queue"
         mq_client = MagicMock()
-        mq_client.get_queue_size.return_value = 0  # work queue drained
+        mq_client.get_queue_size.return_value = 0  # both queues drained
 
         await self._producer(mock_config, tracker, mq_client).discover_and_publish()
 
@@ -264,6 +282,7 @@ class TestOrphanReclaim:
         tracker.mark_in_progress("orphan", "band_13")
 
         mock_config.RABBITMQ_QUEUE = "tiles_work_queue"
+        mock_config.RABBITMQ_LIGHT_QUEUE = "tiles_light_queue"
         mq_client = MagicMock()
         mq_client.get_queue_size.return_value = 5  # backlog (e.g. cold start)
 

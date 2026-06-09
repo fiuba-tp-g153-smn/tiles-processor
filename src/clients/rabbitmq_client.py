@@ -46,6 +46,7 @@ class RabbitMQClient(MessageQueueClient):
         dlq_name: str = "tiles_dead_letter_queue",
         dlx_name: str = "tiles_dlx",
         virtual_host: str = "/",
+        light_queue_name: Optional[str] = None,
     ):
         self._host = host
         self._port = port
@@ -56,6 +57,11 @@ class RabbitMQClient(MessageQueueClient):
         self._queue_name = queue_name
         self._dlq_name = dlq_name
         self._dlx_name = dlx_name
+        # Optional second work queue for lightweight units (radar/WRF). When set,
+        # it is declared alongside the main queue so any role (producer, worker,
+        # metrics) can publish to or probe it. Workers still consume only their
+        # own _queue_name; the producer routes per work unit.
+        self._light_queue_name = light_queue_name
 
         self._connection: Optional[pika.BlockingConnection] = None
         self._channel: Optional[BlockingChannel] = None
@@ -129,16 +135,33 @@ class RabbitMQClient(MessageQueueClient):
         )
 
         # Declare main work queue with dead letter configuration
+        self._declare_work_queue(self._queue_name)
+
+        # Declare the optional light work queue with the same DLX config. Declares
+        # are idempotent, so whichever role boots first creates it; identical
+        # arguments everywhere avoid a PRECONDITION_FAILED on redeclare.
+        if self._light_queue_name and self._light_queue_name != self._queue_name:
+            self._declare_work_queue(self._light_queue_name)
+
+        logger.info(
+            "Queues configured: %s%s, %s",
+            self._queue_name,
+            f", {self._light_queue_name}" if self._light_queue_name else "",
+            self._dlq_name,
+        )
+
+    def _declare_work_queue(self, queue_name: str) -> None:
+        """Declare a durable work queue that dead-letters to the shared DLQ."""
+        if self._channel is None:
+            raise RuntimeError("RabbitMQ channel is not initialized")
         self._channel.queue_declare(
-            queue=self._queue_name,
+            queue=queue_name,
             durable=True,
             arguments={
                 "x-dead-letter-exchange": self._dlx_name,
                 "x-dead-letter-routing-key": self._dlq_name,
             },
         )
-
-        logger.info("Queues configured: %s, %s", self._queue_name, self._dlq_name)
 
     def stop_consuming(self) -> None:
         """Signal the consume loop to stop.
@@ -156,9 +179,9 @@ class RabbitMQClient(MessageQueueClient):
             self._connection.close()
             logger.info("RabbitMQ connection closed")
 
-    def publish(self, work_unit: WorkUnit) -> None:
+    def publish(self, work_unit: WorkUnit, queue_name: Optional[str] = None) -> None:
         """
-        Publish a work unit to the work queue.
+        Publish a work unit to a work queue.
 
         Messages are published with:
         - delivery_mode=2 (persistent)
@@ -166,6 +189,9 @@ class RabbitMQClient(MessageQueueClient):
 
         Args:
             work_unit: The work unit to publish
+            queue_name: Target queue. Defaults to this client's main queue, so
+                worker requeue/retry paths return units to the queue they consume.
+                The producer passes an explicit queue to route light vs heavy work.
         """
         if not self._channel or self._channel.is_closed:
             raise RuntimeError("Not connected to RabbitMQ")
@@ -174,7 +200,7 @@ class RabbitMQClient(MessageQueueClient):
 
         self._channel.basic_publish(
             exchange="",
-            routing_key=self._queue_name,
+            routing_key=queue_name or self._queue_name,
             body=message.encode("utf-8"),
             properties=pika.BasicProperties(
                 delivery_mode=2,  # Persistent

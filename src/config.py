@@ -14,7 +14,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
     following the convention used by Django, Flask, and other Python frameworks.
     """
 
-    def __init__(self, settings_path: Path | None = None):
+    def __init__(  # pylint: disable=too-many-statements
+        self, settings_path: Path | None = None
+    ):
         if settings_path is None:
             settings_path = Path(__file__).parent.parent / "settings.json"
 
@@ -50,6 +52,13 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.RABBITMQ_QUEUE: str = self._get_required_env("RABBITMQ_QUEUE")
         self.RABBITMQ_DLQ: str = self._get_required_env("RABBITMQ_DLQ")
         self.RABBITMQ_DLX: str = self._get_required_env("RABBITMQ_DLX")
+        # Second work queue for lightweight units (radar/WRF). Defaulted (not
+        # required) so existing .env files keep working; light workers set
+        # RABBITMQ_QUEUE to this value to consume it. `or` (not getenv default)
+        # so a compose-supplied empty string also falls back to the default.
+        self.RABBITMQ_LIGHT_QUEUE: str = (
+            os.getenv("RABBITMQ_LIGHT_QUEUE") or "tiles_light_queue"
+        )
 
         # Settings from JSON
         self.TIMEZONE: str = settings["timezone"]
@@ -127,6 +136,15 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         }
         self.WRF_INPUT_DIR: str = settings.get(
             "wrf_input_dir", str(Path(self.DATA_DIR) / "wrf_nc")
+        )
+
+        # Light-queue routing (settings.json). Units matching these go to the
+        # light queue so a larger pool of cheap workers can drain them in
+        # parallel with the heavy GOES/GLM/ECMWF queue.
+        _light_queue = settings.get("light_queue", {})
+        self.LIGHT_QUEUE_ALL_RADAR: bool = bool(_light_queue.get("radar", False))
+        self.LIGHT_QUEUE_WRF_PRODUCTS: frozenset[str] = frozenset(
+            _light_queue.get("wrf", [])
         )
 
         # Job Configuration
@@ -236,8 +254,14 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("RABBITMQ_HOST: %s", self.RABBITMQ_HOST)
         logger.info("RABBITMQ_PORT: %s", self.RABBITMQ_PORT)
         logger.info("RABBITMQ_QUEUE: %s", self.RABBITMQ_QUEUE)
+        logger.info("RABBITMQ_LIGHT_QUEUE: %s", self.RABBITMQ_LIGHT_QUEUE)
         logger.info("RABBITMQ_DLQ: %s", self.RABBITMQ_DLQ)
         logger.info("RABBITMQ_DLX: %s", self.RABBITMQ_DLX)
+        logger.info("LIGHT_QUEUE_ALL_RADAR: %s", self.LIGHT_QUEUE_ALL_RADAR)
+        logger.info(
+            "LIGHT_QUEUE_WRF_PRODUCTS: %s",
+            ", ".join(sorted(self.LIGHT_QUEUE_WRF_PRODUCTS)) or "(none)",
+        )
         logger.info("JOB_TTL_MINUTES: %s", self.JOB_TTL_MINUTES)
         logger.info("HEALTH_PORT: %s", self.HEALTH_PORT)
         logger.info("ENABLE_METRICS: %s", self.ENABLE_METRICS)

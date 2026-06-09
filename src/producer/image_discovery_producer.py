@@ -30,6 +30,7 @@ from factories import (
     create_rabbitmq_client,
 )
 from models.work_unit import WorkUnit
+from producer.queue_router import QueueRouter
 from health_server import HealthCheckServer
 
 logger = getLogger(__name__)
@@ -53,17 +54,19 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
     # Default schedule: every 5 minutes
     DEFAULT_CRON = "*/5 * * * *"
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         config: Config,
         mq_client: MessageQueueClient,
         progress_tracker: ProgressTracker,
         data_source_registry: DataSourceRegistry,
+        router: QueueRouter,
     ):
         self._config = config
         self._mq_client = mq_client
         self._progress_tracker = progress_tracker
         self._data_source_registry = data_source_registry
+        self._router = router
         self._s3_client = create_s3_client(config)
 
     async def discover_and_publish(self) -> int:
@@ -116,13 +119,19 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         return total_published
 
     def _work_queue_empty(self) -> bool:
-        """True only if the work queue is confirmed drained.
+        """True only if both work queues are confirmed drained.
 
-        Fail-safe: if the depth can't be read, treat the queue as non-empty so we
+        Both the normal and light queues must be empty: during a cold start the
+        light queue can hold a large backlog while the normal queue momentarily
+        drains, and an orphan in-progress row may belong to either queue.
+
+        Fail-safe: if a depth can't be read, treat the queues as non-empty so we
         never reclaim in-progress rows on uncertainty.
         """
         try:
-            return self._mq_client.get_queue_size(self._config.RABBITMQ_QUEUE) == 0
+            normal = self._mq_client.get_queue_size(self._config.RABBITMQ_QUEUE)
+            light = self._mq_client.get_queue_size(self._config.RABBITMQ_LIGHT_QUEUE)
+            return normal == 0 and light == 0
         except Exception:  # pylint: disable=broad-exception-caught
             logger.warning(
                 "Could not read work queue depth; skipping orphan reclaim",
@@ -252,9 +261,12 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
                 bounds=bounds,
                 band_id=band_id,
             )
-            self._mq_client.publish(work_unit)
+            target_queue = self._router.route(work_unit)
+            self._mq_client.publish(work_unit, queue_name=target_queue)
             published += 1
-            logger.debug("Published work unit for %s", image_info.image_id)
+            logger.debug(
+                "Published work unit for %s to %s", image_info.image_id, target_queue
+            )
 
         return published
 
@@ -374,12 +386,21 @@ def run_producer(config: Config) -> None:
     )
     health_server.start()
 
+    # Routing policy: radar + configured WRF products go to the light queue.
+    router = QueueRouter(
+        normal_queue=config.RABBITMQ_QUEUE,
+        light_queue=config.RABBITMQ_LIGHT_QUEUE,
+        all_radar_light=config.LIGHT_QUEUE_ALL_RADAR,
+        light_wrf_products=config.LIGHT_QUEUE_WRF_PRODUCTS,
+    )
+
     # Create producer with dependencies
     producer = ImageDiscoveryProducer(
         config=config,
         mq_client=mq_client,
         progress_tracker=progress_tracker,
         data_source_registry=data_source_registry,
+        router=router,
     )
 
     # Create scheduler
