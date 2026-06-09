@@ -8,7 +8,6 @@ from typing import Callable, Optional
 import pika
 from pika.exceptions import AMQPConnectionError
 from pika.adapters.blocking_connection import BlockingChannel
-from pika.spec import Basic, BasicProperties
 
 from models.work_unit import WorkUnit
 from clients.message_queue_client import MessageQueueClient
@@ -35,6 +34,11 @@ class RabbitMQClient(MessageQueueClient):
         - Dead letter queue for failed messages
         - Prefetch count of 1 (fair dispatch to workers)
     """
+
+    # When every consumed queue is empty, idle this long (processing I/O, so
+    # heartbeats stay alive) before polling again. Bounds pickup latency;
+    # negligible for second-to-minute jobs.
+    _IDLE_POLL_S = 1.0
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
@@ -65,6 +69,8 @@ class RabbitMQClient(MessageQueueClient):
 
         self._connection: Optional[pika.BlockingConnection] = None
         self._channel: Optional[BlockingChannel] = None
+        # Drives the consume() drain loop; flipped off by stop_consuming().
+        self._consuming = False
 
     def _get_connection_params(self) -> pika.ConnectionParameters:
         """Build connection parameters."""
@@ -164,14 +170,13 @@ class RabbitMQClient(MessageQueueClient):
         )
 
     def stop_consuming(self) -> None:
-        """Signal the consume loop to stop.
+        """Signal the consume() drain loop to stop.
 
-        Uses pika's add_callback_threadsafe to safely schedule
-        stop_consuming on the connection's I/O loop. This causes
-        start_consuming() to return after the current message finishes.
+        The drain runs in the main thread and the worker's signal handler runs
+        there too, so a plain flag is safe: the loop exits at its next iteration
+        (after the in-flight message, or within _IDLE_POLL_S when idle).
         """
-        if self._connection and self._connection.is_open and self._channel:
-            self._connection.add_callback_threadsafe(self._channel.stop_consuming)
+        self._consuming = False
 
     def close(self) -> None:
         """Close the connection to RabbitMQ."""
@@ -242,57 +247,71 @@ class RabbitMQClient(MessageQueueClient):
 
     def consume(
         self,
-        callback: Callable[[WorkUnit, "MessageQueueClient", int], bool],
-        prefetch_count: int = 1,
+        callback: Callable[[WorkUnit, "MessageQueueClient", int, str], bool],
+        queues: list[str],
     ) -> None:
         """
-        Start consuming messages from the work queue.
+        Drain messages from one or more queues in strict priority order.
 
-        This is a blocking operation that runs until the connection is closed
-        or an error occurs.
+        Blocks until stop_consuming() is called or the connection drops. Each
+        iteration tries the queues in order and processes the first message
+        found, then restarts from the highest-priority queue — so a fallback
+        queue is touched only once every higher-priority queue is empty (a
+        normal worker drains its normal queue fully before stealing light work).
+        When all queues are empty it idles for _IDLE_POLL_S (keeping the
+        connection's heartbeats alive) and polls again.
 
         Args:
-            callback: Function called for each message. Receives (work_unit, client, delivery_tag).
-                     Should return True if message should be acked, False for nack/requeue.
-            prefetch_count: Number of messages to prefetch (default: 1 for fair dispatch)
+            callback: Called per message with
+                (work_unit, client, delivery_tag, source_queue). Returns True to
+                ack, False to leave unacked (requeued when the connection closes).
+            queues: Queue names in descending priority.
         """
         if not self._channel or self._channel.is_closed:
             raise RuntimeError("Not connected to RabbitMQ")
+        if not queues:
+            raise ValueError("consume() requires at least one queue")
 
-        # Fair dispatch - don't give more than prefetch_count messages to a worker at once
-        self._channel.basic_qos(prefetch_count=prefetch_count)
+        logger.info("Started consuming from %s (priority order)", queues)
+        self._consuming = True
+        while self._consuming:
+            for queue_name in queues:
+                method, _props, body = self._channel.basic_get(
+                    queue=queue_name, auto_ack=False
+                )
+                if method is None or body is None:
+                    continue  # this queue is empty — fall through to the next
+                self._handle_message(callback, queue_name, method.delivery_tag, body)
+                break  # restart the scan from the highest-priority queue
+            else:
+                # Every queue empty: idle while servicing heartbeats/I/O.
+                self._channel.connection.process_data_events(
+                    time_limit=self._IDLE_POLL_S
+                )
 
-        def on_message(
-            channel: BlockingChannel,
-            method: Basic.Deliver,
-            _properties: BasicProperties,
-            body: bytes,
-        ):
-            delivery_tag = method.delivery_tag
-            try:
-                work_unit = WorkUnit.from_json(body.decode("utf-8"))
-                logger.info("Received work unit: %s", work_unit)
+    def _handle_message(
+        self,
+        callback: Callable[[WorkUnit, "MessageQueueClient", int, str], bool],
+        source_queue: str,
+        delivery_tag: int,
+        body: bytes,
+    ) -> None:
+        """Decode one message, run the callback, and ack on success."""
+        if self._channel is None:
+            raise RuntimeError("RabbitMQ channel is not initialized")
+        try:
+            work_unit = WorkUnit.from_json(body.decode("utf-8"))
+            logger.info("Received work unit from %s: %s", source_queue, work_unit)
 
-                # Call the handler
-                should_ack = callback(work_unit, self, delivery_tag)
+            should_ack = callback(work_unit, self, delivery_tag, source_queue)
 
-                if should_ack:
-                    channel.basic_ack(delivery_tag=delivery_tag)
-                    logger.debug("Acknowledged work unit: %s", work_unit)
-
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                logger.exception("Error processing message: %s", e)
-                # Reject and don't requeue - let it go to DLQ
-                channel.basic_nack(delivery_tag=delivery_tag, requeue=False)
-
-        self._channel.basic_consume(
-            queue=self._queue_name,
-            on_message_callback=on_message,
-            auto_ack=False,
-        )
-
-        logger.info("Started consuming from %s", self._queue_name)
-        self._channel.start_consuming()
+            if should_ack:
+                self._channel.basic_ack(delivery_tag=delivery_tag)
+                logger.debug("Acknowledged work unit: %s", work_unit)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.exception("Error processing message: %s", e)
+            # Reject and don't requeue - let it go to DLQ.
+            self._channel.basic_nack(delivery_tag=delivery_tag, requeue=False)
 
     def ack(self, delivery_tag: int) -> None:
         """Manually acknowledge a message."""

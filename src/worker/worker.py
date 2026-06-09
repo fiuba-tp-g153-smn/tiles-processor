@@ -99,15 +99,29 @@ class Worker:  # pylint: disable=too-few-public-methods
         signal(SIGTERM, self._signal_handler)
 
         try:
-            # Start consuming (blocking)
+            # Start consuming (blocking). Normal workers drain their primary
+            # queue first, then steal from the light queue when it is empty;
+            # light workers (primary == light) get a single-queue list.
             self._mq_client.consume(
                 callback=self._process_message,
-                prefetch_count=1,
+                queues=self._consume_queues(),
             )
         except KeyboardInterrupt:
             logger.info("Worker interrupted by user")
         finally:
             self._shutdown()
+
+    def _consume_queues(self) -> list[str]:
+        """Queues to drain, highest priority first.
+
+        Normal workers (primary queue != light queue) drain their primary queue
+        and then fall back to the light queue when it is empty. Light workers
+        (primary == light) only ever drain the light queue.
+        """
+        queues = [self._config.RABBITMQ_QUEUE]
+        if self._config.RABBITMQ_LIGHT_QUEUE != self._config.RABBITMQ_QUEUE:
+            queues.append(self._config.RABBITMQ_LIGHT_QUEUE)
+        return queues
 
     def _signal_handler(self, signum, _frame):
         """Handle shutdown signals gracefully."""
@@ -135,7 +149,11 @@ class Worker:  # pylint: disable=too-few-public-methods
         logger.info("Worker stopped")
 
     def _process_message(
-        self, work_unit: WorkUnit, client: MessageQueueClient, _delivery_tag: int
+        self,
+        work_unit: WorkUnit,
+        client: MessageQueueClient,
+        _delivery_tag: int,
+        source_queue: str,
     ) -> bool:
         """
         Process a single work unit message.
@@ -147,6 +165,9 @@ class Worker:  # pylint: disable=too-few-public-methods
             work_unit: The work unit to process
             client: RabbitMQ client for publishing
             _delivery_tag: Message delivery tag for ack/nack
+            source_queue: Queue this message came from. Requeues and retries go
+                back here so a light unit stolen by a normal worker returns to
+                the light queue, not the worker's primary (normal) queue.
 
         Returns:
             True if message should be acknowledged
@@ -184,7 +205,7 @@ class Worker:  # pylint: disable=too-few-public-methods
             # (which races with the requeued copy on the same work_dir).
             # If all workers crash before the requeued copy is processed,
             # ProgressTracker's TTL (JOB_TTL_MINUTES) eventually releases it.
-            client.publish(work_unit)
+            client.publish(work_unit, queue_name=source_queue)
             collector.mark_outcome(JobOutcome.REQUEUED, str(e))
             return True  # Acknowledge original; copy is back in the queue
 
@@ -205,7 +226,7 @@ class Worker:  # pylint: disable=too-few-public-methods
                     retry_unit.retry_count,
                     retry_unit.max_retries,
                 )
-                client.publish(retry_unit)
+                client.publish(retry_unit, queue_name=source_queue)
                 collector.mark_outcome(JobOutcome.ERROR, str(e))
             else:
                 # Max retries exceeded, send to DLQ

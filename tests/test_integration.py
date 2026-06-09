@@ -115,7 +115,9 @@ class TestWorkerIntegration:
             )
 
             # Process the message
-            result = worker._process_message(work_unit, mock_rabbitmq, 1)
+            result = worker._process_message(
+                work_unit, mock_rabbitmq, 1, "tiles_work_queue"
+            )
 
             # Verify acknowledgement
             assert result is True
@@ -156,16 +158,22 @@ class TestWorkerIntegration:
                 band_id="band_13",
             )
 
-            # Process
-            result = worker._process_message(work_unit, mock_rabbitmq, 1)
+            # Process (light unit stolen by a normal worker: came from light queue)
+            result = worker._process_message(
+                work_unit, mock_rabbitmq, 1, "tiles_light_queue"
+            )
 
             # Should still acknowledge (to remove original message)
             assert result is True
 
-            # Should publish retry
+            # Should publish retry back to the queue it came from, not the
+            # worker's primary queue.
             assert mock_rabbitmq.publish.call_count == 1
             retry_unit = mock_rabbitmq.publish.call_args[0][0]
             assert retry_unit.retry_count == 1
+            assert mock_rabbitmq.publish.call_args.kwargs["queue_name"] == (
+                "tiles_light_queue"
+            )
 
     def test_worker_sends_to_dlq_after_max_retries(
         self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
@@ -198,7 +206,9 @@ class TestWorkerIntegration:
             work_unit.max_retries = 3
 
             # Process
-            result = worker._process_message(work_unit, mock_rabbitmq, 1)
+            result = worker._process_message(
+                work_unit, mock_rabbitmq, 1, "tiles_work_queue"
+            )
 
             # Should not publish retry
             mock_rabbitmq.publish.assert_not_called()
