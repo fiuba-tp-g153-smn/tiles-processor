@@ -9,7 +9,6 @@ keeps the database single-writer-class and guarantees exactly one row per job,
 including partial timings when a job fails mid-pipeline.
 """
 
-import socket
 from datetime import datetime, UTC
 from time import perf_counter
 
@@ -21,11 +20,11 @@ from services.job_descriptor import describe_job
 class JobMetricsContext:
     """Mutable, single-job timing/outcome accumulator."""
 
-    def __init__(self, work_unit: WorkUnit):
+    def __init__(self, work_unit: WorkUnit, worker_host: str):
         self._work_unit = work_unit
         self._started_perf = perf_counter()
         self._started_at = datetime.now(UTC).isoformat()
-        self._worker_host = socket.gethostname()
+        self._worker_host = worker_host
 
         self._outcome: JobOutcome | None = None
         self._error_message: str | None = None

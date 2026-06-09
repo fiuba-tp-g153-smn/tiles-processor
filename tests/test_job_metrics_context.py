@@ -23,14 +23,14 @@ def _work_unit():
 
 
 def test_build_requires_outcome():
-    ctx = JobMetricsContext(_work_unit())
+    ctx = JobMetricsContext(_work_unit(), worker_host="worker-light1")
     assert ctx.has_outcome is False
     with pytest.raises(ValueError):
         ctx.build()
 
 
 def test_build_populates_timings_and_label():
-    ctx = JobMetricsContext(_work_unit())
+    ctx = JobMetricsContext(_work_unit(), worker_host="worker-light1")
     ctx.set_download_seconds(1.5)
     ctx.set_process_seconds(40.0)
     ctx.set_stage_timings({"georef": 3.2})
@@ -44,11 +44,11 @@ def test_build_populates_timings_and_label():
     assert metrics.total_s is not None and metrics.total_s >= 0
     assert metrics.job_type == "goes19_abi_band_13"
     assert "GOES ABI" in metrics.product_label
-    assert metrics.worker_host  # hostname captured
+    assert metrics.worker_host == "worker-light1"  # injected worker id round-trips
 
 
 def test_failure_outcome_records_error_message():
-    ctx = JobMetricsContext(_work_unit())
+    ctx = JobMetricsContext(_work_unit(), worker_host="worker-light1")
     ctx.mark_outcome(JobOutcome.DLQ, "boom")
     metrics = ctx.build()
     assert metrics.outcome == "dlq"

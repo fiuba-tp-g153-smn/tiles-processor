@@ -28,17 +28,19 @@ class QueueDepthMonitor:
     # broker isn't hammered (and pika's connect logs aren't re-spammed) every poll.
     _RECONNECT_BACKOFF_S = 30.0
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         client_factory: Callable[[], RabbitMQClient],
         work_queue: str,
         dlq: str,
+        light_queue: str,
         *,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._client_factory = client_factory
         self._work_queue = work_queue
         self._dlq = dlq
+        self._light_queue = light_queue
         self._monotonic = monotonic
         self._client: RabbitMQClient | None = None
         self._healthy: bool | None = None  # None = unknown (transition-only logging)
@@ -49,7 +51,7 @@ class QueueDepthMonitor:
         )
 
     def depths(self) -> dict[str, int | None]:
-        """Return ``{"work": int|None, "dlq": int|None}`` (None when unreachable)."""
+        """Return ``{"work", "light", "dlq"}`` depths (None when unreachable)."""
         return self._executor.submit(self._probe).result()
 
     def close(self) -> None:
@@ -65,6 +67,7 @@ class QueueDepthMonitor:
         if self._client is None and self._monotonic() < self._retry_after:
             return {
                 "work": None,
+                "light": None,
                 "dlq": None,
             }  # still backing off after a failed connect
 
@@ -73,18 +76,19 @@ class QueueDepthMonitor:
         except Exception:  # pylint: disable=broad-exception-caught
             # Connect failed -> broker unreachable; back off before retrying.
             self._mark_unhealthy(backoff=True)
-            return {"work": None, "dlq": None}
+            return {"work": None, "light": None, "dlq": None}
 
         try:
             depths: dict[str, int | None] = {
                 "work": client.get_queue_size(self._work_queue),
+                "light": client.get_queue_size(self._light_queue),
                 "dlq": client.get_queue_size(self._dlq),
             }
         except Exception:  # pylint: disable=broad-exception-caught
             # Read failed on an established connection -> drop and reconnect next
             # poll (no backoff: the connection may just have been recycled).
             self._mark_unhealthy(backoff=False)
-            return {"work": None, "dlq": None}
+            return {"work": None, "light": None, "dlq": None}
 
         self._mark_healthy()
         return depths

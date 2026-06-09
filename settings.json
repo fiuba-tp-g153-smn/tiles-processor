@@ -36,6 +36,21 @@
     "enable_wrf_CAPE_BRN": true,
     "enable_wrf_Granizo": true
   },
+  "light_queue": {
+    "radar": true,
+    "wrf": [
+      "Colmax",
+      "Rafagas",
+      "Campo900hPa",
+      "Precipitacion1h",
+      "MUCAPE",
+      "AguaPrecipitable",
+      "JetCapasBajas",
+      "CortanteNivelesBajos",
+      "CAPE_BRN",
+      "Granizo"
+    ]
+  },
   "bounds": {
     "minx": -110.0,
     "miny": -60.0,

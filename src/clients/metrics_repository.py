@@ -117,7 +117,10 @@ class MetricsRepository:
 
         Counts cover every outcome; timing statistics (avg/min/max/p95) are
         computed over successful jobs only, since failed jobs carry partial
-        timings. Returns one entry per job_type, busiest first.
+        timings. Every job_type ever recorded is returned: types with no jobs
+        in the window appear with zero counts and their real last-run time, so
+        the dashboard keeps showing idle types instead of dropping them.
+        Returns entries busiest first, idle (zero-count) types last.
         """
         rows = self._select(
             "SELECT job_type, product_label, outcome, finished_at, "
@@ -131,7 +134,16 @@ class MetricsRepository:
             grouped.setdefault(row["job_type"], []).append(row)
 
         summaries = [self._summarize_type(jt, rs) for jt, rs in grouped.items()]
-        summaries.sort(key=lambda s: s["counts"]["total"], reverse=True)
+        # Pad with every ever-seen type missing from the window (no-op when
+        # since is None, since the window then already covers all of them).
+        for job_type, product_label, last_finished in self._known_types():
+            if job_type not in grouped:
+                summaries.append(
+                    self._empty_summary(job_type, product_label, last_finished)
+                )
+        summaries.sort(
+            key=lambda s: (s["counts"]["total"], s["last_finished"]), reverse=True
+        )
         return summaries
 
     def recent_jobs(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -324,6 +336,41 @@ class MetricsRepository:
             params = []
         with self._connect() as conn:
             return conn.execute(query, params).fetchall()
+
+    def _known_types(self) -> list[tuple[str, str | None, str]]:
+        """Every job_type ever recorded, with its latest label and last-run time.
+
+        A single ``MAX(finished_at)`` makes the bare ``product_label`` come from
+        that same (most recent) row in SQLite, so the label stays current. Backed
+        by the ``(job_type, finished_at)`` index.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT job_type, product_label, MAX(finished_at) AS last_finished "
+                "FROM job_metrics GROUP BY job_type"
+            ).fetchall()
+        return [
+            (row["job_type"], row["product_label"], row["last_finished"])
+            for row in rows
+        ]
+
+    def _empty_summary(
+        self, job_type: str, product_label: str | None, last_finished: str
+    ) -> dict[str, Any]:
+        """Zero-count summary for a type with no jobs in the window."""
+        counts = {oc: 0 for oc in _OUTCOMES}
+        counts["total"] = 0
+        return {
+            "job_type": job_type,
+            "product_label": product_label,
+            "counts": counts,
+            "error_rate": 0.0,
+            "last_finished": last_finished,
+            "total_s": self._stats([]),
+            "download_s": self._stats([]),
+            "process_s": self._stats([]),
+            "stages": {},
+        }
 
     def _summarize_type(self, job_type: str, rows: list[sqlite3.Row]) -> dict[str, Any]:
         """Build one job_type summary entry from its rows."""

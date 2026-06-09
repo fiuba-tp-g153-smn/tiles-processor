@@ -144,6 +144,7 @@ def _make_rabbitmq_connector(config: Config) -> Callable[[], RabbitMQClient]:
             queue_name=config.RABBITMQ_QUEUE,
             dlq_name=config.RABBITMQ_DLQ,
             dlx_name=config.RABBITMQ_DLX,
+            light_queue_name=config.RABBITMQ_LIGHT_QUEUE,
         )
         client.connect(max_retries=1, retry_delay=0)
         return client
@@ -168,7 +169,10 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
     # One persistent, reused RabbitMQ connection for queue-depth probes (instead
     # of opening/closing one per /api/live poll). Connects lazily on first use.
     queue_monitor = QueueDepthMonitor(
-        _make_rabbitmq_connector(config), config.RABBITMQ_QUEUE, config.RABBITMQ_DLQ
+        _make_rabbitmq_connector(config),
+        config.RABBITMQ_QUEUE,
+        config.RABBITMQ_DLQ,
+        config.RABBITMQ_LIGHT_QUEUE,
     )
 
     @asynccontextmanager

@@ -29,12 +29,13 @@ class MessageQueueClient(ABC):
         """Close the connection to the message queue."""
 
     @abstractmethod
-    def publish(self, work_unit: WorkUnit) -> None:
+    def publish(self, work_unit: WorkUnit, queue_name: str | None = None) -> None:
         """
-        Publish a work unit to the work queue.
+        Publish a work unit to a work queue.
 
         Args:
             work_unit: The work unit to publish
+            queue_name: Target queue. Defaults to the client's main work queue.
         """
 
     @abstractmethod
@@ -59,16 +60,18 @@ class MessageQueueClient(ABC):
     @abstractmethod
     def consume(
         self,
-        callback: Callable[[WorkUnit, "MessageQueueClient", int], bool],
-        prefetch_count: int = 1,
+        callback: Callable[[WorkUnit, "MessageQueueClient", int, str], bool],
+        queues: list[str],
     ) -> None:
         """
-        Start consuming messages from the work queue.
+        Drain messages from one or more queues in strict priority order.
 
         Args:
-            callback: Function called for each message. Receives (work_unit, client, delivery_tag).
-                     Should return True if message should be acked, False for nack/requeue.
-            prefetch_count: Number of messages to prefetch
+            callback: Function called for each message. Receives
+                (work_unit, client, delivery_tag, source_queue). Should return
+                True if the message should be acked, False to leave it unacked.
+            queues: Queue names in descending priority. A lower-priority queue is
+                only consumed once every higher-priority queue is empty.
         """
 
     @abstractmethod
