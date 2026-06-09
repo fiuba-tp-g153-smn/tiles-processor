@@ -145,7 +145,7 @@ weed server \
   -master.metrics.intervalSeconds=10 \
   -volume \
   -volume.index=leveldb \
-  -volume.max=400 \
+  -volume.max=200 \
   -filer \
   -s3 \
   -s3.port=8333 \
