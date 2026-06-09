@@ -200,7 +200,7 @@ class WrfProcessor(ImageProcessor):
         7. Upload tiles, COG, and GeoJSON layers to S3.
     """
 
-    ZOOM_LEVELS = "4-9"
+    ZOOM_LEVELS = "4-6"
     GDAL_PROCESSES = 2
     BARB_SIMPLIFY_TOLERANCE = 0.0  # not applied to points
     CONTOUR_SIMPLIFY_TOLERANCE = 0.05
