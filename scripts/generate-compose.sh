@@ -269,9 +269,9 @@ done
 for i in $(seq 1 "$NUM_LIGHT_WORKERS"); do
     cat >> "$OUTPUT_FILE" << LIGHT_WORKER
   # Light worker ${i} - processes lightweight units (radar/WRF) from the light queue
-  light-worker${i}:
+  worker-light${i}:
     image: tiles-processor
-    container_name: tiles-processor-light-worker${i}
+    container_name: tiles-processor-worker-light${i}
     depends_on:
       rabbitmq:
         condition: service_healthy

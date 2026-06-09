@@ -224,9 +224,9 @@ services:
       start_interval: 1s
 
   # Light Worker 1 - processes lightweight units (radar/WRF) from the light queue
-  light-worker1:
+  worker-light1:
     image: tiles-processor
-    container_name: tiles-processor-light-worker1
+    container_name: tiles-processor-worker-light1
     stop_grace_period: 30s
     depends_on:
       rabbitmq:
@@ -272,9 +272,9 @@ services:
       start_interval: 1s
 
   # Light Worker 2 - processes lightweight units (radar/WRF) from the light queue
-  light-worker2:
+  worker-light2:
     image: tiles-processor
-    container_name: tiles-processor-light-worker2
+    container_name: tiles-processor-worker-light2
     stop_grace_period: 30s
     depends_on:
       rabbitmq:
@@ -320,57 +320,9 @@ services:
       start_interval: 1s
 
   # Light Worker 3 - processes lightweight units (radar/WRF) from the light queue
-  light-worker3:
+  worker-light3:
     image: tiles-processor
-    container_name: tiles-processor-light-worker3
-    stop_grace_period: 30s
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: python3 src/main.py worker
-    volumes:
-      - ./data:${DATA_DIR}
-      - ./data/radar_h5:${DATA_DIR}/radar_h5
-    environment:
-      - LOG_LEVEL=${LOG_LEVEL}
-      - DATA_DIR=${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
-      - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
-      - S3_TILES_DATA_SECURE=false
-      - S3_TILES_DATA_TILES_PROCESSOR_USER=${S3_TILES_DATA_TILES_PROCESSOR_USER}
-      - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
-      - SEAWEEDFS_FILER_ENDPOINT=${SEAWEEDFS_FILER_ENDPOINT}
-      - SEAWEEDFS_TILE_TTL=${SEAWEEDFS_TILE_TTL}
-      - SEAWEEDFS_RADAR_TILE_TTL=${SEAWEEDFS_RADAR_TILE_TTL}
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=${RABBITMQ_PORT}
-      - RABBITMQ_USER=${RABBITMQ_USER}
-      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
-      - RABBITMQ_QUEUE=${RABBITMQ_LIGHT_QUEUE}
-      - RABBITMQ_LIGHT_QUEUE=${RABBITMQ_LIGHT_QUEUE}
-      - RABBITMQ_DLQ=${RABBITMQ_DLQ}
-      - RABBITMQ_DLX=${RABBITMQ_DLX}
-      - JOB_TTL_MINUTES=${JOB_TTL_MINUTES}
-      - GDAL_CACHEMAX=${GDAL_CACHEMAX}
-      - CPL_VSIL_CURL_CACHE_SIZE=${CPL_VSIL_CURL_CACHE_SIZE}
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-      start_interval: 1s
-
-  # Light Worker 4 - processes lightweight units (radar/WRF) from the light queue
-  light-worker4:
-    image: tiles-processor
-    container_name: tiles-processor-light-worker4
+    container_name: tiles-processor-worker-light3
     stop_grace_period: 30s
     depends_on:
       rabbitmq:
