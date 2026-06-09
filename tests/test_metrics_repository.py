@@ -22,15 +22,17 @@ def _make_metrics(
     image_id: str = "img1",
     outcome: str = JobOutcome.SUCCESS.value,
     finished_at: str = "2026-06-04T00:00:44+00:00",
+    job_type: str = "goes19_abi_band_13",
+    product_label: str = "GOES ABI band_13 · Cloud Tops",
 ):
     return JobMetrics(
         work_unit_id="wu-1",
         image_id=image_id,
-        data_source_id="goes19_abi_band_13",
+        data_source_id=job_type,
         processor_id="goes_band_13",
         band_id="band_13",
-        job_type="goes19_abi_band_13",
-        product_label="GOES ABI band_13 · Cloud Tops",
+        job_type=job_type,
+        product_label=product_label,
         image_timestamp=image_id,
         outcome=outcome,
         worker_host="worker1",
@@ -87,6 +89,60 @@ def test_timing_series_groups_success_only(tmp_path):
     assert row["avg_total_s"] == 44.31
     assert row["p95_total_s"] is not None
     assert row["stages"]["georef"] == 3.2
+
+
+def test_summary_keeps_idle_types_in_window(tmp_path):
+    """A type with no jobs in the window still appears: zero counts, real last run."""
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    # Type A is inside the window; type B only ran before the cutoff.
+    repo.record(
+        _make_metrics("a", finished_at="2026-06-04T05:00:00+00:00", job_type="type_a")
+    )
+    repo.record(
+        _make_metrics(
+            "b",
+            finished_at="2026-06-04T00:00:00+00:00",
+            job_type="type_b",
+            product_label="Type B label",
+        )
+    )
+
+    summary = repo.summary(since="2026-06-04T04:00:00+00:00")
+    by_type = {s["job_type"]: s for s in summary}
+
+    assert set(by_type) == {"type_a", "type_b"}
+    # Active type: real counts/timings within the window.
+    assert by_type["type_a"]["counts"]["total"] == 1
+    assert by_type["type_a"]["total_s"]["avg"] is not None
+    # Idle type: zero counts, null timings, empty stages, but its real last run.
+    idle = by_type["type_b"]
+    assert idle["counts"]["total"] == 0
+    assert idle["error_rate"] == 0.0
+    assert idle["total_s"] == {"avg": None, "min": None, "max": None, "p95": None}
+    assert idle["stages"] == {}
+    assert idle["product_label"] == "Type B label"
+    assert idle["last_finished"] == "2026-06-04T00:00:00+00:00"
+    # Busiest first: the active type outranks the idle one.
+    assert summary[0]["job_type"] == "type_a"
+
+
+def test_summary_all_time_window_is_unchanged(tmp_path):
+    """With no window, every type is present from real rows — no padded duplicates."""
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    repo.record(_make_metrics("a", job_type="type_a"))
+    repo.record(_make_metrics("b", job_type="type_b"))
+
+    summary = repo.summary()
+    job_types = [s["job_type"] for s in summary]
+    assert sorted(job_types) == ["type_a", "type_b"]
+    assert len(job_types) == len(set(job_types))  # no duplicates from padding
+    assert all(s["counts"]["total"] == 1 for s in summary)
+
+
+def test_summary_empty_db_returns_empty(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    assert repo.summary() == []
+    assert repo.summary(since="2026-06-04T00:00:00+00:00") == []
 
 
 def test_recent_jobs_offset(tmp_path):

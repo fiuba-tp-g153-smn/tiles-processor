@@ -122,6 +122,21 @@ def test_summary_groups_by_type(client):
     assert by_type["radar_DBZH"]["counts"]["dlq"] == 1
 
 
+def test_summary_keeps_idle_types_when_window_empty(client):
+    """A narrow window with no recent jobs still lists every ever-seen type."""
+    # All seeded jobs are days old, so a 1h window is empty — yet every type
+    # must still appear with zero counts and its real last-run time.
+    s = client.get("/api/summary?hours=1").json()
+    by_type = {x["job_type"]: x for x in s}
+    assert set(by_type) == {"goes19_abi_band_13", "radar_DBZH"}
+    goes = by_type["goes19_abi_band_13"]
+    assert goes["counts"]["total"] == 0
+    assert goes["total_s"]["avg"] is None
+    assert goes["last_finished"] == "2026-06-04T02:00:44+00:00"
+    assert by_type["radar_DBZH"]["counts"]["total"] == 0
+    assert by_type["radar_DBZH"]["last_finished"] == "2026-06-04T05:00:03+00:00"
+
+
 def test_jobs_filters(client):
     assert len(client.get("/api/jobs?limit=10").json()) == 4
     dlq = client.get("/api/jobs?outcome=dlq").json()
