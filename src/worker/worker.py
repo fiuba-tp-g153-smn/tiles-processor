@@ -173,7 +173,7 @@ class Worker:  # pylint: disable=too-few-public-methods
             True if message should be acknowledged
         """
         logger.info("Processing: %s", work_unit)
-        collector = JobMetricsContext(work_unit)
+        collector = JobMetricsContext(work_unit, worker_host=self._config.WORKER_ID)
 
         try:
             # Run the async handler in the shared event loop

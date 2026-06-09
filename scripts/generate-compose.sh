@@ -235,6 +235,7 @@ for i in $(seq 1 "$NUM_WORKERS"); do
       - ${APP_DATA_VOLUME}
       - ./settings.json:/app/settings.json:ro
     environment:
+      - WORKER_ID=worker${i}
       - LOG_LEVEL=\${LOG_LEVEL}
       - DATA_DIR=\${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
@@ -285,6 +286,7 @@ for i in $(seq 1 "$NUM_LIGHT_WORKERS"); do
       - ${APP_DATA_VOLUME}
       - ./settings.json:/app/settings.json:ro
     environment:
+      - WORKER_ID=worker-light${i}
       - LOG_LEVEL=\${LOG_LEVEL}
       - DATA_DIR=\${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333

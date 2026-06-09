@@ -145,6 +145,7 @@ services:
       - ./data:${DATA_DIR}
       - ./data/radar_h5:${DATA_DIR}/radar_h5
     environment:
+      - WORKER_ID=worker1
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
@@ -193,6 +194,7 @@ services:
       - ./data:${DATA_DIR}
       - ./data/radar_h5:${DATA_DIR}/radar_h5
     environment:
+      - WORKER_ID=worker2
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
@@ -241,6 +243,7 @@ services:
       - ./data:${DATA_DIR}
       - ./data/radar_h5:${DATA_DIR}/radar_h5
     environment:
+      - WORKER_ID=worker-light1
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
@@ -289,6 +292,7 @@ services:
       - ./data:${DATA_DIR}
       - ./data/radar_h5:${DATA_DIR}/radar_h5
     environment:
+      - WORKER_ID=worker-light2
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333

@@ -141,6 +141,7 @@ services:
     volumes:
       - tiles_data:/app/data
     environment:
+      - WORKER_ID=worker1
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
@@ -188,6 +189,7 @@ services:
     volumes:
       - tiles_data:/app/data
     environment:
+      - WORKER_ID=worker2
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
@@ -235,6 +237,7 @@ services:
     volumes:
       - tiles_data:/app/data
     environment:
+      - WORKER_ID=worker-light1
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
@@ -282,6 +285,7 @@ services:
     volumes:
       - tiles_data:/app/data
     environment:
+      - WORKER_ID=worker-light2
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333

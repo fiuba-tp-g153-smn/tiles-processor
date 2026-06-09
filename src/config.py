@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import socket
 from pathlib import Path
 from typing import Any, Dict
 
@@ -59,6 +60,12 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.RABBITMQ_LIGHT_QUEUE: str = (
             os.getenv("RABBITMQ_LIGHT_QUEUE") or "tiles_light_queue"
         )
+
+        # Stable identifier for this worker, recorded as `worker_host` on every
+        # job so the dashboard can group the timeline by container (worker1,
+        # worker-light1, ...). Compose sets it per service; unset falls back to
+        # the host name, preserving the prior behavior for old deploys/dev runs.
+        self.WORKER_ID: str = os.getenv("WORKER_ID") or socket.gethostname()
 
         # Settings from JSON
         self.TIMEZONE: str = settings["timezone"]
@@ -257,6 +264,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("RABBITMQ_LIGHT_QUEUE: %s", self.RABBITMQ_LIGHT_QUEUE)
         logger.info("RABBITMQ_DLQ: %s", self.RABBITMQ_DLQ)
         logger.info("RABBITMQ_DLX: %s", self.RABBITMQ_DLX)
+        logger.info("WORKER_ID: %s", self.WORKER_ID)
         logger.info("LIGHT_QUEUE_ALL_RADAR: %s", self.LIGHT_QUEUE_ALL_RADAR)
         logger.info(
             "LIGHT_QUEUE_WRF_PRODUCTS: %s",
