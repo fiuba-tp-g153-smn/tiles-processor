@@ -5,23 +5,21 @@ from abc import abstractmethod
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from clients.s3_client import S3Client
 from data_sources.base import DataSource
+from data_sources.goes19_repository import Goes19FileRepository
 from models.band_config import BandConfig
 
 logger = logging.getLogger(__name__)
-
-# NOAA public bucket for GOES-19 data
-GOES19_BUCKET_NAME = "noaa-goes19"
 
 
 class Goes19BaseDataSource(DataSource):
     """
     Abstract base class for GOES-19 data sources.
 
-    Provides shared functionality for discovering and downloading data from
-    NOAA's GOES-19 public S3 bucket. Both ABI (imaging) and GLM (lightning)
-    data sources inherit from this class.
+    Provides shared functionality for discovering and downloading GOES-19
+    data via an injected repository (NOAA's public S3 bucket, a private
+    mirror, or a local folder with the same layout). Both ABI (imaging) and
+    GLM (lightning) data sources inherit from this class.
 
     The GOES-19 data is organized in hourly directories with the pattern:
     {product_path}/YYYY/JJJ/HH/ where JJJ is the day of year.
@@ -34,21 +32,19 @@ class Goes19BaseDataSource(DataSource):
         self,
         band_config: BandConfig,
         product_path: str,
-        max_concurrent_downloads: int = 6,
+        repository: Goes19FileRepository,
     ):
         """
         Initialize GOES-19 data source.
 
         Args:
             band_config: Band configuration (determines file pattern, output prefix, etc.)
-            product_path: S3 path prefix for the product (e.g., "ABI-L1b-RadF", "GLM-L2-LCFA")
-            max_concurrent_downloads: Maximum concurrent S3 downloads
+            product_path: Path prefix for the product (e.g., "ABI-L1b-RadF", "GLM-L2-LCFA")
+            repository: Storage backend the hourly directories are read from
         """
         self._band_config = band_config
         self._product_path = product_path
-        self._s3_client = S3Client(
-            GOES19_BUCKET_NAME, max_concurrent_downloads=max_concurrent_downloads
-        )
+        self._repository = repository
 
     @property
     def band_config(self) -> BandConfig:
@@ -69,7 +65,7 @@ class Goes19BaseDataSource(DataSource):
             file_pattern: Pattern to match files (e.g., "C13_G19", "OR_GLM-L2-LCFA")
 
         Returns:
-            List of S3 keys for all matching files found
+            List of source URIs for all matching files found
         """
         all_candidates = []
         hours_back = 0
@@ -79,7 +75,7 @@ class Goes19BaseDataSource(DataSource):
             directory_path = self._build_directory_path(search_time)
 
             try:
-                files = await self._s3_client.list_files(
+                files = await self._repository.list_files(
                     directory_path, file_pattern=file_pattern
                 )
                 all_candidates.extend(files)
@@ -97,7 +93,7 @@ class Goes19BaseDataSource(DataSource):
 
     def _build_directory_path(self, time: datetime) -> str:
         """
-        Build the S3 directory path for a given time.
+        Build the hourly directory path for a given time.
 
         GOES-19 data is organized by year, day-of-year, and hour:
         {product_path}/YYYY/JJJ/HH/
@@ -106,14 +102,14 @@ class Goes19BaseDataSource(DataSource):
             time: The datetime to build a path for
 
         Returns:
-            S3 directory path string
+            Directory path string (S3 key prefix or path under the local input dir)
         """
         return f"{self._product_path}/{time.strftime('%Y/%j/%H')}"
 
     @abstractmethod
     async def download(self, source_uri: str, dest_path) -> Path:
         """
-        Download data from NOAA's S3 bucket.
+        Download data from the configured backend.
 
         Must be implemented by subclasses to handle their specific download patterns.
         """

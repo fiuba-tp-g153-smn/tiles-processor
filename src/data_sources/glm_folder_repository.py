@@ -10,6 +10,8 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from clients.s3_client import S3Client
+from data_sources.s3_repository_utils import filter_keys_by_glob, strip_s3_scheme
 
 GLM_FOLDER_FILENAME_GLOB = "CG_GLM-L2-GLMF-*.nc"
 
@@ -68,4 +70,35 @@ class LocalGlmFolderFileRepository(GlmFolderFileRepository):
                 shutil.copy2(source_path, dest_dir / source_path.name)
 
         await asyncio.to_thread(_copy_all)
+        return dest_dir
+
+
+class S3GlmFolderFileRepository(GlmFolderFileRepository):
+    """Reads CG_GLM-L2-GLMF netCDF files from an S3 bucket.
+
+    Lists recursively under the configured prefix (a superset of the local
+    flat + one-subdir-level rule) and filters by the same filename glob.
+    URIs are plain S3 keys; sorting stays chronological because the timestamp
+    dominates the basename.
+    """
+
+    def __init__(self, s3_client: S3Client, prefix: str = "") -> None:
+        self._s3_client = s3_client
+        self._prefix = prefix
+
+    async def list_files(self) -> list[str]:
+        keys = await self._s3_client.list_files(self._prefix, file_pattern="")
+        return filter_keys_by_glob(keys, GLM_FOLDER_FILENAME_GLOB)
+
+    async def download_to_dir(self, source_uris: list[str], dest_dir: Path) -> Path:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        # The S3Client's internal semaphore bounds download concurrency.
+        await asyncio.gather(
+            *(
+                self._s3_client.download_to_file(
+                    strip_s3_scheme(uri), dest_dir / Path(uri).name
+                )
+                for uri in source_uris
+            )
+        )
         return dest_dir

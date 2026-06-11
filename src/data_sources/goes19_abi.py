@@ -6,6 +6,7 @@ from pathlib import Path
 
 from data_sources.base import ImageInfo, DiscoveryConfig
 from data_sources.goes19_base import Goes19BaseDataSource
+from data_sources.goes19_repository import Goes19FileRepository
 from models.band_config import BandConfig
 
 logger = logging.getLogger(__name__)
@@ -13,28 +14,30 @@ logger = logging.getLogger(__name__)
 
 class Goes19AbiDataSource(Goes19BaseDataSource):
     """
-    Data source for GOES-19 ABI satellite imagery from NOAA's public S3 bucket.
+    Data source for GOES-19 ABI satellite imagery.
 
     This data source:
     - Discovers images from the ABI-L1b-RadF product path
-    - Downloads NetCDF files from the unsigned public bucket
+    - Downloads NetCDF files via the injected repository (NOAA's public S3
+      bucket by default, or a local folder with the same layout)
     - Supports different bands (band_13, band_9, band_2, etc.)
     """
 
     # Discovery parameters
     TARGET_IMAGES = 24  # ~4 hours at 10-min intervals
 
-    def __init__(self, band_config: BandConfig):
+    def __init__(self, band_config: BandConfig, repository: Goes19FileRepository):
         """
         Initialize GOES-19 ABI data source for a specific band.
 
         Args:
             band_config: Band configuration (determines file pattern, output prefix, etc.)
+            repository: Storage backend the ABI files are read from
         """
         super().__init__(
             band_config=band_config,
             product_path="ABI-L1b-RadF",
-            max_concurrent_downloads=6,
+            repository=repository,
         )
 
     @property
@@ -106,25 +109,15 @@ class Goes19AbiDataSource(Goes19BaseDataSource):
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         """
-        Download an image from NOAA's S3 bucket.
+        Download an image via the configured repository.
 
         Args:
-            source_uri: S3 key of the file to download
+            source_uri: S3 key or local path of the file to download
             dest_path: Local path to save the downloaded file
 
         Returns:
             Path to the downloaded file.
         """
-        # Handle full URI format (s3://bucket/key) or just key
-        if source_uri.startswith("s3://"):
-            parts = source_uri.replace("s3://", "").split("/", 1)
-            s3_key = parts[1] if len(parts) > 1 else parts[0]
-        else:
-            s3_key = source_uri
-
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-
-        await self._s3_client.download_to_file(s3_key, dest_path)
-        logger.info("[%s] Downloaded to %s", self.source_id, dest_path)
-
-        return dest_path
+        dest = await self._repository.download(source_uri, dest_path)
+        logger.info("[%s] Downloaded to %s", self.source_id, dest)
+        return dest

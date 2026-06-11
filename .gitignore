@@ -17,3 +17,4 @@ benchmark_results/
 data_s3/
 data_s3*/
 sftpgo/
+.fuse_*

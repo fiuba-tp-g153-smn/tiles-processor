@@ -179,6 +179,122 @@ class TestConfig:
             assert config.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE == 0.1
             assert config.ECMWF_MSLP_SMOOTHING_SIGMA == 1.5
 
+    def test_input_sources_default_to_local(self, temp_settings_file, env_vars):
+        """Radar/GLM/WRF default to local mode; GOES-19 defaults to NOAA S3."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+
+            assert config.RADAR_INPUT.mode == "local"
+            assert config.RADAR_INPUT.input_dir == "/tmp/test/radar_h5"
+            assert config.GLM_FOLDER_INPUT.mode == "local"
+            assert config.WRF_INPUT.mode == "local"
+            assert config.GOES19_INPUT.mode == "s3"
+            assert config.GOES19_INPUT.s3_bucket == "noaa-goes19"
+            assert config.GOES19_INPUT.s3_endpoint is None
+            assert config.GOES19_INPUT.s3_access_key is None
+
+    def test_input_source_dir_aliases_match(self, temp_settings_file, env_vars):
+        """Legacy *_INPUT_DIR attributes alias the InputSourceConfig values."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+
+            assert config.RADAR_INPUT_DIR == config.RADAR_INPUT.input_dir
+            assert config.GLM_FOLDER_INPUT_DIR == config.GLM_FOLDER_INPUT.input_dir
+            assert config.WRF_INPUT_DIR == config.WRF_INPUT.input_dir
+
+    def test_input_source_s3_mode_from_settings(self, tmp_path, env_vars):
+        """S3 mode settings are parsed per source from settings.json."""
+        settings = {
+            "timezone": "UTC",
+            "features": {},
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "radar_input_mode": "s3",
+            "radar_s3_bucket": "radar-input",
+            "radar_s3_endpoint": "seaweedfs:8333",
+            "radar_s3_prefix": "radar_h5/",
+            "radar_s3_secure": True,
+        }
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(json.dumps(settings))
+
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=settings_path)
+
+            assert config.RADAR_INPUT.is_s3
+            assert config.RADAR_INPUT.s3_bucket == "radar-input"
+            assert config.RADAR_INPUT.s3_endpoint == "seaweedfs:8333"
+            assert config.RADAR_INPUT.s3_prefix == "radar_h5/"
+            assert config.RADAR_INPUT.s3_secure is True
+            assert config.GLM_FOLDER_INPUT.mode == "local"
+
+    def test_input_source_credentials_from_env(self, tmp_path, env_vars):
+        """Per-source S3 credentials come from {NAME}_S3_* env vars."""
+        settings = {
+            "timezone": "UTC",
+            "features": {},
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "wrf_input_mode": "s3",
+            "wrf_s3_bucket": "wrf-input",
+        }
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(json.dumps(settings))
+        env = {**env_vars, "WRF_S3_ACCESS_KEY": "ak", "WRF_S3_SECRET_KEY": "sk"}
+
+        with mock.patch.dict(os.environ, env, clear=True):
+            config = Config(settings_path=settings_path)
+
+            assert config.WRF_INPUT.s3_access_key == "ak"
+            assert config.WRF_INPUT.s3_secret_key == "sk"
+
+    def test_input_source_rejects_invalid_mode(self, tmp_path, env_vars):
+        """An unknown input mode fails fast."""
+        settings = {
+            "timezone": "UTC",
+            "features": {},
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "radar_input_mode": "ftp",
+        }
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(json.dumps(settings))
+
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(ValueError, match="radar_input_mode"):
+                Config(settings_path=settings_path)
+
+    def test_input_source_s3_mode_requires_bucket(self, tmp_path, env_vars):
+        """Mode s3 without a bucket fails fast."""
+        settings = {
+            "timezone": "UTC",
+            "features": {},
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "glm_folder_input_mode": "s3",
+        }
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(json.dumps(settings))
+
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(ValueError, match="glm_folder_s3_bucket"):
+                Config(settings_path=settings_path)
+
+    def test_input_source_rejects_half_set_credentials(
+        self, temp_settings_file, env_vars
+    ):
+        """Only one of access/secret key set fails fast instead of going anonymous."""
+        env = {**env_vars, "RADAR_S3_ACCESS_KEY": "ak"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ValueError, match="RADAR_S3_ACCESS_KEY"):
+                Config(settings_path=temp_settings_file)
+
+    def test_input_source_empty_env_credentials_are_anonymous(
+        self, temp_settings_file, env_vars
+    ):
+        """Compose-supplied empty credential strings normalize to anonymous."""
+        env = {**env_vars, "GOES19_S3_ACCESS_KEY": "", "GOES19_S3_SECRET_KEY": ""}
+        with mock.patch.dict(os.environ, env, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            assert config.GOES19_INPUT.s3_access_key is None
+            assert config.GOES19_INPUT.s3_secret_key is None
+
     def test_ecmwf_mslp_settings_loaded_from_file(self, tmp_path, env_vars):
         """All three MSLP settings are read from settings.json when present."""
         settings = {

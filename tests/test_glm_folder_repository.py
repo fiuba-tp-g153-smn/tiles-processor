@@ -1,8 +1,13 @@
-"""Tests for LocalGlmFolderFileRepository."""
+"""Tests for LocalGlmFolderFileRepository and S3GlmFolderFileRepository."""
+
+from unittest.mock import AsyncMock, call
 
 import pytest
 
-from data_sources.glm_folder_repository import LocalGlmFolderFileRepository
+from data_sources.glm_folder_repository import (
+    LocalGlmFolderFileRepository,
+    S3GlmFolderFileRepository,
+)
 
 
 def _make_file(parent, name, payload=b""):
@@ -96,3 +101,51 @@ async def test_download_to_dir_raises_for_missing_source(tmp_path):
     repo = LocalGlmFolderFileRepository(tmp_path)
     with pytest.raises(FileNotFoundError):
         await repo.download_to_dir([str(tmp_path / "missing.nc")], tmp_path / "out")
+
+
+@pytest.mark.asyncio
+async def test_s3_list_files_filters_by_glob_and_sorts():
+    s3_client = AsyncMock()
+    s3_client.list_files.return_value = [
+        "glm_h5/20260303/CG_GLM-L2-GLMF-M3_G19_s20260621400000_e1_c1.nc",
+        "glm_h5/notes.txt",
+        "glm_h5/20260302/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+    ]
+    repo = S3GlmFolderFileRepository(s3_client, prefix="glm_h5/")
+
+    files = await repo.list_files()
+
+    s3_client.list_files.assert_awaited_once_with("glm_h5/", file_pattern="")
+    assert files == [
+        "glm_h5/20260302/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+        "glm_h5/20260303/CG_GLM-L2-GLMF-M3_G19_s20260621400000_e1_c1.nc",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_s3_download_to_dir_preserves_basenames(tmp_path):
+    s3_client = AsyncMock()
+    repo = S3GlmFolderFileRepository(s3_client)
+    dest = tmp_path / "window"
+    uris = [
+        "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+        "s3://glm-input/glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
+    ]
+
+    result = await repo.download_to_dir(uris, dest)
+
+    assert result == dest
+    assert dest.exists()
+    s3_client.download_to_file.assert_has_awaits(
+        [
+            call(
+                "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+                dest / "CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+            ),
+            call(
+                "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
+                dest / "CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
+            ),
+        ],
+        any_order=True,
+    )

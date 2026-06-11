@@ -4,6 +4,9 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from clients.s3_client import S3Client
+from data_sources.s3_repository_utils import strip_s3_scheme
+
 
 class RadarFileRepository(ABC):
     """Interface for radar file storage backends."""
@@ -55,4 +58,29 @@ class LocalRadarFileRepository(RadarFileRepository):
         dest_with_ext = dest_path.with_suffix(".H5")
         dest_with_ext.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, dest_with_ext)
+        return dest_with_ext
+
+
+class S3RadarFileRepository(RadarFileRepository):
+    """Reads H5 files from an S3 bucket mirroring the local folder layout.
+
+    Lists recursively under the configured prefix (a superset of the local
+    flat + one-subdir-level rule); URIs are plain S3 keys so the basename
+    parsing in discovery keeps working.
+    """
+
+    def __init__(self, s3_client: S3Client, prefix: str = "") -> None:
+        self._s3_client = s3_client
+        self._prefix = prefix
+
+    async def list_files(self) -> list[str]:
+        keys = await self._s3_client.list_files(self._prefix, file_pattern="")
+        return sorted(k for k in keys if k.lower().endswith(".h5"))
+
+    async def download(self, source_uri: str, dest_path: Path) -> Path:
+        dest_with_ext = dest_path.with_suffix(".H5")
+        dest_with_ext.parent.mkdir(parents=True, exist_ok=True)
+        await self._s3_client.download_to_file(
+            strip_s3_scheme(source_uri), dest_with_ext
+        )
         return dest_with_ext

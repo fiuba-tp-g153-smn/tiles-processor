@@ -7,6 +7,12 @@ import socket
 from pathlib import Path
 from typing import Any, Dict
 
+from models.input_source_config import (
+    INPUT_MODE_LOCAL,
+    INPUT_MODE_S3,
+    InputSourceConfig,
+)
+
 
 class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
     """Application configuration from environment variables and settings.json.
@@ -109,16 +115,32 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # Empty disables writes (they fail closed with 503). Reads stay open.
         self.METRICS_API_KEY: str = os.getenv("METRICS_API_KEY", "")
 
-        # Radar Configuration
-        # Path to directory containing .H5 radar files
-        self.RADAR_INPUT_DIR: str = settings.get(
-            "radar_input_dir", str(Path(self.DATA_DIR) / "radar_h5")
+        # Per-source input configuration (local folder or S3 bucket with the
+        # same layout). Mode/bucket/endpoint/prefix come from settings.json;
+        # credentials from {NAME}_S3_ACCESS_KEY/_SECRET_KEY env vars.
+        self.RADAR_INPUT: InputSourceConfig = self._parse_input_source(
+            settings, "radar", default_dir=str(Path(self.DATA_DIR) / "radar_h5")
+        )
+        self.GLM_FOLDER_INPUT: InputSourceConfig = self._parse_input_source(
+            settings, "glm_folder", default_dir=str(Path(self.DATA_DIR) / "glm_h5")
+        )
+        self.WRF_INPUT: InputSourceConfig = self._parse_input_source(
+            settings, "wrf", default_dir=str(Path(self.DATA_DIR) / "wrf_nc")
+        )
+        self.GOES19_INPUT: InputSourceConfig = self._parse_input_source(
+            settings,
+            "goes19",
+            default_dir=str(Path(self.DATA_DIR) / "goes19"),
+            default_mode=INPUT_MODE_S3,
+            default_bucket="noaa-goes19",
         )
 
+        # Radar Configuration
+        # Path to directory containing .H5 radar files
+        self.RADAR_INPUT_DIR: str = self.RADAR_INPUT.input_dir
+
         # GLM Folder Configuration (pre-gridded CG_GLM-L2-GLMF netCDFs)
-        self.GLM_FOLDER_INPUT_DIR: str = settings.get(
-            "glm_folder_input_dir", str(Path(self.DATA_DIR) / "glm_h5")
-        )
+        self.GLM_FOLDER_INPUT_DIR: str = self.GLM_FOLDER_INPUT.input_dir
         self.GLM_ACCUM_MINUTES: int = int(settings.get("glm_accum_minutes", 10))
         self.GLM_PRODUCE_EVERY_MINUTES: int = int(
             settings.get("glm_produce_every_minutes", 10)
@@ -141,9 +163,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
                 "Granizo",
             ]
         }
-        self.WRF_INPUT_DIR: str = settings.get(
-            "wrf_input_dir", str(Path(self.DATA_DIR) / "wrf_nc")
-        )
+        self.WRF_INPUT_DIR: str = self.WRF_INPUT.input_dir
 
         # Light-queue routing (settings.json). Units matching these go to the
         # light queue so a larger pool of cheap workers can drain them in
@@ -180,6 +200,44 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.BOUNDS_MINY: float = settings["bounds"]["miny"]  # South latitude
         self.BOUNDS_MAXX: float = settings["bounds"]["maxx"]  # East longitude
         self.BOUNDS_MAXY: float = settings["bounds"]["maxy"]  # North latitude
+
+    @staticmethod
+    def _parse_input_source(
+        settings: Dict[str, Any],
+        name: str,
+        *,
+        default_dir: str,
+        default_mode: str = INPUT_MODE_LOCAL,
+        default_bucket: str | None = None,
+    ) -> InputSourceConfig:
+        """Parse one source's input config from settings.json + env credentials."""
+        mode = settings.get(f"{name}_input_mode", default_mode)
+        if mode not in (INPUT_MODE_LOCAL, INPUT_MODE_S3):
+            raise ValueError(f"{name}_input_mode must be 'local' or 's3', got '{mode}'")
+        bucket = settings.get(f"{name}_s3_bucket", default_bucket)
+        if mode == INPUT_MODE_S3 and not bucket:
+            raise ValueError(
+                f"{name}_input_mode is 's3' but {name}_s3_bucket is not set"
+            )
+        # `or None` normalizes compose-supplied empty strings to unset.
+        access_key = os.getenv(f"{name.upper()}_S3_ACCESS_KEY") or None
+        secret_key = os.getenv(f"{name.upper()}_S3_SECRET_KEY") or None
+        if bool(access_key) != bool(secret_key):
+            # S3Client silently falls back to anonymous on a half-set pair.
+            raise ValueError(
+                f"{name.upper()}_S3_ACCESS_KEY and {name.upper()}_S3_SECRET_KEY "
+                "must be set together (or neither, for anonymous access)"
+            )
+        return InputSourceConfig(
+            mode=mode,
+            input_dir=settings.get(f"{name}_input_dir", default_dir),
+            s3_bucket=bucket,
+            s3_endpoint=settings.get(f"{name}_s3_endpoint") or None,
+            s3_prefix=settings.get(f"{name}_s3_prefix", ""),
+            s3_secure=bool(settings.get(f"{name}_s3_secure", False)),
+            s3_access_key=access_key,
+            s3_secret_key=secret_key,
+        )
 
     @staticmethod
     def _get_required_env(key: str) -> str:
@@ -237,6 +295,23 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             logger.info("ENABLE_RADAR_%s: %s", pid, enabled)
         logger.info("RADAR_INPUT_DIR: %s", self.RADAR_INPUT_DIR)
         logger.info("GLM_FOLDER_INPUT_DIR: %s", self.GLM_FOLDER_INPUT_DIR)
+        for name, src in (
+            ("RADAR", self.RADAR_INPUT),
+            ("GLM_FOLDER", self.GLM_FOLDER_INPUT),
+            ("WRF", self.WRF_INPUT),
+            ("GOES19", self.GOES19_INPUT),
+        ):
+            logger.info(
+                "%s_INPUT: mode=%s dir=%s bucket=%s endpoint=%s prefix=%s "
+                "credentials=%s",
+                name,
+                src.mode,
+                src.input_dir,
+                src.s3_bucket,
+                src.s3_endpoint,
+                src.s3_prefix,
+                "set" if src.s3_access_key else "anonymous",
+            )
         logger.info("GLM_ACCUM_MINUTES: %s", self.GLM_ACCUM_MINUTES)
         logger.info("GLM_PRODUCE_EVERY_MINUTES: %s", self.GLM_PRODUCE_EVERY_MINUTES)
         logger.info("GLM_RESOLUTION_DEG: %s", self.GLM_RESOLUTION_DEG)
