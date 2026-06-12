@@ -27,18 +27,61 @@ class FakeClient:
         self.closed = True
 
 
+def _monitor(factory, **kwargs):
+    return QueueDepthMonitor(
+        factory, "work", "dlq", "radar_light", "wrf_light", **kwargs
+    )
+
+
+def _depths(radar, wrf, *, work, dlq):
+    """The per-queue sizes a FakeClient should report."""
+    return {"work": work, "radar_light": radar, "wrf_light": wrf, "dlq": dlq}
+
+
+def _reachable(radar, wrf, *, work, dlq):
+    """The depths() result for reachable queues (light = radar + wrf)."""
+    return {
+        "work": work,
+        "radar_light": radar,
+        "wrf_light": wrf,
+        "light": radar + wrf,
+        "dlq": dlq,
+    }
+
+
+_UNREACHABLE = {
+    "work": None,
+    "radar_light": None,
+    "wrf_light": None,
+    "light": None,
+    "dlq": None,
+}
+
+
 def test_reuses_one_connection_across_polls():
     calls = []
 
     def factory():
         calls.append(1)
-        return FakeClient({"work": 3, "light": 5, "dlq": 1})
+        return FakeClient(_depths(2, 3, work=3, dlq=1))
 
-    monitor = QueueDepthMonitor(factory, "work", "dlq", "light")
+    monitor = _monitor(factory)
     try:
-        assert monitor.depths() == {"work": 3, "light": 5, "dlq": 1}
-        assert monitor.depths() == {"work": 3, "light": 5, "dlq": 1}
+        assert monitor.depths() == _reachable(2, 3, work=3, dlq=1)
+        assert monitor.depths() == _reachable(2, 3, work=3, dlq=1)
         assert len(calls) == 1  # connection reused, not reconnected each poll
+    finally:
+        monitor.close()
+
+
+def test_combines_light_queues_into_one_total():
+    """The `light` key is the radar+wrf sum (the dashboard's single tile)."""
+    monitor = _monitor(lambda: FakeClient(_depths(4, 6, work=1, dlq=0)))
+    try:
+        depths = monitor.depths()
+        assert depths["radar_light"] == 4
+        assert depths["wrf_light"] == 6
+        assert depths["light"] == 10
     finally:
         monitor.close()
 
@@ -47,11 +90,11 @@ def test_reconnects_when_connection_drops():
     made = []
 
     def factory():
-        client = FakeClient({"work": 1, "light": 2, "dlq": 0})
+        client = FakeClient(_depths(1, 1, work=1, dlq=0))
         made.append(client)
         return client
 
-    monitor = QueueDepthMonitor(factory, "work", "dlq", "light")
+    monitor = _monitor(factory)
     try:
         monitor.depths()
         made[-1].is_connected = False  # simulate the broker dropping the connection
@@ -66,22 +109,14 @@ def test_read_failure_reconnects_next_poll_without_backoff():
     made = []
 
     def factory():
-        client = FakeClient({"work": 5, "light": 7, "dlq": 2}, fail_read=not made)
+        client = FakeClient(_depths(3, 4, work=5, dlq=2), fail_read=not made)
         made.append(client)
         return client
 
-    monitor = QueueDepthMonitor(factory, "work", "dlq", "light")
+    monitor = _monitor(factory)
     try:
-        assert monitor.depths() == {
-            "work": None,
-            "light": None,
-            "dlq": None,
-        }  # first read fails -> n/a
-        assert monitor.depths() == {
-            "work": 5,
-            "light": 7,
-            "dlq": 2,
-        }  # reconnects immediately
+        assert monitor.depths() == _UNREACHABLE  # first read fails -> n/a
+        assert monitor.depths() == _reachable(3, 4, work=5, dlq=2)  # reconnects
         assert len(made) == 2
     finally:
         monitor.close()
@@ -91,11 +126,11 @@ def test_logs_on_reconnect(caplog):
     made = []
 
     def factory():
-        client = FakeClient({"work": 1, "light": 2, "dlq": 0})
+        client = FakeClient(_depths(1, 1, work=1, dlq=0))
         made.append(client)
         return client
 
-    monitor = QueueDepthMonitor(factory, "work", "dlq", "light")
+    monitor = _monitor(factory)
     try:
         monitor.depths()
         made[-1].is_connected = False  # broker dropped the connection
@@ -107,10 +142,7 @@ def test_logs_on_reconnect(caplog):
 
 
 def test_no_reconnect_log_on_first_connect(caplog):
-    def factory():
-        return FakeClient({"work": 3, "light": 5, "dlq": 1})
-
-    monitor = QueueDepthMonitor(factory, "work", "dlq", "light")
+    monitor = _monitor(lambda: FakeClient(_depths(2, 3, work=3, dlq=1)))
     try:
         with caplog.at_level(logging.INFO):
             monitor.depths()
@@ -127,20 +159,18 @@ def test_degrades_and_backs_off_when_broker_down():
         calls.append(1)
         raise RuntimeError("broker down")
 
-    monitor = QueueDepthMonitor(
-        factory, "work", "dlq", "light", monotonic=lambda: clock["t"]
-    )
+    monitor = _monitor(factory, monotonic=lambda: clock["t"])
     try:
-        assert monitor.depths() == {"work": None, "light": None, "dlq": None}
+        assert monitor.depths() == _UNREACHABLE
         assert len(calls) == 1
 
         # Within the backoff window: returns n/a without re-attempting a connect.
-        assert monitor.depths() == {"work": None, "light": None, "dlq": None}
+        assert monitor.depths() == _UNREACHABLE
         assert len(calls) == 1
 
         # After the backoff elapses: tries to connect again.
         clock["t"] = QueueDepthMonitor._RECONNECT_BACKOFF_S + 1
-        assert monitor.depths() == {"work": None, "light": None, "dlq": None}
+        assert monitor.depths() == _UNREACHABLE
         assert len(calls) == 2
     finally:
         monitor.close()

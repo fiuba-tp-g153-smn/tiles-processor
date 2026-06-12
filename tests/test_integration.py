@@ -158,9 +158,9 @@ class TestWorkerIntegration:
                 band_id="band_13",
             )
 
-            # Process (light unit stolen by a normal worker: came from light queue)
+            # Process (light unit stolen by a normal worker: came from a light queue)
             result = worker._process_message(
-                work_unit, mock_rabbitmq, 1, "tiles_light_queue"
+                work_unit, mock_rabbitmq, 1, "tiles_radar_light_queue"
             )
 
             # Should still acknowledge (to remove original message)
@@ -172,7 +172,7 @@ class TestWorkerIntegration:
             retry_unit = mock_rabbitmq.publish.call_args[0][0]
             assert retry_unit.retry_count == 1
             assert mock_rabbitmq.publish.call_args.kwargs["queue_name"] == (
-                "tiles_light_queue"
+                "tiles_radar_light_queue"
             )
 
     def test_worker_sends_to_dlq_after_max_retries(

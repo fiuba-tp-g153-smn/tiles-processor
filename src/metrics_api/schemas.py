@@ -161,10 +161,17 @@ class TimingSeriesPoint(BaseModel):
 
 
 class QueueDepths(BaseModel):
-    """RabbitMQ queue depths; ``null`` when the broker is unreachable."""
+    """RabbitMQ queue depths; ``null`` when the broker is unreachable.
+
+    ``light`` is the radar+wrf sum, kept for the dashboard's single light tile;
+    ``radar_light``/``wrf_light`` expose the split queues introduced to keep the
+    two from head-of-line blocking each other.
+    """
 
     work: int | None = None
     light: int | None = None
+    radar_light: int | None = None
+    wrf_light: int | None = None
     dlq: int | None = None
 
 
@@ -187,7 +194,13 @@ class LiveStatus(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "queues": {"work": 3, "light": 5, "dlq": 0},
+                "queues": {
+                    "work": 3,
+                    "light": 5,
+                    "radar_light": 2,
+                    "wrf_light": 3,
+                    "dlq": 0,
+                },
                 "in_progress": [
                     {
                         "image_id": "RMA12_DBZH_20260114T170328Z",

@@ -144,7 +144,10 @@ def _make_rabbitmq_connector(config: Config) -> Callable[[], RabbitMQClient]:
             queue_name=config.RABBITMQ_QUEUE,
             dlq_name=config.RABBITMQ_DLQ,
             dlx_name=config.RABBITMQ_DLX,
-            light_queue_name=config.RABBITMQ_LIGHT_QUEUE,
+            extra_queue_names=[
+                config.RABBITMQ_RADAR_LIGHT_QUEUE,
+                config.RABBITMQ_WRF_LIGHT_QUEUE,
+            ],
         )
         client.connect(max_retries=1, retry_delay=0)
         return client
@@ -172,7 +175,8 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
         _make_rabbitmq_connector(config),
         config.RABBITMQ_QUEUE,
         config.RABBITMQ_DLQ,
-        config.RABBITMQ_LIGHT_QUEUE,
+        config.RABBITMQ_RADAR_LIGHT_QUEUE,
+        config.RABBITMQ_WRF_LIGHT_QUEUE,
     )
 
     @asynccontextmanager

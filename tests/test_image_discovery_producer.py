@@ -24,7 +24,8 @@ def _make_router() -> QueueRouter:
     """Router where GOES units map to the normal queue (no WRF products light)."""
     return QueueRouter(
         normal_queue="tiles_work_queue",
-        light_queue="tiles_light_queue",
+        radar_light_queue="tiles_radar_light_queue",
+        wrf_light_queue="tiles_wrf_light_queue",
         all_radar_light=True,
         light_wrf_products=frozenset(),
     )
@@ -266,7 +267,8 @@ class TestOrphanReclaim:
         tracker.mark_in_progress("orphan", "band_13")
 
         mock_config.RABBITMQ_QUEUE = "tiles_work_queue"
-        mock_config.RABBITMQ_LIGHT_QUEUE = "tiles_light_queue"
+        mock_config.RABBITMQ_RADAR_LIGHT_QUEUE = "tiles_radar_light_queue"
+        mock_config.RABBITMQ_WRF_LIGHT_QUEUE = "tiles_wrf_light_queue"
         mq_client = MagicMock()
         mq_client.get_queue_size.return_value = 0  # both queues drained
 
@@ -282,7 +284,8 @@ class TestOrphanReclaim:
         tracker.mark_in_progress("orphan", "band_13")
 
         mock_config.RABBITMQ_QUEUE = "tiles_work_queue"
-        mock_config.RABBITMQ_LIGHT_QUEUE = "tiles_light_queue"
+        mock_config.RABBITMQ_RADAR_LIGHT_QUEUE = "tiles_radar_light_queue"
+        mock_config.RABBITMQ_WRF_LIGHT_QUEUE = "tiles_wrf_light_queue"
         mq_client = MagicMock()
         mq_client.get_queue_size.return_value = 5  # backlog (e.g. cold start)
 

@@ -11,7 +11,8 @@ from models.work_unit import WorkUnit
 from producer.queue_router import QueueRouter
 
 NORMAL = "tiles_work_queue"
-LIGHT = "tiles_light_queue"
+RADAR_LIGHT = "tiles_radar_light_queue"
+WRF_LIGHT = "tiles_wrf_light_queue"
 
 # Every WRF product currently shipped (settings.json light_queue.wrf).
 ALL_WRF_PRODUCTS = frozenset(
@@ -33,7 +34,8 @@ ALL_WRF_PRODUCTS = frozenset(
 def _router(*, all_radar_light: bool = True, wrf=ALL_WRF_PRODUCTS) -> QueueRouter:
     return QueueRouter(
         normal_queue=NORMAL,
-        light_queue=LIGHT,
+        radar_light_queue=RADAR_LIGHT,
+        wrf_light_queue=WRF_LIGHT,
         all_radar_light=all_radar_light,
         light_wrf_products=frozenset(wrf),
     )
@@ -55,15 +57,23 @@ def _unit(data_source_id: str, processor_id: str) -> WorkUnit:
     "data_source_id",
     ["radar_DBZH", "radar_VRAD", "radar_ZDR", "radar_RHOHV", "radar_KDP"],
 )
-def test_radar_units_go_to_light_queue(data_source_id):
+def test_radar_units_go_to_radar_light_queue(data_source_id):
     router = _router()
-    assert router.route(_unit(data_source_id, "radar")) == LIGHT
+    assert router.route(_unit(data_source_id, "radar")) == RADAR_LIGHT
 
 
 @pytest.mark.parametrize("product_id", sorted(ALL_WRF_PRODUCTS))
-def test_configured_wrf_units_go_to_light_queue(product_id):
+def test_configured_wrf_units_go_to_wrf_light_queue(product_id):
     router = _router()
-    assert router.route(_unit(f"wrf_{product_id}", "wrf")) == LIGHT
+    assert router.route(_unit(f"wrf_{product_id}", "wrf")) == WRF_LIGHT
+
+
+def test_three_way_split():
+    """Radar, configured WRF and heavy units each land on their own queue."""
+    router = _router()
+    assert router.route(_unit("radar_DBZH", "radar")) == RADAR_LIGHT
+    assert router.route(_unit("wrf_Colmax", "wrf")) == WRF_LIGHT
+    assert router.route(_unit("glm_folder", "glm_fed")) == NORMAL
 
 
 @pytest.mark.parametrize(
@@ -83,7 +93,7 @@ def test_heavy_units_go_to_normal_queue(data_source_id, processor_id):
 def test_wrf_product_absent_from_config_goes_to_normal_queue():
     """Config-driven membership: a WRF product not in the set stays normal."""
     router = _router(wrf={"Colmax"})  # only Colmax is light
-    assert router.route(_unit("wrf_Colmax", "wrf")) == LIGHT
+    assert router.route(_unit("wrf_Colmax", "wrf")) == WRF_LIGHT
     assert router.route(_unit("wrf_Granizo", "wrf")) == NORMAL
 
 

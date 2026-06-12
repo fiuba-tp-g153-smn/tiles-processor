@@ -119,19 +119,24 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         return total_published
 
     def _work_queue_empty(self) -> bool:
-        """True only if both work queues are confirmed drained.
+        """True only if all work queues are confirmed drained.
 
-        Both the normal and light queues must be empty: during a cold start the
+        The normal and both light queues must be empty: during a cold start a
         light queue can hold a large backlog while the normal queue momentarily
-        drains, and an orphan in-progress row may belong to either queue.
+        drains, and an orphan in-progress row may belong to any queue.
 
         Fail-safe: if a depth can't be read, treat the queues as non-empty so we
         never reclaim in-progress rows on uncertainty.
         """
         try:
             normal = self._mq_client.get_queue_size(self._config.RABBITMQ_QUEUE)
-            light = self._mq_client.get_queue_size(self._config.RABBITMQ_LIGHT_QUEUE)
-            return normal == 0 and light == 0
+            radar_light = self._mq_client.get_queue_size(
+                self._config.RABBITMQ_RADAR_LIGHT_QUEUE
+            )
+            wrf_light = self._mq_client.get_queue_size(
+                self._config.RABBITMQ_WRF_LIGHT_QUEUE
+            )
+            return normal == 0 and radar_light == 0 and wrf_light == 0
         except Exception:  # pylint: disable=broad-exception-caught
             logger.warning(
                 "Could not read work queue depth; skipping orphan reclaim",
@@ -386,10 +391,12 @@ def run_producer(config: Config) -> None:
     )
     health_server.start()
 
-    # Routing policy: radar + configured WRF products go to the light queue.
+    # Routing policy: all radar -> radar light queue; configured WRF products
+    # -> WRF light queue; everything else -> normal queue.
     router = QueueRouter(
         normal_queue=config.RABBITMQ_QUEUE,
-        light_queue=config.RABBITMQ_LIGHT_QUEUE,
+        radar_light_queue=config.RABBITMQ_RADAR_LIGHT_QUEUE,
+        wrf_light_queue=config.RABBITMQ_WRF_LIGHT_QUEUE,
         all_radar_light=config.LIGHT_QUEUE_ALL_RADAR,
         light_wrf_products=config.LIGHT_QUEUE_WRF_PRODUCTS,
     )

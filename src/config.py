@@ -59,13 +59,27 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.RABBITMQ_QUEUE: str = self._get_required_env("RABBITMQ_QUEUE")
         self.RABBITMQ_DLQ: str = self._get_required_env("RABBITMQ_DLQ")
         self.RABBITMQ_DLX: str = self._get_required_env("RABBITMQ_DLX")
-        # Second work queue for lightweight units (radar/WRF). Defaulted (not
-        # required) so existing .env files keep working; light workers set
-        # RABBITMQ_QUEUE to this value to consume it. `or` (not getenv default)
-        # so a compose-supplied empty string also falls back to the default.
-        self.RABBITMQ_LIGHT_QUEUE: str = (
-            os.getenv("RABBITMQ_LIGHT_QUEUE") or "tiles_light_queue"
+        # Two work queues for lightweight units, split so radar and WRF never
+        # head-of-line block each other (a 700+ WRF run vs the steady radar
+        # stream). Workers round-robin the two; the producer routes per unit.
+        # Defaulted (not required) so existing .env files keep working; `or`
+        # (not getenv default) so a compose-supplied empty string also falls
+        # back to the default.
+        self.RABBITMQ_RADAR_LIGHT_QUEUE: str = (
+            os.getenv("RABBITMQ_RADAR_LIGHT_QUEUE") or "tiles_radar_light_queue"
         )
+        self.RABBITMQ_WRF_LIGHT_QUEUE: str = (
+            os.getenv("RABBITMQ_WRF_LIGHT_QUEUE") or "tiles_wrf_light_queue"
+        )
+
+        # "normal" (default) drains RABBITMQ_QUEUE strict-first, then
+        # round-robins the two light queues; "light" only round-robins the
+        # light queues. Set per pool in compose.
+        self.WORKER_TYPE: str = (os.getenv("WORKER_TYPE") or "normal").strip().lower()
+        if self.WORKER_TYPE not in ("normal", "light"):
+            raise ValueError(
+                f"WORKER_TYPE must be 'normal' or 'light', got '{self.WORKER_TYPE}'"
+            )
 
         # Stable identifier for this worker, recorded as `worker_host` on every
         # job so the dashboard can group the timeline by container (worker1,
@@ -336,7 +350,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("RABBITMQ_HOST: %s", self.RABBITMQ_HOST)
         logger.info("RABBITMQ_PORT: %s", self.RABBITMQ_PORT)
         logger.info("RABBITMQ_QUEUE: %s", self.RABBITMQ_QUEUE)
-        logger.info("RABBITMQ_LIGHT_QUEUE: %s", self.RABBITMQ_LIGHT_QUEUE)
+        logger.info("RABBITMQ_RADAR_LIGHT_QUEUE: %s", self.RABBITMQ_RADAR_LIGHT_QUEUE)
+        logger.info("RABBITMQ_WRF_LIGHT_QUEUE: %s", self.RABBITMQ_WRF_LIGHT_QUEUE)
+        logger.info("WORKER_TYPE: %s", self.WORKER_TYPE)
         logger.info("RABBITMQ_DLQ: %s", self.RABBITMQ_DLQ)
         logger.info("RABBITMQ_DLX: %s", self.RABBITMQ_DLX)
         logger.info("WORKER_ID: %s", self.WORKER_ID)

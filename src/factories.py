@@ -155,7 +155,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
 def create_rabbitmq_client(config: Config) -> RabbitMQClient:
     """Build and connect a RabbitMQ client from application config.
 
-    Passes the light queue name so every role declares both work queues on
+    Passes the light queue names so every role declares all work queues on
     connect (idempotent), removing any boot-order dependency between producer
     and the light-worker pool.
     """
@@ -167,7 +167,10 @@ def create_rabbitmq_client(config: Config) -> RabbitMQClient:
         queue_name=config.RABBITMQ_QUEUE,
         dlq_name=config.RABBITMQ_DLQ,
         dlx_name=config.RABBITMQ_DLX,
-        light_queue_name=config.RABBITMQ_LIGHT_QUEUE,
+        extra_queue_names=[
+            config.RABBITMQ_RADAR_LIGHT_QUEUE,
+            config.RABBITMQ_WRF_LIGHT_QUEUE,
+        ],
     )
     client.connect(max_retries=10, retry_delay=5.0)
     return client

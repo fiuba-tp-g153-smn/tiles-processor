@@ -50,7 +50,7 @@ class RabbitMQClient(MessageQueueClient):
         dlq_name: str = "tiles_dead_letter_queue",
         dlx_name: str = "tiles_dlx",
         virtual_host: str = "/",
-        light_queue_name: Optional[str] = None,
+        extra_queue_names: Optional[list[str]] = None,
     ):
         self._host = host
         self._port = port
@@ -61,11 +61,11 @@ class RabbitMQClient(MessageQueueClient):
         self._queue_name = queue_name
         self._dlq_name = dlq_name
         self._dlx_name = dlx_name
-        # Optional second work queue for lightweight units (radar/WRF). When set,
-        # it is declared alongside the main queue so any role (producer, worker,
-        # metrics) can publish to or probe it. Workers still consume only their
-        # own _queue_name; the producer routes per work unit.
-        self._light_queue_name = light_queue_name
+        # Extra work queues (the radar/WRF light queues). They are declared
+        # alongside the main queue so any role (producer, worker, metrics) can
+        # publish to or probe them. Workers consume the queues they ask for in
+        # consume(); the producer routes per work unit.
+        self._extra_queue_names = extra_queue_names or []
 
         self._connection: Optional[pika.BlockingConnection] = None
         self._channel: Optional[BlockingChannel] = None
@@ -143,16 +143,18 @@ class RabbitMQClient(MessageQueueClient):
         # Declare main work queue with dead letter configuration
         self._declare_work_queue(self._queue_name)
 
-        # Declare the optional light work queue with the same DLX config. Declares
-        # are idempotent, so whichever role boots first creates it; identical
+        # Declare the extra light work queues with the same DLX config. Declares
+        # are idempotent, so whichever role boots first creates them; identical
         # arguments everywhere avoid a PRECONDITION_FAILED on redeclare.
-        if self._light_queue_name and self._light_queue_name != self._queue_name:
-            self._declare_work_queue(self._light_queue_name)
+        declared_extra = []
+        for queue_name in self._extra_queue_names:
+            if queue_name and queue_name != self._queue_name:
+                self._declare_work_queue(queue_name)
+                declared_extra.append(queue_name)
 
         logger.info(
-            "Queues configured: %s%s, %s",
-            self._queue_name,
-            f", {self._light_queue_name}" if self._light_queue_name else "",
+            "Queues configured: %s, %s",
+            ", ".join([self._queue_name, *declared_extra]),
             self._dlq_name,
         )
 
@@ -248,46 +250,101 @@ class RabbitMQClient(MessageQueueClient):
     def consume(
         self,
         callback: Callable[[WorkUnit, "MessageQueueClient", int, str], bool],
-        queues: list[str],
+        strict_queues: list[str],
+        round_robin_queues: list[str],
     ) -> None:
         """
-        Drain messages from one or more queues in strict priority order.
+        Drain messages from two tiers: strict-priority then round-robin.
 
         Blocks until stop_consuming() is called or the connection drops. Each
-        iteration tries the queues in order and processes the first message
-        found, then restarts from the highest-priority queue — so a fallback
-        queue is touched only once every higher-priority queue is empty (a
-        normal worker drains its normal queue fully before stealing light work).
-        When all queues are empty it idles for _IDLE_POLL_S (keeping the
-        connection's heartbeats alive) and polls again.
+        iteration first scans ``strict_queues`` in order and processes the first
+        message found (a normal worker drains its normal queue fully before
+        touching any light work). Only when every strict queue is empty does it
+        pull from ``round_robin_queues``, alternating fairly between them so
+        neither light queue head-of-line blocks the other. After any message it
+        restarts from the strict tier, so strict priority always preempts the
+        next round-robin pickup. When all queues are empty it idles for
+        _IDLE_POLL_S (keeping the connection's heartbeats alive) and polls again.
 
         Args:
             callback: Called per message with
                 (work_unit, client, delivery_tag, source_queue). Returns True to
                 ack, False to leave unacked (requeued when the connection closes).
-            queues: Queue names in descending priority.
+            strict_queues: Highest-priority queues, scanned in descending order
+                (empty for light workers, which have no normal queue).
+            round_robin_queues: Queues drained fairly/alternating once the strict
+                tier is empty.
         """
         if not self._channel or self._channel.is_closed:
             raise RuntimeError("Not connected to RabbitMQ")
-        if not queues:
+        if not strict_queues and not round_robin_queues:
             raise ValueError("consume() requires at least one queue")
 
-        logger.info("Started consuming from %s (priority order)", queues)
+        logger.info(
+            "Started consuming: strict=%s round-robin=%s",
+            strict_queues,
+            round_robin_queues,
+        )
         self._consuming = True
+        # Where the next round-robin scan starts; advances past each served queue
+        # so the two light queues alternate. Not reset on a strict-tier hit (else
+        # a busy normal queue would let one light queue starve the other).
+        rr = 0
         while self._consuming:
-            for queue_name in queues:
-                method, _props, body = self._channel.basic_get(
-                    queue=queue_name, auto_ack=False
-                )
-                if method is None or body is None:
-                    continue  # this queue is empty — fall through to the next
-                self._handle_message(callback, queue_name, method.delivery_tag, body)
-                break  # restart the scan from the highest-priority queue
-            else:
-                # Every queue empty: idle while servicing heartbeats/I/O.
-                self._channel.connection.process_data_events(
-                    time_limit=self._IDLE_POLL_S
-                )
+            if self._drain_strict(callback, strict_queues):
+                continue  # re-check the strict tier first (strict priority)
+
+            rr, served = self._drain_round_robin(callback, round_robin_queues, rr)
+            if served:
+                continue  # back to the strict tier (strict still wins)
+
+            # Every queue empty: idle while servicing heartbeats/I/O.
+            self._channel.connection.process_data_events(time_limit=self._IDLE_POLL_S)
+
+    def _drain_strict(
+        self,
+        callback: Callable[[WorkUnit, "MessageQueueClient", int, str], bool],
+        queues: list[str],
+    ) -> bool:
+        """Handle one message from the first non-empty queue. True if served."""
+        if self._channel is None:
+            raise RuntimeError("RabbitMQ channel is not initialized")
+        for queue_name in queues:
+            method, _props, body = self._channel.basic_get(
+                queue=queue_name, auto_ack=False
+            )
+            if method is None or body is None:
+                continue  # this queue is empty — fall through to the next
+            self._handle_message(callback, queue_name, method.delivery_tag, body)
+            return True
+        return False
+
+    def _drain_round_robin(
+        self,
+        callback: Callable[[WorkUnit, "MessageQueueClient", int, str], bool],
+        queues: list[str],
+        start: int,
+    ) -> tuple[int, bool]:
+        """Handle one message, scanning circularly from ``start``.
+
+        Returns the next start index (one past the served queue) and whether a
+        message was served. The circular scan means an empty starting queue
+        still tries the others before giving up, so neither queue starves.
+        """
+        if self._channel is None:
+            raise RuntimeError("RabbitMQ channel is not initialized")
+        count = len(queues)
+        for offset in range(count):
+            index = (start + offset) % count
+            queue_name = queues[index]
+            method, _props, body = self._channel.basic_get(
+                queue=queue_name, auto_ack=False
+            )
+            if method is None or body is None:
+                continue
+            self._handle_message(callback, queue_name, method.delivery_tag, body)
+            return (index + 1) % count, True
+        return start, False
 
     def _handle_message(
         self,

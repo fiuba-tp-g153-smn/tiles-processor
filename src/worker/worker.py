@@ -99,29 +99,34 @@ class Worker:  # pylint: disable=too-few-public-methods
         signal(SIGTERM, self._signal_handler)
 
         try:
-            # Start consuming (blocking). Normal workers drain their primary
-            # queue first, then steal from the light queue when it is empty;
-            # light workers (primary == light) get a single-queue list.
+            # Start consuming (blocking). Normal workers drain their normal
+            # queue strict-first, then round-robin the two light queues; light
+            # workers only round-robin the light queues.
+            strict, round_robin = self._consume_tiers()
             self._mq_client.consume(
                 callback=self._process_message,
-                queues=self._consume_queues(),
+                strict_queues=strict,
+                round_robin_queues=round_robin,
             )
         except KeyboardInterrupt:
             logger.info("Worker interrupted by user")
         finally:
             self._shutdown()
 
-    def _consume_queues(self) -> list[str]:
-        """Queues to drain, highest priority first.
+    def _consume_tiers(self) -> tuple[list[str], list[str]]:
+        """Return (strict_queues, round_robin_queues) for this worker type.
 
-        Normal workers (primary queue != light queue) drain their primary queue
-        and then fall back to the light queue when it is empty. Light workers
-        (primary == light) only ever drain the light queue.
+        Normal workers drain the normal queue with strict priority, then
+        round-robin the two light queues. Light workers have no normal queue —
+        they only round-robin the light queues.
         """
-        queues = [self._config.RABBITMQ_QUEUE]
-        if self._config.RABBITMQ_LIGHT_QUEUE != self._config.RABBITMQ_QUEUE:
-            queues.append(self._config.RABBITMQ_LIGHT_QUEUE)
-        return queues
+        light = [
+            self._config.RABBITMQ_RADAR_LIGHT_QUEUE,
+            self._config.RABBITMQ_WRF_LIGHT_QUEUE,
+        ]
+        if self._config.WORKER_TYPE == "light":
+            return [], light
+        return [self._config.RABBITMQ_QUEUE], light
 
     def _signal_handler(self, signum, _frame):
         """Handle shutdown signals gracefully."""

@@ -1,4 +1,4 @@
-"""Tests for RabbitMQClient.consume — strict-priority drain across queues."""
+"""Tests for RabbitMQClient.consume — strict-priority tier + round-robin tier."""
 
 import os
 import sys
@@ -10,7 +10,8 @@ from clients.rabbitmq_client import RabbitMQClient
 from models.work_unit import WorkUnit
 
 NORMAL = "tiles_work_queue"
-LIGHT = "tiles_light_queue"
+RADAR_LIGHT = "tiles_radar_light_queue"
+WRF_LIGHT = "tiles_wrf_light_queue"
 
 
 def _unit(image_id: str) -> bytes:
@@ -79,88 +80,115 @@ def _record_callback(received):
     return cb
 
 
-def test_drains_normal_fully_before_touching_light():
+def _consume(channel, *, strict, round_robin, received):
+    """Run a drain loop that stops the first time every queue is empty."""
+    client = _client(channel)
+    channel._on_idle = client.stop_consuming  # pylint: disable=protected-access
+    client.consume(_record_callback(received), strict, round_robin)
+
+
+def test_strict_normal_drains_fully_before_any_light():
+    """Normal queue (strict tier) is exhausted before either light queue."""
     received = []
-    client = None
-
-    def stop():
-        client.stop_consuming()
-
     channel = FakeChannel(
-        {NORMAL: [_unit("n1"), _unit("n2")], LIGHT: [_unit("l1")]}, on_idle=stop
+        {
+            NORMAL: [_unit("n1"), _unit("n2")],
+            RADAR_LIGHT: [_unit("r1")],
+            WRF_LIGHT: [_unit("w1")],
+        },
+        on_idle=lambda: None,
     )
-    client = _client(channel)
-    client.consume(_record_callback(received), [NORMAL, LIGHT])
+    _consume(
+        channel,
+        strict=[NORMAL],
+        round_robin=[RADAR_LIGHT, WRF_LIGHT],
+        received=received,
+    )
 
-    # Normal units first, light only after normal drains.
-    assert received == [(NORMAL, "n1"), (NORMAL, "n2"), (LIGHT, "l1")]
-    # Light was never queried until normal returned empty: before the first
-    # LIGHT get there must be a NORMAL get that yielded nothing.
-    first_light = channel.get_calls.index(LIGHT)
+    assert received == [
+        (NORMAL, "n1"),
+        (NORMAL, "n2"),
+        (RADAR_LIGHT, "r1"),
+        (WRF_LIGHT, "w1"),
+    ]
+    # No light queue is touched until a NORMAL get has returned empty.
+    first_light = min(
+        channel.get_calls.index(RADAR_LIGHT), channel.get_calls.index(WRF_LIGHT)
+    )
     assert channel.get_calls[first_light - 1] == NORMAL
-    assert channel.acked == [1, 2, 3]
+    assert channel.acked == [1, 2, 3, 4]
 
 
-def test_falls_back_to_light_when_normal_empty():
+def test_round_robin_alternates_the_two_light_queues():
+    """With both light queues backlogged, pickups alternate radar/wrf."""
     received = []
-    client = None
+    channel = FakeChannel(
+        {
+            RADAR_LIGHT: [_unit("r1"), _unit("r2"), _unit("r3")],
+            WRF_LIGHT: [_unit("w1"), _unit("w2")],
+        },
+        on_idle=lambda: None,
+    )
+    _consume(
+        channel, strict=[], round_robin=[RADAR_LIGHT, WRF_LIGHT], received=received
+    )
 
-    def stop():
-        client.stop_consuming()
+    assert received == [
+        (RADAR_LIGHT, "r1"),
+        (WRF_LIGHT, "w1"),
+        (RADAR_LIGHT, "r2"),
+        (WRF_LIGHT, "w2"),
+        (RADAR_LIGHT, "r3"),
+    ]
 
-    channel = FakeChannel({LIGHT: [_unit("l1")]}, on_idle=stop)
-    client = _client(channel)
-    client.consume(_record_callback(received), [NORMAL, LIGHT])
 
-    assert received == [(LIGHT, "l1")]
-
-
-def test_idle_when_all_queues_empty_runs_no_callback():
+def test_round_robin_no_starvation_when_one_light_queue_empty():
+    """An empty starting queue still lets the other light queue be served."""
     received = []
-    client = None
+    channel = FakeChannel({WRF_LIGHT: [_unit("w1")]}, on_idle=lambda: None)
+    # rr starts at index 0 (RADAR_LIGHT), which is empty; WRF_LIGHT must still serve.
+    _consume(
+        channel, strict=[], round_robin=[RADAR_LIGHT, WRF_LIGHT], received=received
+    )
 
-    def stop():
-        client.stop_consuming()
+    assert received == [(WRF_LIGHT, "w1")]
 
-    channel = FakeChannel({}, on_idle=stop)
-    client = _client(channel)
-    client.consume(_record_callback(received), [NORMAL, LIGHT])
+
+def test_idle_polls_all_tiers_then_idles_once():
+    received = []
+    channel = FakeChannel({}, on_idle=lambda: None)
+    _consume(
+        channel,
+        strict=[NORMAL],
+        round_robin=[RADAR_LIGHT, WRF_LIGHT],
+        received=received,
+    )
 
     assert received == []
     assert channel.idle_calls == 1
-    # Both queues were polled before idling.
-    assert channel.get_calls == [NORMAL, LIGHT]
+    # Strict tier first, then both light queues, before idling.
+    assert channel.get_calls == [NORMAL, RADAR_LIGHT, WRF_LIGHT]
+
+
+def test_light_worker_has_no_strict_queue():
+    received = []
+    channel = FakeChannel({RADAR_LIGHT: [_unit("r1")]}, on_idle=lambda: None)
+    _consume(
+        channel, strict=[], round_robin=[RADAR_LIGHT, WRF_LIGHT], received=received
+    )
+
+    assert received == [(RADAR_LIGHT, "r1")]
+    assert NORMAL not in channel.get_calls  # never looks at the normal queue
 
 
 def test_invalid_body_is_dead_lettered_not_acked():
-    client = None
-
-    def stop():
-        client.stop_consuming()
-
-    channel = FakeChannel({NORMAL: [b"not-json"]}, on_idle=stop)
+    channel = FakeChannel({NORMAL: [b"not-json"]}, on_idle=lambda: None)
     client = _client(channel)
+    channel._on_idle = client.stop_consuming  # pylint: disable=protected-access
 
     called = []
-    client.consume(
-        lambda *a: called.append(a) or True, [NORMAL]  # callback must not run
-    )
+    client.consume(lambda *a: called.append(a) or True, [NORMAL], [])
 
-    assert called == []
+    assert called == []  # callback must not run on undecodable bodies
     assert channel.acked == []
     assert channel.nacked == [(1, False)]  # rejected to DLQ, not requeued
-
-
-def test_single_queue_for_light_workers():
-    received = []
-    client = None
-
-    def stop():
-        client.stop_consuming()
-
-    channel = FakeChannel({LIGHT: [_unit("l1")]}, on_idle=stop)
-    client = _client(channel)
-    client.consume(_record_callback(received), [LIGHT])
-
-    assert received == [(LIGHT, "l1")]
-    assert NORMAL not in channel.get_calls  # never looks at the normal queue

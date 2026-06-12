@@ -61,17 +61,20 @@ class MessageQueueClient(ABC):
     def consume(
         self,
         callback: Callable[[WorkUnit, "MessageQueueClient", int, str], bool],
-        queues: list[str],
+        strict_queues: list[str],
+        round_robin_queues: list[str],
     ) -> None:
         """
-        Drain messages from one or more queues in strict priority order.
+        Drain messages from a strict-priority tier then a round-robin tier.
 
         Args:
             callback: Function called for each message. Receives
                 (work_unit, client, delivery_tag, source_queue). Should return
                 True if the message should be acked, False to leave it unacked.
-            queues: Queue names in descending priority. A lower-priority queue is
-                only consumed once every higher-priority queue is empty.
+            strict_queues: Highest-priority queues, drained in order; only when
+                all are empty is the round-robin tier touched.
+            round_robin_queues: Queues drained fairly/alternating once the strict
+                tier is empty, so neither head-of-line blocks the other.
         """
 
     @abstractmethod

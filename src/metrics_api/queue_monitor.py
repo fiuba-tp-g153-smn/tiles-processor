@@ -28,19 +28,21 @@ class QueueDepthMonitor:
     # broker isn't hammered (and pika's connect logs aren't re-spammed) every poll.
     _RECONNECT_BACKOFF_S = 30.0
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         client_factory: Callable[[], RabbitMQClient],
         work_queue: str,
         dlq: str,
-        light_queue: str,
+        radar_light_queue: str,
+        wrf_light_queue: str,
         *,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._client_factory = client_factory
         self._work_queue = work_queue
         self._dlq = dlq
-        self._light_queue = light_queue
+        self._radar_light_queue = radar_light_queue
+        self._wrf_light_queue = wrf_light_queue
         self._monotonic = monotonic
         self._client: RabbitMQClient | None = None
         self._healthy: bool | None = None  # None = unknown (transition-only logging)
@@ -51,7 +53,11 @@ class QueueDepthMonitor:
         )
 
     def depths(self) -> dict[str, int | None]:
-        """Return ``{"work", "light", "dlq"}`` depths (None when unreachable)."""
+        """Return queue depths (None when unreachable).
+
+        Keys: ``work``, ``radar_light``, ``wrf_light``, ``dlq``, plus ``light``
+        (the radar+wrf sum) kept for the dashboard's single light-queue tile.
+        """
         return self._executor.submit(self._probe).result()
 
     def close(self) -> None:
@@ -65,33 +71,44 @@ class QueueDepthMonitor:
 
     def _probe(self) -> dict[str, int | None]:
         if self._client is None and self._monotonic() < self._retry_after:
-            return {
-                "work": None,
-                "light": None,
-                "dlq": None,
-            }  # still backing off after a failed connect
+            return self._unreachable()  # still backing off after a failed connect
 
         try:
             client = self._ensure_client()
         except Exception:  # pylint: disable=broad-exception-caught
             # Connect failed -> broker unreachable; back off before retrying.
             self._mark_unhealthy(backoff=True)
-            return {"work": None, "light": None, "dlq": None}
+            return self._unreachable()
 
         try:
+            radar_light = client.get_queue_size(self._radar_light_queue)
+            wrf_light = client.get_queue_size(self._wrf_light_queue)
             depths: dict[str, int | None] = {
                 "work": client.get_queue_size(self._work_queue),
-                "light": client.get_queue_size(self._light_queue),
+                "radar_light": radar_light,
+                "wrf_light": wrf_light,
+                "light": radar_light + wrf_light,  # combined: dashboard tile
                 "dlq": client.get_queue_size(self._dlq),
             }
         except Exception:  # pylint: disable=broad-exception-caught
             # Read failed on an established connection -> drop and reconnect next
             # poll (no backoff: the connection may just have been recycled).
             self._mark_unhealthy(backoff=False)
-            return {"work": None, "light": None, "dlq": None}
+            return self._unreachable()
 
         self._mark_healthy()
         return depths
+
+    @staticmethod
+    def _unreachable() -> dict[str, int | None]:
+        """All depths None: broker unreachable, reported as n/a."""
+        return {
+            "work": None,
+            "radar_light": None,
+            "wrf_light": None,
+            "light": None,
+            "dlq": None,
+        }
 
     def _ensure_client(self) -> RabbitMQClient:
         if self._client is None or not self._client.is_connected:
