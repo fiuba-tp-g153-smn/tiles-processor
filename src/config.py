@@ -52,8 +52,11 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         # Max concurrent tile/COG/GRIB uploads per S3 client (separate from
         # downloads); also sizes the aioboto3 connection pool. Total concurrent
-        # PUTs against the gateway ≈ workers × WORKER_CONCURRENCY × this.
-        self.S3_UPLOAD_CONCURRENCY: int = int(os.getenv("S3_UPLOAD_CONCURRENCY", "32"))
+        # PUTs against the gateway ≈ workers × WORKER_CONCURRENCY × this. `or`
+        # (not getenv default) so a compose-supplied empty string also defaults.
+        self.S3_UPLOAD_CONCURRENCY: int = int(
+            os.getenv("S3_UPLOAD_CONCURRENCY") or "32"
+        )
 
         # RabbitMQ Configuration
         self.RABBITMQ_HOST: str = self._get_required_env("RABBITMQ_HOST")
@@ -83,6 +86,15 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         if self.WORKER_TYPE not in ("normal", "light"):
             raise ValueError(
                 f"WORKER_TYPE must be 'normal' or 'light', got '{self.WORKER_TYPE}'"
+            )
+
+        # How many work units a worker processes concurrently as asyncio tasks.
+        # Overlaps one unit's I/O-bound upload tail with the next unit's
+        # CPU-bound compute. `or` so a compose-supplied empty string defaults.
+        self.WORKER_CONCURRENCY: int = int(os.getenv("WORKER_CONCURRENCY") or "2")
+        if self.WORKER_CONCURRENCY < 1:
+            raise ValueError(
+                f"WORKER_CONCURRENCY must be >= 1, got {self.WORKER_CONCURRENCY}"
             )
 
         # Stable identifier for this worker, recorded as `worker_host` on every
@@ -338,6 +350,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("RABBITMQ_RADAR_LIGHT_QUEUE: %s", self.RABBITMQ_RADAR_LIGHT_QUEUE)
         logger.info("RABBITMQ_WRF_LIGHT_QUEUE: %s", self.RABBITMQ_WRF_LIGHT_QUEUE)
         logger.info("WORKER_TYPE: %s", self.WORKER_TYPE)
+        logger.info("WORKER_CONCURRENCY: %s", self.WORKER_CONCURRENCY)
         logger.info("RABBITMQ_DLQ: %s", self.RABBITMQ_DLQ)
         logger.info("RABBITMQ_DLX: %s", self.RABBITMQ_DLX)
         logger.info("WORKER_ID: %s", self.WORKER_ID)

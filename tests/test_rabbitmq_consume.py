@@ -192,3 +192,57 @@ def test_invalid_body_is_dead_lettered_not_acked():
     assert called == []  # callback must not run on undecodable bodies
     assert channel.acked == []
     assert channel.nacked == [(1, False)]  # rejected to DLQ, not requeued
+
+
+# --- poll_one: the non-blocking single-message primitive the worker uses ------
+
+
+def test_poll_one_returns_message_without_acking():
+    channel = FakeChannel({NORMAL: [_unit("n1")]}, on_idle=lambda: None)
+    work_unit, delivery_tag, source_queue = _client(channel).poll_one(
+        [NORMAL], [RADAR_LIGHT, WRF_LIGHT]
+    )
+
+    assert work_unit.image_id == "n1"
+    assert source_queue == NORMAL
+    assert delivery_tag == 1
+    assert channel.acked == []  # poll_one never acks — the caller does
+
+
+def test_poll_one_prefers_strict_over_round_robin():
+    channel = FakeChannel(
+        {NORMAL: [_unit("n1")], RADAR_LIGHT: [_unit("r1")]}, on_idle=lambda: None
+    )
+    work_unit, _tag, source_queue = _client(channel).poll_one(
+        [NORMAL], [RADAR_LIGHT, WRF_LIGHT]
+    )
+
+    assert work_unit.image_id == "n1"
+    assert source_queue == NORMAL
+
+
+def test_poll_one_returns_none_and_scans_all_tiers_when_empty():
+    channel = FakeChannel({}, on_idle=lambda: None)
+    assert _client(channel).poll_one([NORMAL], [RADAR_LIGHT, WRF_LIGHT]) is None
+    assert channel.get_calls == [NORMAL, RADAR_LIGHT, WRF_LIGHT]
+
+
+def test_poll_one_round_robin_cursor_persists_across_calls():
+    channel = FakeChannel(
+        {RADAR_LIGHT: [_unit("r1"), _unit("r2")], WRF_LIGHT: [_unit("w1")]},
+        on_idle=lambda: None,
+    )
+    client = _client(channel)
+
+    order = [client.poll_one([], [RADAR_LIGHT, WRF_LIGHT]) for _ in range(3)]
+    labelled = [(q, wu.image_id) for wu, _tag, q in order]
+
+    assert labelled == [(RADAR_LIGHT, "r1"), (WRF_LIGHT, "w1"), (RADAR_LIGHT, "r2")]
+
+
+def test_poll_one_dead_letters_undecodable_and_reports_empty():
+    channel = FakeChannel({NORMAL: [b"not-json"]}, on_idle=lambda: None)
+
+    assert _client(channel).poll_one([NORMAL], []) is None
+    assert channel.acked == []
+    assert channel.nacked == [(1, False)]

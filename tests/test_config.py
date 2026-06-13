@@ -104,6 +104,28 @@ class TestConfig:
             with pytest.raises(FileNotFoundError, match="Settings file not found"):
                 Config(settings_path=missing_path)
 
+    def test_concurrency_knobs_default(self, temp_settings_file, env_vars):
+        """WORKER_CONCURRENCY/S3_UPLOAD_CONCURRENCY fall back to their defaults."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            assert config.WORKER_CONCURRENCY == 2
+            assert config.S3_UPLOAD_CONCURRENCY == 32
+
+    def test_concurrency_empty_strings_use_defaults(self, temp_settings_file, env_vars):
+        """Compose-supplied empty strings normalize to the defaults (not int('')) ."""
+        env = {**env_vars, "WORKER_CONCURRENCY": "", "S3_UPLOAD_CONCURRENCY": ""}
+        with mock.patch.dict(os.environ, env, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            assert config.WORKER_CONCURRENCY == 2
+            assert config.S3_UPLOAD_CONCURRENCY == 32
+
+    def test_worker_concurrency_rejects_below_one(self, temp_settings_file, env_vars):
+        """WORKER_CONCURRENCY < 1 fails fast."""
+        env = {**env_vars, "WORKER_CONCURRENCY": "0"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ValueError, match="WORKER_CONCURRENCY"):
+                Config(settings_path=temp_settings_file)
+
     def test_get_bounds_returns_dict(self, temp_settings_file, env_vars):
         """Test that get_bounds returns correct dictionary."""
         with mock.patch.dict(os.environ, env_vars, clear=True):

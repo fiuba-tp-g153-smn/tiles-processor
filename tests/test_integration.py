@@ -100,9 +100,6 @@ class TestWorkerIntegration:
             mock_handler.handle = AsyncMock()
             worker._handler = mock_handler
 
-            # Initialize loop for the worker manually since we are not calling start()
-            worker._loop = asyncio.new_event_loop()
-
             # Create a test work unit using new format
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
@@ -114,13 +111,11 @@ class TestWorkerIntegration:
                 band_id="band_13",
             )
 
-            # Process the message
-            result = worker._process_message(
-                work_unit, mock_rabbitmq, 1, "tiles_work_queue"
-            )
+            # Process the message (the coroutine acks via the MQ client now)
+            asyncio.run(worker._process_message_async(work_unit, 1, "tiles_work_queue"))
 
             # Verify acknowledgement
-            assert result is True
+            mock_rabbitmq.ack.assert_called_once_with(1)
 
             # Verify handler was called with the work unit (plus the per-job
             # metrics collector the worker now threads through as 2nd arg).
@@ -144,9 +139,6 @@ class TestWorkerIntegration:
             mock_handler.handle = AsyncMock(side_effect=Exception("Processing failed"))
             worker._handler = mock_handler
 
-            # Initialize loop
-            worker._loop = asyncio.new_event_loop()
-
             # Create work unit
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
@@ -159,12 +151,12 @@ class TestWorkerIntegration:
             )
 
             # Process (light unit stolen by a normal worker: came from a light queue)
-            result = worker._process_message(
-                work_unit, mock_rabbitmq, 1, "tiles_radar_light_queue"
+            asyncio.run(
+                worker._process_message_async(work_unit, 1, "tiles_radar_light_queue")
             )
 
-            # Should still acknowledge (to remove original message)
-            assert result is True
+            # Should still acknowledge (to remove the original message)
+            mock_rabbitmq.ack.assert_called_once_with(1)
 
             # Should publish retry back to the queue it came from, not the
             # worker's primary queue.
@@ -189,9 +181,6 @@ class TestWorkerIntegration:
             mock_handler.handle = AsyncMock(side_effect=Exception("Persistent failure"))
             worker._handler = mock_handler
 
-            # Initialize loop
-            worker._loop = asyncio.new_event_loop()
-
             # Create work unit with max retries reached
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
@@ -206,15 +195,14 @@ class TestWorkerIntegration:
             work_unit.max_retries = 3
 
             # Process
-            result = worker._process_message(
-                work_unit, mock_rabbitmq, 1, "tiles_work_queue"
-            )
+            asyncio.run(worker._process_message_async(work_unit, 1, "tiles_work_queue"))
 
             # Should not publish retry
             mock_rabbitmq.publish.assert_not_called()
 
-            # Should send to DLQ
+            # Should send to DLQ, then ack the original
             mock_rabbitmq.publish_to_dlq.assert_called_once()
+            mock_rabbitmq.ack.assert_called_once_with(1)
 
 
 class TestPipelineIntegration:
