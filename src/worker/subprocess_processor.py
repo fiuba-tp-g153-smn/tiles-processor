@@ -73,6 +73,21 @@ def create_processor_registry():
     return registry
 
 
+async def _process_and_cleanup(processor, file_path: str, work_unit) -> None:
+    """Run the processor, then close its S3 client on the same event loop.
+
+    Closing the cached aioboto3 client here (rather than relying on process
+    exit) releases the warm connection pool cleanly and avoids 'unclosed
+    connector' warnings on every processed unit.
+    """
+    try:
+        await processor.process(file_path, work_unit)
+    finally:
+        s3_client = getattr(processor, "_s3_client", None)
+        if s3_client is not None and hasattr(s3_client, "aclose"):
+            await s3_client.aclose()
+
+
 def run_processing(
     work_unit_json: str, file_path: str, metrics_sink: str | None = None
 ) -> None:
@@ -129,7 +144,7 @@ def run_processing(
 
     # Run processing — flush partial stage timings even on failure/shutdown.
     try:
-        asyncio.run(processor.process(file_path, work_unit))
+        asyncio.run(_process_and_cleanup(processor, file_path, work_unit))
     finally:
         processor.flush_metrics()
 

@@ -189,4 +189,5 @@ def create_s3_client(config: Config) -> S3Client:
         access_key=config.S3_TILES_DATA_RW_ACCESS_KEY,
         secret_key=config.S3_TILES_DATA_RW_SECRET_KEY,
         secure=config.S3_TILES_DATA_SECURE,
+        upload_concurrency=config.S3_UPLOAD_CONCURRENCY,
     )

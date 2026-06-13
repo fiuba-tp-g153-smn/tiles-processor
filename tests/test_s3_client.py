@@ -466,49 +466,110 @@ class TestS3ClientGetFolderFilePaths:
 
 
 class TestS3ClientUploadFile:
-    """Tests for S3Client.upload_file method."""
+    """Tests for S3Client.upload_file (managed multipart transfer)."""
 
-    @pytest.mark.asyncio
-    async def test_upload_file_success_uses_put_object(self, tmp_path):
-        """upload_file should put the object and return True on success."""
-        file_path = tmp_path / "sample.tif"
-        file_path.write_bytes(b"abc")
-
+    @staticmethod
+    def _make_client():
         s3_client = S3Client(
             bucket_name="tiles-data",
             endpoint_url="http://s3:9000",
             access_key="user",
             secret_key="pass",
         )
-
         boto_client = AsyncMock()
-        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+        s3_client._session.client = lambda *a, **k: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+        return s3_client, boto_client
+
+    @pytest.mark.asyncio
+    async def test_upload_file_uses_managed_transfer_with_multipart_config(
+        self, tmp_path
+    ):
+        """upload_file routes through the managed transfer API (not put_object)."""
+        file_path = tmp_path / "sample.tif"
+        file_path.write_bytes(b"abc")
+        s3_client, boto_client = self._make_client()
 
         uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
 
         assert uploaded is True
-        boto_client.put_object.assert_awaited_once()
+        boto_client.put_object.assert_not_awaited()
+        boto_client.upload_file.assert_awaited_once()
+        args, kwargs = boto_client.upload_file.call_args
+        assert args[0] == str(file_path)
+        assert args[1] == "tiles-data"
+        assert args[2] == "cog/band_13/image.tif"
+        assert kwargs["ExtraArgs"]["ContentType"] == "image/tiff"
+        assert kwargs["Config"] is s3_client._transfer_config
+        assert kwargs["Config"].multipart_threshold == 8 * 1024 * 1024
 
     @pytest.mark.asyncio
-    async def test_upload_file_returns_false_on_put_object_failure(self, tmp_path):
-        """upload_file should not raise and should return False on put_object errors."""
+    async def test_upload_file_returns_false_on_transfer_failure(self, tmp_path):
+        """upload_file should not raise and should return False on transfer errors."""
         file_path = tmp_path / "sample.tif"
         file_path.write_bytes(b"abc")
+        s3_client, boto_client = self._make_client()
+        boto_client.upload_file.side_effect = RuntimeError("boom")
 
+        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
+
+        assert uploaded is False
+
+
+class TestS3ClientReuse:
+    """The aioboto3 client is created once per loop and reused across calls."""
+
+    @pytest.mark.asyncio
+    async def test_client_created_once_and_reused_within_a_loop(self, tmp_path):
+        file_path = tmp_path / "f.tif"
+        file_path.write_bytes(b"abc")
         s3_client = S3Client(
             bucket_name="tiles-data",
             endpoint_url="http://s3:9000",
             access_key="user",
             secret_key="pass",
         )
-
         boto_client = AsyncMock()
-        boto_client.put_object.side_effect = RuntimeError("boom")
-        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+        create = MagicMock(side_effect=lambda *a, **k: _AsyncClientContext(boto_client))
+        s3_client._session.client = create  # type: ignore[attr-defined]
 
-        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
+        await s3_client.upload_file("cog/a.tif", file_path)
+        await s3_client.upload_file("cog/b.tif", file_path)
 
-        assert uploaded is False
+        assert create.call_count == 1  # one warm client across both uploads
+
+    def test_client_recreated_on_a_different_loop(self):
+        s3_client = S3Client(
+            bucket_name="tiles-data",
+            endpoint_url="http://s3:9000",
+            access_key="user",
+            secret_key="pass",
+        )
+        boto_client = AsyncMock()
+        create = MagicMock(side_effect=lambda *a, **k: _AsyncClientContext(boto_client))
+        s3_client._session.client = create  # type: ignore[attr-defined]
+
+        asyncio.run(s3_client._get_client())
+        asyncio.run(s3_client._get_client())
+
+        assert create.call_count == 2  # loop-aware recreate
+
+
+class TestS3ClientUploadConcurrency:
+    """S3_UPLOAD_CONCURRENCY sizes the upload semaphore and the connection pool."""
+
+    def test_upload_concurrency_flows_to_semaphore_and_pool(self):
+        client = S3Client.create_with_credentials(
+            bucket_name="tiles-data",
+            endpoint="s3:9000",
+            access_key="user",
+            secret_key="pass",
+            max_concurrent_operations=10,
+            upload_concurrency=20,
+        )
+        assert client._upload_concurrency == 20
+        assert client._upload_semaphore._value == 20
+        cfg = client._get_client_kwargs(authenticated=True)["config"]
+        assert cfg.max_pool_connections == 20  # max(10, 20, 8)
 
 
 class TestS3ClientUploadDirectory:
@@ -600,6 +661,7 @@ class TestS3ClientGetClientKwargs:
             max_concurrent_downloads=7,
             access_key="user",
             secret_key="pass",
+            upload_concurrency=40,
         )
         kwargs = client._get_client_kwargs(authenticated=True)
 
@@ -607,15 +669,17 @@ class TestS3ClientGetClientKwargs:
         assert kwargs["aws_secret_access_key"] == "pass"
         cfg = kwargs["config"]
         assert cfg.s3["addressing_style"] == "path"
-        assert cfg.max_pool_connections == 7
+        assert cfg.max_pool_connections == 40  # max(downloads=7, uploads=40, 8)
         assert cfg.signature_version != UNSIGNED
 
     def test_unauthenticated_uses_path_style_pool_and_unsigned(self):
-        client = S3Client(bucket_name="noaa-goes19", max_concurrent_downloads=6)
+        client = S3Client(
+            bucket_name="noaa-goes19", max_concurrent_downloads=6, upload_concurrency=12
+        )
         kwargs = client._get_client_kwargs(authenticated=False)
 
         assert "aws_access_key_id" not in kwargs
         cfg = kwargs["config"]
         assert cfg.s3["addressing_style"] == "path"
-        assert cfg.max_pool_connections == 6
+        assert cfg.max_pool_connections == 12  # max(downloads=6, uploads=12, 8)
         assert cfg.signature_version == UNSIGNED

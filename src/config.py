@@ -50,6 +50,10 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.S3_TILES_DATA_SECURE: bool = (
             os.getenv("S3_TILES_DATA_SECURE", "false").lower() == "true"
         )
+        # Max concurrent tile/COG/GRIB uploads per S3 client (separate from
+        # downloads); also sizes the aioboto3 connection pool. Total concurrent
+        # PUTs against the gateway ≈ workers × WORKER_CONCURRENCY × this.
+        self.S3_UPLOAD_CONCURRENCY: int = int(os.getenv("S3_UPLOAD_CONCURRENCY", "32"))
 
         # RabbitMQ Configuration
         self.RABBITMQ_HOST: str = self._get_required_env("RABBITMQ_HOST")
@@ -327,6 +331,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("S3_TILES_DATA_ENDPOINT: %s", self.S3_TILES_DATA_ENDPOINT)
         logger.info("S3_TILES_DATA_BUCKET_NAME: %s", self.S3_TILES_DATA_BUCKET_NAME)
         logger.info("S3_TILES_DATA_SECURE: %s", self.S3_TILES_DATA_SECURE)
+        logger.info("S3_UPLOAD_CONCURRENCY: %s", self.S3_UPLOAD_CONCURRENCY)
         logger.info("RABBITMQ_HOST: %s", self.RABBITMQ_HOST)
         logger.info("RABBITMQ_PORT: %s", self.RABBITMQ_PORT)
         logger.info("RABBITMQ_QUEUE: %s", self.RABBITMQ_QUEUE)
