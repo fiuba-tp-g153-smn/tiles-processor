@@ -6,7 +6,6 @@ from typing import Optional
 
 from clients.rabbitmq_client import RabbitMQClient
 from clients.s3_client import S3Client
-from clients.seaweedfs_filer_uploader import SeaweedFsFilerUploader
 from config import Config
 from data_sources import (
     DataSourceRegistry,
@@ -140,12 +139,12 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
 
     # Register ECMWF data sources (feature-flagged)
     if config is not None and config.ENABLE_ECMWF_PRECIPITATION:
-        ecmwf_s3 = create_s3_client(config, with_ttl=False)
+        ecmwf_s3 = create_s3_client(config)
         registry.register(EcmwfProducerDataSource(ECMWF_TP_CONFIG, ecmwf_s3))
         registry.register(EcmwfPeriodDataSource(ECMWF_TP_CONFIG, ecmwf_s3))
 
     if config is not None and config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE:
-        ecmwf_mslp_s3 = create_s3_client(config, with_ttl=False)
+        ecmwf_mslp_s3 = create_s3_client(config)
         registry.register(EcmwfProducerDataSource(ECMWF_MSLP_CONFIG, ecmwf_mslp_s3))
         registry.register(EcmwfPeriodDataSource(ECMWF_MSLP_CONFIG, ecmwf_mslp_s3))
 
@@ -176,45 +175,18 @@ def create_rabbitmq_client(config: Config) -> RabbitMQClient:
     return client
 
 
-def create_s3_client(config: Config, *, with_ttl: str | None | bool = True) -> S3Client:
+def create_s3_client(config: Config) -> S3Client:
     """Build an authenticated S3 client for tile storage.
 
-    Args:
-        config: Application configuration.
-        with_ttl: Controls the TTL passed to SeaweedFS.
-            True  → use config.SEAWEEDFS_TILE_TTL (default for GOES/GLM)
-            False → no TTL (kept for backward compatibility)
-            str   → explicit TTL string (e.g. "168h" for radar)
-            None  → no TTL (e.g. when SEAWEEDFS_RADAR_TILE_TTL is unset)
+    Uploads go through the plain S3 ``put_object`` API, so the backend (SeaweedFS
+    gateway, MinIO, AWS S3) is swappable. Object expiry is handled by per-prefix
+    bucket lifecycle rules (see ``S3Client.configure_lifecycle_policy``), not by
+    a backend-specific per-object TTL.
     """
-    tile_uploader_overwritten = None
-    if config.SEAWEEDFS_FILER_ENDPOINT:
-        if with_ttl is True:
-            ttl = config.SEAWEEDFS_TILE_TTL
-        elif with_ttl is False:
-            ttl = None
-        else:
-            ttl = with_ttl  # explicit str or None
-        tile_uploader_overwritten = SeaweedFsFilerUploader(
-            endpoint=config.SEAWEEDFS_FILER_ENDPOINT,
-            bucket=config.S3_TILES_DATA_BUCKET_NAME,
-            ttl=ttl,
-            secure=config.S3_TILES_DATA_SECURE,
-        )
-        logger.info(
-            "S3 tile uploads overwritten with %s (endpoint=%s, ttl=%s)",
-            type(tile_uploader_overwritten).__name__,
-            config.SEAWEEDFS_FILER_ENDPOINT,
-            ttl,
-        )
-    else:
-        logger.info("S3 tile uploads using standard S3 put_object")
-
     return S3Client.create_with_credentials(
         bucket_name=config.S3_TILES_DATA_BUCKET_NAME,
         endpoint=config.S3_TILES_DATA_ENDPOINT,
         access_key=config.S3_TILES_DATA_RW_ACCESS_KEY,
         secret_key=config.S3_TILES_DATA_RW_SECRET_KEY,
         secure=config.S3_TILES_DATA_SECURE,
-        tile_uploader_overwritten=tile_uploader_overwritten,
     )

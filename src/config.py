@@ -191,20 +191,6 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # Job Configuration
         self.JOB_TTL_MINUTES: int = int(self._get_required_env("JOB_TTL_MINUTES"))
 
-        # SeaweedFS Filer (optional — only needed when using SeaweedFS)
-        self.SEAWEEDFS_FILER_ENDPOINT: str | None = os.getenv(
-            "SEAWEEDFS_FILER_ENDPOINT"
-        )
-        self.SEAWEEDFS_TILE_TTL: str | None = os.getenv("SEAWEEDFS_TILE_TTL", "1m")
-        self.SEAWEEDFS_RADAR_TILE_TTL: str | None = os.getenv(
-            "SEAWEEDFS_RADAR_TILE_TTL"
-        )
-        self.SEAWEEDFS_ECMWF_TTL: str | None = os.getenv("SEAWEEDFS_ECMWF_TTL")
-        self.SEAWEEDFS_ECMWF_GRIB_TTL: str | None = os.getenv(
-            "SEAWEEDFS_ECMWF_GRIB_TTL"
-        )
-        self.SEAWEEDFS_WRF_TTL: str | None = os.getenv("SEAWEEDFS_WRF_TTL")
-
         # Health Check
         self.HEALTH_PORT: int = int(os.getenv("HEALTH_PORT", "8080"))
 
@@ -341,12 +327,6 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("S3_TILES_DATA_ENDPOINT: %s", self.S3_TILES_DATA_ENDPOINT)
         logger.info("S3_TILES_DATA_BUCKET_NAME: %s", self.S3_TILES_DATA_BUCKET_NAME)
         logger.info("S3_TILES_DATA_SECURE: %s", self.S3_TILES_DATA_SECURE)
-        logger.info("SEAWEEDFS_FILER_ENDPOINT: %s", self.SEAWEEDFS_FILER_ENDPOINT)
-        logger.info("SEAWEEDFS_TILE_TTL: %s", self.SEAWEEDFS_TILE_TTL)
-        logger.info("SEAWEEDFS_RADAR_TILE_TTL: %s", self.SEAWEEDFS_RADAR_TILE_TTL)
-        logger.info("SEAWEEDFS_ECMWF_TTL: %s", self.SEAWEEDFS_ECMWF_TTL)
-        logger.info("SEAWEEDFS_ECMWF_GRIB_TTL: %s", self.SEAWEEDFS_ECMWF_GRIB_TTL)
-        logger.info("SEAWEEDFS_WRF_TTL: %s", self.SEAWEEDFS_WRF_TTL)
         logger.info("RABBITMQ_HOST: %s", self.RABBITMQ_HOST)
         logger.info("RABBITMQ_PORT: %s", self.RABBITMQ_PORT)
         logger.info("RABBITMQ_QUEUE: %s", self.RABBITMQ_QUEUE)

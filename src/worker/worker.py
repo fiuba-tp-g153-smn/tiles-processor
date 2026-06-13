@@ -313,10 +313,7 @@ def run_worker(config: Config) -> None:
         loop.run_until_complete(
             s3_client.configure_lifecycle_policy(config.TILE_RETENTION_DAYS)
         )
-        logger.info(
-            "S3 lifecycle configured: tiles will expire after %d days",
-            config.TILE_RETENTION_DAYS,
-        )
+        logger.info("S3 per-prefix lifecycle configured for tile expiration")
     finally:
         loop.close()
 
@@ -330,21 +327,19 @@ def run_worker(config: Config) -> None:
         metrics_repository = MetricsRepository(Path(config.METRICS_DB_PATH))
 
     # Build inline processors (run in main process, need MQ access).
-    # GRIB uploads use SEAWEEDFS_ECMWF_GRIB_TTL — independent from the output
-    # TTL (SEAWEEDFS_ECMWF_TTL) so operators can keep raw GRIB inputs around
-    # longer than the derived COG/tile/GeoJSON outputs (or vice versa).
+    # GRIB inputs and ECMWF outputs each expire via their own per-prefix bucket
+    # lifecycle rule (grib/models/ecmwf vs cog|tiles|geojson/models/ecmwf), so
+    # operators can retain raw GRIB inputs independently of derived outputs.
     inline_processors: dict[str, InlineProcessor] = {}
     if config.ENABLE_ECMWF_PRECIPITATION:
-        ecmwf_tp_s3 = create_s3_client(config, with_ttl=config.SEAWEEDFS_ECMWF_GRIB_TTL)
+        ecmwf_tp_s3 = create_s3_client(config)
         inline_processors[ECMWF_TP_CONFIG.inline_processor_id] = EcmwfGribDownloader(
             product_config=ECMWF_TP_CONFIG,
             s3_client=ecmwf_tp_s3,
             bounds=config.get_bounds(),
         )
     if config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE:
-        ecmwf_mslp_s3 = create_s3_client(
-            config, with_ttl=config.SEAWEEDFS_ECMWF_GRIB_TTL
-        )
+        ecmwf_mslp_s3 = create_s3_client(config)
         inline_processors[ECMWF_MSLP_CONFIG.inline_processor_id] = EcmwfGribDownloader(
             product_config=ECMWF_MSLP_CONFIG,
             s3_client=ecmwf_mslp_s3,

@@ -207,7 +207,7 @@ class WrfProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._s3_client = create_s3_client(config, with_ttl=config.SEAWEEDFS_WRF_TTL)
+        self._s3_client = create_s3_client(config)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute full WRF processing pipeline for one product / forecast step."""

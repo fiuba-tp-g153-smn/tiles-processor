@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import pytest
-from clients.s3_client import S3Client
+from botocore import UNSIGNED
+from clients.s3_client import (
+    S3Client,
+    TILE_LIFECYCLE_RETENTION_DAYS,
+    _build_lifecycle_rules,
+)
 
 
 class _AsyncClientContext:
@@ -464,56 +469,8 @@ class TestS3ClientUploadFile:
     """Tests for S3Client.upload_file method."""
 
     @pytest.mark.asyncio
-    async def test_upload_file_uses_overridden_backend_and_returns_true(self, tmp_path):
-        """upload_file should delegate to _upload_file and honor backend override."""
-        file_path = tmp_path / "sample.tif"
-        file_path.write_bytes(b"abc")
-
-        override_backend = AsyncMock()
-        s3_client = S3Client(
-            bucket_name="tiles-data",
-            endpoint_url="http://s3:9000",
-            access_key="user",
-            secret_key="pass",
-            tile_uploader_overwritten=override_backend,
-        )
-
-        boto_client = AsyncMock()
-        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
-
-        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
-
-        assert uploaded is True
-        override_backend.upload.assert_awaited_once()
-        boto_client.put_object.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_upload_file_returns_false_on_backend_failure(self, tmp_path):
-        """upload_file should not raise and should return False on upload errors."""
-        file_path = tmp_path / "sample.tif"
-        file_path.write_bytes(b"abc")
-
-        override_backend = AsyncMock()
-        override_backend.upload.side_effect = RuntimeError("boom")
-
-        s3_client = S3Client(
-            bucket_name="tiles-data",
-            endpoint_url="http://s3:9000",
-            access_key="user",
-            secret_key="pass",
-            tile_uploader_overwritten=override_backend,
-        )
-
-        boto_client = AsyncMock()
-        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
-
-        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
-
-        assert uploaded is False
-
-    @pytest.mark.asyncio
-    async def test_upload_file_success_without_overridden_backend(self, tmp_path):
-        """upload_file should use boto put_object when no override backend is configured."""
+    async def test_upload_file_success_uses_put_object(self, tmp_path):
+        """upload_file should put the object and return True on success."""
         file_path = tmp_path / "sample.tif"
         file_path.write_bytes(b"abc")
 
@@ -532,6 +489,27 @@ class TestS3ClientUploadFile:
         assert uploaded is True
         boto_client.put_object.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_upload_file_returns_false_on_put_object_failure(self, tmp_path):
+        """upload_file should not raise and should return False on put_object errors."""
+        file_path = tmp_path / "sample.tif"
+        file_path.write_bytes(b"abc")
+
+        s3_client = S3Client(
+            bucket_name="tiles-data",
+            endpoint_url="http://s3:9000",
+            access_key="user",
+            secret_key="pass",
+        )
+
+        boto_client = AsyncMock()
+        boto_client.put_object.side_effect = RuntimeError("boom")
+        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+
+        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
+
+        assert uploaded is False
+
 
 class TestS3ClientUploadDirectory:
     """Tests for S3Client.upload_directory method."""
@@ -548,17 +526,14 @@ class TestS3ClientUploadDirectory:
         for i in range(5):
             (tile_dir / f"{i}.json").write_bytes(b"{}")
 
-        override_backend = AsyncMock()
-        override_backend.upload.side_effect = RuntimeError("seaweedfs down")
-
         s3_client = S3Client(
             bucket_name="tiles-data",
             endpoint_url="http://s3:9000",
             access_key="user",
             secret_key="pass",
-            tile_uploader_overwritten=override_backend,
         )
         boto_client = AsyncMock()
+        boto_client.put_object.side_effect = RuntimeError("s3 down")
         s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
 
         with caplog.at_level(logging.DEBUG, logger="clients.s3_client"):
@@ -575,3 +550,72 @@ class TestS3ClientUploadDirectory:
         assert uploaded == 0
         assert len(errors) == 1  # single summary, not one-per-file
         assert len(debug_failures) == 5
+
+
+class TestBuildLifecycleRules:
+    """Tests for the pure per-prefix lifecycle-rule builder."""
+
+    def test_one_rule_per_prefix_and_no_empty_catchall(self):
+        rules = _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+
+        assert len(rules) == len(TILE_LIFECYCLE_RETENTION_DAYS)
+        prefixes = [r["Filter"]["Prefix"] for r in rules]
+        assert "" not in prefixes  # R1: no empty-prefix catch-all
+        assert set(prefixes) == set(TILE_LIFECYCLE_RETENTION_DAYS)
+
+    def test_expected_prefix_to_days_mapping(self):
+        days_by_prefix = {
+            r["Filter"]["Prefix"]: r["Expiration"]["Days"]
+            for r in _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+        }
+        assert days_by_prefix["tiles/radar"] == 1
+        assert days_by_prefix["tiles/wrf"] == 2
+        assert days_by_prefix["grib/models/ecmwf"] == 1
+        assert days_by_prefix["geojson/models/ecmwf"] == 2
+
+    def test_sub_day_retention_rounds_up_to_one_and_ids_unique(self):
+        rules = _build_lifecycle_rules(
+            {"tiles/radar": 0, "tiles/wrf": 2, "cog/radar": -3}
+        )
+        assert all(r["Status"] == "Enabled" for r in rules)
+        assert all(r["Expiration"]["Days"] >= 1 for r in rules)
+        ids = [r["ID"] for r in rules]
+        assert len(ids) == len(set(ids))
+
+    def test_real_map_has_unique_ids_and_is_sorted(self):
+        rules = _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+        ids = [r["ID"] for r in rules]
+        prefixes = [r["Filter"]["Prefix"] for r in rules]
+        assert len(ids) == len(set(ids))
+        assert prefixes == sorted(prefixes)  # deterministic ordering
+
+
+class TestS3ClientGetClientKwargs:
+    """Tests for path-style + connection-pool addressing on both auth branches."""
+
+    def test_authenticated_uses_path_style_pool_and_no_unsigned(self):
+        client = S3Client(
+            bucket_name="tiles-data",
+            endpoint_url="http://s3:9000",
+            max_concurrent_downloads=7,
+            access_key="user",
+            secret_key="pass",
+        )
+        kwargs = client._get_client_kwargs(authenticated=True)
+
+        assert kwargs["aws_access_key_id"] == "user"
+        assert kwargs["aws_secret_access_key"] == "pass"
+        cfg = kwargs["config"]
+        assert cfg.s3["addressing_style"] == "path"
+        assert cfg.max_pool_connections == 7
+        assert cfg.signature_version != UNSIGNED
+
+    def test_unauthenticated_uses_path_style_pool_and_unsigned(self):
+        client = S3Client(bucket_name="noaa-goes19", max_concurrent_downloads=6)
+        kwargs = client._get_client_kwargs(authenticated=False)
+
+        assert "aws_access_key_id" not in kwargs
+        cfg = kwargs["config"]
+        assert cfg.s3["addressing_style"] == "path"
+        assert cfg.max_pool_connections == 6
+        assert cfg.signature_version == UNSIGNED
