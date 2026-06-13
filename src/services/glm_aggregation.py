@@ -125,7 +125,6 @@ def reproject_to_latlon(
     dataset: xr.Dataset,
     var_name: str,
     bounds: dict[str, float],
-    resolution_deg: float,
 ) -> xr.DataArray:
     """Reproject one variable of an aggregated GLM dataset to EPSG:4326.
 
@@ -139,7 +138,6 @@ def reproject_to_latlon(
         var_name: Variable to extract (e.g. ``"flash_extent_density"``).
         bounds: Geographic clip box in degrees with keys ``minx``/``maxx``/
             ``miny``/``maxy``.
-        resolution_deg: Target pixel size for the reprojected grid.
 
     Returns:
         A georeferenced :class:`xarray.DataArray` in EPSG:4326 clipped to
@@ -167,9 +165,16 @@ def reproject_to_latlon(
     # change could silently turn empty cells into opaque palette-floor colors.
     da.rio.write_nodata(np.nan, inplace=True)
 
+    # Leave resolution=None so rioxarray/GDAL pick the source-native output
+    # grid (≈ the input pixel count) instead of inflating the full GOES disk
+    # to a forced fine grid and then discarding ~86% of it at clip_box. This
+    # mirrors the GOES path (REPROJECT_RESOLUTION=None) and the CLAUDE.md
+    # geostationary-reproject gotcha. Output resolution becomes source-native
+    # rather than a fixed 0.02°: scientifically/visually equivalent, not
+    # byte-identical.
     reprojected = da.rio.reproject(
         "EPSG:4326",
-        resolution=resolution_deg,
+        resolution=None,
         nodata=float("nan"),
     )
     return reprojected.rio.clip_box(

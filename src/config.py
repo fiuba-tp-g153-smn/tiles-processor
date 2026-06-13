@@ -175,7 +175,6 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.GLM_PRODUCE_EVERY_MINUTES: int = int(
             settings.get("glm_produce_every_minutes", 10)
         )
-        self.GLM_RESOLUTION_DEG: float = float(settings.get("glm_resolution_deg", 0.02))
 
         # WRF Configuration
         self.ENABLED_WRF_PRODUCTS: dict[str, bool] = {
@@ -330,7 +329,6 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             )
         logger.info("GLM_ACCUM_MINUTES: %s", self.GLM_ACCUM_MINUTES)
         logger.info("GLM_PRODUCE_EVERY_MINUTES: %s", self.GLM_PRODUCE_EVERY_MINUTES)
-        logger.info("GLM_RESOLUTION_DEG: %s", self.GLM_RESOLUTION_DEG)
         for pid, enabled in self.ENABLED_WRF_PRODUCTS.items():
             logger.info("ENABLE_WRF_%s: %s", pid, enabled)
         logger.info("WRF_INPUT_DIR: %s", self.WRF_INPUT_DIR)

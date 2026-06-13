@@ -57,7 +57,6 @@ def _make_config(tmp_path: Path, *, enable_toe: bool, enable_mfa: bool) -> Magic
     config.ENABLE_GLM_TOE = enable_toe
     config.ENABLE_GLM_MFA = enable_mfa
     config.GLM_ACCUM_MINUTES = 10
-    config.GLM_RESOLUTION_DEG = 1.0
     return config
 
 
