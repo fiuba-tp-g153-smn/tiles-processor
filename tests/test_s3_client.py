@@ -9,9 +9,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 import pytest
 from botocore import UNSIGNED
+from botocore.exceptions import ClientError
 from clients.s3_client import (
     S3Client,
     TILE_LIFECYCLE_RETENTION_DAYS,
+    _CONNECT_TIMEOUT_S,
+    _MAX_ATTEMPTS,
+    _READ_TIMEOUT_S,
     _build_lifecycle_rules,
 )
 
@@ -671,6 +675,9 @@ class TestS3ClientGetClientKwargs:
         assert cfg.s3["addressing_style"] == "path"
         assert cfg.max_pool_connections == 40  # max(downloads=7, uploads=40, 8)
         assert cfg.signature_version != UNSIGNED
+        assert cfg.connect_timeout == _CONNECT_TIMEOUT_S
+        assert cfg.read_timeout == _READ_TIMEOUT_S
+        assert cfg.retries == {"max_attempts": _MAX_ATTEMPTS, "mode": "standard"}
 
     def test_unauthenticated_uses_path_style_pool_and_unsigned(self):
         client = S3Client(
@@ -683,3 +690,42 @@ class TestS3ClientGetClientKwargs:
         assert cfg.s3["addressing_style"] == "path"
         assert cfg.max_pool_connections == 12  # max(downloads=6, uploads=12, 8)
         assert cfg.signature_version == UNSIGNED
+        assert cfg.connect_timeout == _CONNECT_TIMEOUT_S
+        assert cfg.read_timeout == _READ_TIMEOUT_S
+        assert cfg.retries == {"max_attempts": _MAX_ATTEMPTS, "mode": "standard"}
+
+
+class TestS3ClientHeadExists:
+    """head_exists: HEAD 200 → True, 404-class → False, other errors propagate."""
+
+    @staticmethod
+    def _session_ctx(mock_s3_client):
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_s3_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        return mock_ctx
+
+    async def _head_exists(self, head_object_mock, key="grib/x/20260217T0000Z.grib"):
+        client = S3Client(bucket_name="tiles-data")
+        mock_s3_client = AsyncMock()
+        mock_s3_client.head_object = head_object_mock
+        with patch.object(client, "_session") as mock_session:
+            mock_session.client.return_value = self._session_ctx(mock_s3_client)
+            return await client.head_exists(key)
+
+    @pytest.mark.asyncio
+    async def test_head_200_returns_true(self):
+        result = await self._head_exists(AsyncMock(return_value={}))
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_head_404_returns_false(self):
+        err = ClientError({"Error": {"Code": "404"}}, "HeadObject")
+        result = await self._head_exists(AsyncMock(side_effect=err))
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_head_other_error_propagates(self):
+        err = ClientError({"Error": {"Code": "500"}}, "HeadObject")
+        with pytest.raises(ClientError):
+            await self._head_exists(AsyncMock(side_effect=err))

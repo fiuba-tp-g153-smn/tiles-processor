@@ -78,9 +78,6 @@ class EcmwfProducerDataSource(DataSource):
             [t.strftime("%Y%m%dT%H%MZ") for t in candidate_times],
         )
 
-        existing_grib_keys = await self._list_existing_grib_keys()
-        logger.info("%s Existing GRIBs in S3: %d", prefix, len(existing_grib_keys))
-
         # Availability gate: never enqueue a run ECMWF has not published yet.
         # latest() HEADs the run URLs and returns the newest fully-published run;
         # candidates after it are skipped (no doomed download → no SKIP loop). If
@@ -107,7 +104,10 @@ class EcmwfProducerDataSource(DataSource):
             forecast_ts = _fmt_ts(forecast_time)
             grib_key = f"{self._product_config.grib_prefix}/{forecast_ts}.grib"
 
-            if grib_key in existing_grib_keys:
+            # Direct HEAD on the known key (≤3/tick) instead of a prefix LIST.
+            # A non-404 HEAD error propagates to the producer's per-source
+            # try/except → this source is skipped this tick (fail-safe).
+            if await self._s3_client.head_exists(grib_key):
                 logger.debug("%s GRIB already cached: %s", prefix, grib_key)
                 continue
 
@@ -240,23 +240,6 @@ class EcmwfProducerDataSource(DataSource):
             if len(candidates) >= FORECASTS_TO_MAINTAIN:
                 break
         return candidates
-
-    async def _list_existing_grib_keys(self) -> set[str]:
-        """Return the set of GRIB S3 keys currently cached."""
-        if self._s3_client is None:
-            return set()
-        try:
-            keys = await self._s3_client.list_files(
-                f"{self._product_config.grib_prefix}/", ".grib"
-            )
-            return set(keys)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(
-                "[%s] Could not list existing GRIBs: %s",
-                self._product_config.log_prefix,
-                exc,
-            )
-            return set()
 
 
 def _fmt_ts(dt: datetime) -> str:

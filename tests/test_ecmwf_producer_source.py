@@ -3,7 +3,7 @@
 import os
 import sys
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
@@ -23,9 +23,13 @@ def _config(now: datetime) -> DiscoveryConfig:
     )
 
 
-def _source() -> EcmwfProducerDataSource:
-    # s3_client=None → _list_existing_grib_keys() returns an empty set.
-    return EcmwfProducerDataSource(product_config=ECMWF_TP_CONFIG, s3_client=None)
+def _source(grib_cached: bool = False) -> EcmwfProducerDataSource:
+    """Source whose s3_client.head_exists reports GRIBs as missing by default."""
+    source = EcmwfProducerDataSource(product_config=ECMWF_TP_CONFIG, s3_client=None)
+    s3 = MagicMock()
+    s3.head_exists = AsyncMock(return_value=grib_cached)
+    source._s3_client = s3
+    return source
 
 
 @pytest.mark.asyncio
@@ -41,6 +45,23 @@ async def test_discover_emits_only_runs_at_or_before_latest():
     ids = {img.image_id for img in images}
     assert ids == {"20260217T0000Z", "20260216T1200Z"}
     assert "20260217T1200Z" not in ids  # not yet published → no SKIP-loop unit
+
+
+@pytest.mark.asyncio
+async def test_discover_skips_cached_run_via_head():
+    """A published-but-already-cached run is skipped via head_exists (no LIST)."""
+    source = _source()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=UTC)
+    latest = datetime(2026, 2, 17, 12, 0, tzinfo=UTC)  # all 3 candidates published
+    source._latest_available_run = MagicMock(return_value=latest)
+    cached_key = f"{ECMWF_TP_CONFIG.grib_prefix}/20260217T1200Z.grib"
+    source._s3_client.head_exists = AsyncMock(side_effect=lambda key: key == cached_key)
+
+    images = await source.discover_images(_config(now))
+
+    ids = {img.image_id for img in images}
+    assert "20260217T1200Z" not in ids  # cached → skipped
+    assert ids == {"20260217T0000Z", "20260216T1200Z"}
 
 
 @pytest.mark.asyncio

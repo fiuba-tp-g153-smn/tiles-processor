@@ -1,4 +1,4 @@
-"""Tests for the inline EcmwfGribDownloader's per-stage metrics recording."""
+"""Tests for the inline EcmwfGribDownloader's per-stage metrics + HEAD existence."""
 
 import asyncio
 import os
@@ -35,7 +35,7 @@ async def test_process_records_upload_stage_timing():
     """The GRIB PUT time is recorded under the 'upload' (Subida) stage."""
     upload_s = 0.05
     s3 = AsyncMock()
-    s3.list_files = AsyncMock(return_value=[])  # GRIB missing + no existing COGs
+    s3.head_exists = AsyncMock(return_value=False)  # GRIB + all COGs missing
 
     async def _slow_upload(_key, _path):
         await asyncio.sleep(upload_s)
@@ -54,13 +54,10 @@ async def test_process_records_upload_stage_timing():
 
 @pytest.mark.asyncio
 async def test_process_upload_is_zero_when_grib_already_cached():
-    """Idempotent retry: PUT skipped → upload stage is 0.0, no upload_file call."""
-
-    async def _list(_prefix, suffix):
-        return ["grib/.../20260217T0000Z.grib"] if suffix.endswith(".grib") else []
-
+    """Idempotent retry: GRIB HEAD hits → PUT skipped, upload stage is 0.0."""
     s3 = AsyncMock()
-    s3.list_files = AsyncMock(side_effect=_list)
+    # GRIB key (…​.grib) exists; the 47 COG candidates (.tif) do not.
+    s3.head_exists = AsyncMock(side_effect=lambda key: key.endswith(".grib"))
     s3.upload_file = AsyncMock(return_value=True)
     collector = MagicMock()
 
@@ -72,10 +69,32 @@ async def test_process_upload_is_zero_when_grib_already_cached():
 
 
 @pytest.mark.asyncio
+async def test_process_skips_enqueue_for_existing_cog_periods():
+    """Periods whose COG already exists (HEAD hit) are not re-enqueued."""
+    forecast_ts = "20260217T0000Z"
+    # Pretend the T+6 COG (20260217T0600Z) already exists; everything else missing.
+    existing_cog = f"{ECMWF_TP_CONFIG.cog_prefix}/{forecast_ts}/20260217T0600Z.tif"
+    s3 = AsyncMock()
+
+    async def _head(key):
+        return key == existing_cog  # GRIB missing → uploaded; one COG present
+
+    s3.head_exists = AsyncMock(side_effect=_head)
+    s3.upload_file = AsyncMock(return_value=True)
+    mq = MagicMock()
+
+    await _downloader(s3).process("/tmp/x.grib", _work_unit(), mq)
+
+    enqueued_ids = {call.args[0].image_id for call in mq.publish.call_args_list}
+    assert "20260217T0600Z" not in enqueued_ids  # existing period skipped
+    assert "20260217T0900Z" in enqueued_ids  # a missing period still enqueued
+
+
+@pytest.mark.asyncio
 async def test_process_is_metrics_noop_without_collector():
     """No collector (default) must not raise; processing still proceeds."""
     s3 = AsyncMock()
-    s3.list_files = AsyncMock(return_value=[])
+    s3.head_exists = AsyncMock(return_value=False)
     s3.upload_file = AsyncMock(return_value=True)
 
     await _downloader(s3).process("/tmp/x.grib", _work_unit(), MagicMock())

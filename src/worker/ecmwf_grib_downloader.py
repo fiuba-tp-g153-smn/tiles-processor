@@ -1,5 +1,6 @@
 """ECMWF GRIB downloader: inline processor that uploads the GRIB and enqueues period-end jobs."""
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
@@ -83,7 +84,9 @@ class EcmwfGribDownloader(InlineProcessor):
 
         # Step 2: Find missing period-end timestamps and enqueue
         list_start = perf_counter()
-        existing_cog_keys = await self._list_existing_cog_keys(forecast_ts)
+        existing_cog_keys = await self._list_existing_cog_keys(
+            forecast_ts, forecast_time
+        )
         list_s += perf_counter() - list_start
 
         enqueue_start = perf_counter()
@@ -147,9 +150,15 @@ class EcmwfGribDownloader(InlineProcessor):
         assert self._s3_client is not None
         prefix = f"[{self._product_config.log_prefix}]"
         list_start = perf_counter()
-        existing = await self._s3_client.list_files(
-            f"{self._product_config.grib_prefix}/", f"{forecast_ts}.grib"
-        )
+        try:
+            existing = await self._s3_client.head_exists(grib_s3_key)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # Existence HEAD failed (not a 404) — proceed to upload; the PUT is
+            # an idempotent overwrite, so re-uploading is safe.
+            logger.warning(
+                "%s GRIB existence HEAD failed (%s); uploading anyway", prefix, exc
+            )
+            existing = False
         list_s = perf_counter() - list_start
         if existing:
             logger.info(
@@ -166,21 +175,34 @@ class EcmwfGribDownloader(InlineProcessor):
         logger.info("%s GRIB uploaded: %s", prefix, grib_s3_key)
         return list_s, upload_s
 
-    async def _list_existing_cog_keys(self, forecast_ts: str) -> set[str]:
-        """Return the set of COG keys already generated for this forecast."""
+    async def _list_existing_cog_keys(
+        self, forecast_ts: str, forecast_time: datetime
+    ) -> set[str]:
+        """Return which period-end COG keys already exist, via concurrent HEADs.
+
+        Every candidate key is known (``cog_prefix/<ts>/<end_ts>.tif`` for each
+        period end), so direct HEADs replace a prefix scan that would compete
+        with concurrent tile uploads. On any HEAD failure, return empty (treat
+        all as missing → enqueue all) — same fail-safe as the old LIST.
+        """
         assert self._s3_client is not None
+        candidate_keys = [
+            f"{self._product_config.cog_prefix}/{forecast_ts}/"
+            f"{_fmt_ts(forecast_time + timedelta(hours=hour_end))}.tif"
+            for hour_end in _end_hours()
+        ]
         try:
-            keys = await self._s3_client.list_files(
-                f"{self._product_config.cog_prefix}/{forecast_ts}/", ".tif"
+            results = await asyncio.gather(
+                *(self._s3_client.head_exists(key) for key in candidate_keys)
             )
-            return set(keys)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(
-                "[%s] Could not list existing COGs: %s",
+                "[%s] Could not check existing COGs: %s",
                 self._product_config.log_prefix,
                 exc,
             )
             return set()
+        return {key for key, exists in zip(candidate_keys, results) if exists}
 
 
 def _end_hours() -> list[int]:

@@ -16,6 +16,7 @@ import aioboto3
 from boto3.s3.transfer import TransferConfig
 from botocore import UNSIGNED
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,15 @@ DEFAULT_UPLOAD_CONCURRENCY = 32
 _MULTIPART_THRESHOLD_BYTES = 8 * 1024 * 1024
 # Parts in flight per large single-object transfer.
 _MULTIPART_MAX_CONCURRENCY = 8
+
+# Cap any single S3 op stalled by gateway contention at seconds, not botocore's
+# 60s default read timeout (which turned contended LISTs into ~60s blocks).
+# read_timeout is per-socket-read, so a progressing multipart transfer resets it
+# each chunk and won't false-abort a slow-but-moving upload; 'standard' mode adds
+# bounded exponential-backoff retries so a contention burst can pass before retry.
+_CONNECT_TIMEOUT_S = 5
+_READ_TIMEOUT_S = 30
+_MAX_ATTEMPTS = 3
 
 
 # Per-prefix object retention, in days. Sub-day expiries (radar 6h, GRIB 3h)
@@ -185,6 +195,9 @@ class S3Client:
         boto_kwargs: dict[str, Any] = {
             "s3": {"addressing_style": "path"},
             "max_pool_connections": pool,
+            "connect_timeout": _CONNECT_TIMEOUT_S,
+            "read_timeout": _READ_TIMEOUT_S,
+            "retries": {"max_attempts": _MAX_ATTEMPTS, "mode": "standard"},
         }
         if authenticated and self._access_key and self._secret_key:
             kwargs["aws_access_key_id"] = self._access_key
@@ -487,6 +500,24 @@ class S3Client:
             len(file_paths),
         )
         return files
+
+    async def head_exists(self, key: str) -> bool:
+        """Return True if the exact object exists (HEAD 200), False on 404.
+
+        Direct O(1) existence check — avoids a prefix LIST + filter when the
+        caller already knows the full key (and avoids a heavy scan that competes
+        with concurrent uploads). Non-404 errors propagate so a transient gateway
+        failure is never silently read as "missing".
+        """
+        async with self._client_session() as s3_client:
+            try:
+                await s3_client.head_object(Bucket=self._bucket_name, Key=key)
+                return True
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code")
+                if code in ("404", "NoSuchKey", "NotFound"):
+                    return False
+                raise
 
     async def list_files(self, folder_path: str, file_pattern: str) -> list[str]:
         """
