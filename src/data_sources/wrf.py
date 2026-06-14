@@ -25,6 +25,12 @@ class WrfDataSource(DataSource):
     with ``skip_f000=True`` (1h-accumulation products lacking pp01H at init).
     """
 
+    # Máximo de corridas (init_tags) a publicar por ciclo: las más recientes.
+    # Análogo a RadarDataSource.TARGET_IMAGES = 12 — acota la ráfaga por conteo
+    # (no por reloj, así un snapshot estático sigue drenando) y deja que el dedup
+    # arrastre corridas viejas hacia atrás en ciclos sucesivos.
+    TARGET_RUNS = 3
+
     def __init__(self, product_config: WrfProductConfig, repository: WrfFileRepository):
         self._product_config = product_config
         self._repository = repository
@@ -51,7 +57,7 @@ class WrfDataSource(DataSource):
             )
             return []
 
-        new_images = []
+        candidates: list[tuple[str, ImageInfo]] = []  # (init_tag, image)
         for source_uri in source_uris:
             filename = Path(source_uri).name
             try:
@@ -77,22 +83,36 @@ class WrfDataSource(DataSource):
                 logger.debug("Skipping %s (in progress)", image_id)
                 continue
 
-            new_images.append(
-                ImageInfo(
-                    image_id=image_id,
-                    source_uri=source_uri,
-                    data_source_id=self.source_id,
-                    processor_id=self.processor_id,
-                    output_prefix=self._product_config.s3_tiles_prefix,
+            candidates.append(
+                (
+                    parsed["init_tag"],
+                    ImageInfo(
+                        image_id=image_id,
+                        source_uri=source_uri,
+                        data_source_id=self.source_id,
+                        processor_id=self.processor_id,
+                        output_prefix=self._product_config.s3_tiles_prefix,
+                    ),
                 )
             )
 
+        # Quedarse con las TARGET_RUNS corridas más nuevas, calculado sobre el
+        # conjunto POST-dedup (igual que RadarDataSource): así las corridas
+        # viejas drenan hacia atrás en ciclos sucesivos en vez de ignorarse para
+        # siempre. init_tag "YYYYMMDD_HH0000" ordena cronológicamente como string.
+        runs_newest_first = sorted({init for init, _ in candidates}, reverse=True)
+        allowed = set(runs_newest_first[: self.TARGET_RUNS])
+        target = [img for init, img in candidates if init in allowed]
+
         logger.info(
-            "[%s] Found %d new forecast steps to process",
+            "[%s] %d new step(s) across %d run(s); publishing %d from newest %d run(s)",
             self.source_id,
-            len(new_images),
+            len(candidates),
+            len({init for init, _ in candidates}),
+            len(target),
+            self.TARGET_RUNS,
         )
-        return new_images
+        return target
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         """Copy WRF FIELD2D NetCDF file to the worker's work directory."""
