@@ -22,10 +22,14 @@ import signal
 import sys
 import traceback
 
+from exceptions import UnprocessableInputError
 from processors.base_processor import ShutdownRequested
-
-EXIT_ERROR_CODE = 1
-EXIT_SUCCESS_CODE = 0
+from worker.exit_codes import (
+    EXIT_ERROR_CODE,
+    EXIT_SKIP_CODE,
+    EXIT_SUCCESS_CODE,
+    SKIP_REASON_PREFIX,
+)
 
 
 def create_processor_registry():
@@ -172,6 +176,13 @@ def main() -> int:
     except ShutdownRequested:
         logging.info("[SUBPROCESS] Shutdown requested, exiting gracefully")
         return EXIT_ERROR_CODE
+
+    except UnprocessableInputError as e:
+        # Deterministic bad input: not a crash. Log a clean WARNING (stdout) and
+        # hand the reason to the parent over stderr so it surfaces as SKIPPED.
+        logging.warning("[SUBPROCESS] Skipping unprocessable input: %s", e)
+        print(f"{SKIP_REASON_PREFIX}{e}", file=sys.stderr, flush=True)
+        return EXIT_SKIP_CODE
 
     except Exception as e:  # pylint: disable=broad-exception-caught
         # Log the error (will go to stderr which parent captures)

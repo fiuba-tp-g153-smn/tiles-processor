@@ -17,6 +17,7 @@ from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from db.migrate import ensure_migrations
+from exceptions import UnprocessableInputError
 from factories import (
     create_data_source_registry,
     create_rabbitmq_client,
@@ -244,6 +245,15 @@ class Worker:  # pylint: disable=too-few-public-methods
             self._handler.release_progress(work_unit)
             collector.mark_outcome(JobOutcome.SKIPPED, str(e))
             self._mq_client.ack(delivery_tag)  # producer re-enqueues next cycle
+
+        except UnprocessableInputError as e:
+            # Deterministic bad input (e.g. radar sweeps with incompatible range
+            # geometry). Ack and record SKIPPED — no retry, no DLQ. Unlike the
+            # forecast case we do NOT release_progress: re-discovering it would
+            # only re-skip it; the JOB_TTL reclaims the (short-lived) unit.
+            logger.warning("Skipping unprocessable %s: %s", work_unit.image_id, e)
+            collector.mark_outcome(JobOutcome.SKIPPED, str(e))
+            self._mq_client.ack(delivery_tag)
 
         except TransientDownloadError as e:
             logger.warning(

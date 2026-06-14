@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import pytest
+from exceptions import UnprocessableInputError
 from models.work_unit import WorkUnit
+from worker.exit_codes import EXIT_SKIP_CODE, SKIP_REASON_PREFIX
 from worker.work_handler import WorkHandler
 
 
@@ -101,6 +103,26 @@ async def test_subprocess_nonzero_exit_raises_with_stderr_tail(tmp_path):
             )
 
     assert "BoomError: nope" in str(excinfo.value)
+    assert handler._processes == set()
+
+
+@pytest.mark.asyncio
+async def test_subprocess_skip_exit_raises_unprocessable_with_reason(tmp_path):
+    """Exit code EXIT_SKIP_CODE → UnprocessableInputError carrying the marked reason."""
+    handler = _handler()
+    reason = "Incompatible sweep range geometry for RMA11_KDP_x.H5: range start ..."
+    proc = _FakeProcess(
+        returncode=EXIT_SKIP_CODE,
+        stderr=[b"some native HDF noise\n", f"{SKIP_REASON_PREFIX}{reason}\n".encode()],
+    )
+
+    with _patch_spawn(proc):
+        with pytest.raises(UnprocessableInputError) as excinfo:
+            await handler._run_processing_subprocess(
+                _work_unit(), "/tmp/in.nc", tmp_path / "m.json"
+            )
+
+    assert str(excinfo.value) == reason  # prefix stripped, native noise ignored
     assert handler._processes == set()
 
 

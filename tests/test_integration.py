@@ -20,6 +20,7 @@ import pytest
 import numpy as np
 from config import Config
 import logging
+from exceptions import UnprocessableInputError
 from worker.worker import Worker
 from worker.work_handler import WorkHandler
 from models.work_unit import WorkUnit
@@ -203,6 +204,44 @@ class TestWorkerIntegration:
             # Should send to DLQ, then ack the original
             mock_rabbitmq.publish_to_dlq.assert_called_once()
             mock_rabbitmq.ack.assert_called_once_with(1)
+
+    def test_worker_skips_unprocessable_input(
+        self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
+    ):
+        """Unprocessable input is acked as SKIPPED — no retry, no DLQ, no release."""
+
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            worker = Worker(config, mock_rabbitmq, mock_tracker)
+
+            mock_handler = MagicMock()
+            mock_handler.handle = AsyncMock(
+                side_effect=UnprocessableInputError(
+                    "Incompatible sweep range geometry for RMA11_KDP_x.H5"
+                )
+            )
+            worker._handler = mock_handler
+
+            work_unit = WorkUnit.create(
+                image_id="RMA11_KDP_20260114T170040Z",
+                source_uri="/data/radar/RMA11_KDP_20260114T170040Z.H5",
+                data_source_id="radar_KDP",
+                processor_id="radar",
+                output_prefix="tiles/radar",
+                bounds=config.get_bounds(),
+                band_id="radar_KDP",
+            )
+
+            asyncio.run(
+                worker._process_message_async(work_unit, 1, "tiles_radar_light_queue")
+            )
+
+            # Acked once (removed), and NOT retried / DLQ'd / re-discovered.
+            mock_rabbitmq.ack.assert_called_once_with(1)
+            mock_rabbitmq.publish.assert_not_called()
+            mock_rabbitmq.publish_to_dlq.assert_not_called()
+            # Deterministic skip: must NOT release progress (would only re-skip).
+            mock_handler.release_progress.assert_not_called()
 
 
 class TestPipelineIntegration:

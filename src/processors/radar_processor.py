@@ -27,6 +27,7 @@ from rasterio.transform import from_bounds
 from rasterio.crs import CRS  # pylint: disable=no-name-in-module
 
 from config import Config
+from exceptions import UnprocessableInputError
 from factories import create_s3_client
 from models.work_unit import WorkUnit
 from models.radar_config import get_radar_product_config, parse_radar_filename
@@ -241,7 +242,20 @@ class RadarProcessor(ImageProcessor):
         logger.info("[RADAR] Reading %s", h5_path.name)
 
         # Use SINARAME reader for Argentine radar files
-        radar = pyart.aux_io.read_sinarame_h5(str(h5_path))
+        try:
+            radar = pyart.aux_io.read_sinarame_h5(str(h5_path))
+        except ValueError as exc:
+            # Some RMA scans (notably dual-pol KDP) carry sweeps with different
+            # range geometry (rstart/rscale); pyart's single global range array
+            # can't represent them and raises "... changes between sweeps". This
+            # is a real scan-strategy data shape, not corruption — skip it
+            # cleanly (no retry/DLQ) rather than crash. Re-raise any other
+            # ValueError so genuine read bugs still surface as errors.
+            if "changes between sweeps" in str(exc):
+                raise UnprocessableInputError(
+                    f"Incompatible sweep range geometry for {h5_path.name}: {exc}"
+                ) from exc
+            raise
 
         logger.info(
             "[RADAR] Fields: %s, Sweeps: %d, Center: (%.4f, %.4f)",

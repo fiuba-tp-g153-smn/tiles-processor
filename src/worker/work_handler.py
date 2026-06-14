@@ -18,7 +18,9 @@ from clients.message_queue_client import MessageQueueClient
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from data_sources import DataSourceRegistry
+from exceptions import UnprocessableInputError
 from models.work_unit import WorkUnit
+from worker.exit_codes import EXIT_SKIP_CODE, SKIP_REASON_PREFIX
 from worker.inline_processor import InlineProcessor
 from worker.job_metrics_context import JobMetricsContext
 
@@ -264,6 +266,11 @@ class WorkHandler:
             finally:
                 await readers  # drain any remaining stdout/stderr to EOF
 
+            if return_code == EXIT_SKIP_CODE:
+                # Deterministic unprocessable input — re-raise across the process
+                # boundary so the worker records SKIPPED (ack, no retry/DLQ).
+                raise UnprocessableInputError(self._extract_skip_reason(stderr_buffer))
+
             if return_code != 0:
                 error_details = (
                     "\n".join(stderr_buffer)
@@ -276,6 +283,14 @@ class WorkHandler:
                 )
         finally:
             self._processes.discard(proc)
+
+    @staticmethod
+    def _extract_skip_reason(stderr_buffer: "deque[str]") -> str:
+        """Pull the subprocess's marked skip reason from its stderr tail."""
+        for line in reversed(stderr_buffer):
+            if line.startswith(SKIP_REASON_PREFIX):
+                return line[len(SKIP_REASON_PREFIX) :]
+        return "unprocessable input"
 
     @staticmethod
     async def _stream_stdout(stream: asyncio.StreamReader | None) -> None:
