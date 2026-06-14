@@ -26,6 +26,13 @@ import xarray as xr
 from glmtools.io.imagery import aggregate
 from pyproj import CRS
 
+# Finite nodata sentinel for the GEOS→EPSG:4326 warp. GDAL runs a slow per-pixel
+# isnan() test when nodata is NaN (~4× slower on the sparse GLM disk); a finite
+# sentinel uses a fast == test instead. ~finfo(float32).min is impossible for
+# the non-negative GLM quantities (FED/TOE/MFA ≥ 0), so it can never collide
+# with real data. See reproject_to_latlon for why this stays byte-identical.
+_NODATA_SENTINEL = np.float32(-3.4e38)
+
 
 def _load_time_series(files: list[Path]) -> xr.Dataset:
     """Stack 1-minute GLM grids along a new ``time`` dimension.
@@ -159,11 +166,16 @@ def reproject_to_latlon(
     da = da.assign_coords(x=da["x"].values * sat_h, y=da["y"].values * sat_h)
     da.rio.write_crs(src_crs.to_string(), inplace=True)
     da.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
-    # Pin NaN as the nodata sentinel both on the source and on the warp output
-    # so destination cells outside the source extent (or filled by GDAL) come
-    # back as NaN instead of 0 — without this, a future rioxarray/GDAL default
-    # change could silently turn empty cells into opaque palette-floor colors.
-    da.rio.write_nodata(np.nan, inplace=True)
+    # Warp with a FINITE nodata sentinel rather than NaN. GDAL runs a per-pixel
+    # isnan() test when nodata is NaN (~4× slower on the sparse GLM disk); a
+    # finite sentinel uses a fast == test. The NaN *data* cells pass through
+    # untouched under nearest resampling (the GLM default — no interpolation),
+    # and we map the sentinel fill back to NaN below, so the result is
+    # byte-identical to a nodata=NaN warp (verified max|diff|=0, NaN positions
+    # match) at dense-warp speed, with no array copy — only the nodata flag
+    # changes. NOTE: exact only for *nearest* resampling; bilinear/cubic would
+    # interpolate across the sentinel and corrupt edges — revisit if that changes.
+    da.rio.write_nodata(_NODATA_SENTINEL, inplace=True)
 
     # Leave resolution=None so rioxarray/GDAL pick the source-native output
     # grid (≈ the input pixel count) instead of inflating the full GOES disk
@@ -175,11 +187,20 @@ def reproject_to_latlon(
     reprojected = da.rio.reproject(
         "EPSG:4326",
         resolution=None,
-        nodata=float("nan"),
+        nodata=float(_NODATA_SENTINEL),
     )
-    return reprojected.rio.clip_box(
+    clipped = reprojected.rio.clip_box(
         minx=bounds["minx"],
         miny=bounds["miny"],
         maxx=bounds["maxx"],
         maxy=bounds["maxy"],
     )
+    # Map the sentinel fill back to NaN (NaN data cells are already != sentinel).
+    # `.where` drops the rio CRS and nodata metadata, so re-assert both to
+    # restore the georeferenced NaN-nodata contract the COG write and tests rely
+    # on. The mask runs on the small *clipped* array — no full-disk memory cost.
+    crs = clipped.rio.crs
+    clipped = clipped.where(clipped != _NODATA_SENTINEL)
+    clipped.rio.write_crs(crs, inplace=True)
+    clipped.rio.write_nodata(np.nan, inplace=True)
+    return clipped

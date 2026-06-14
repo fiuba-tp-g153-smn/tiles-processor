@@ -10,6 +10,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import rioxarray  # noqa: F401  # registers the .rio accessor for the inline reference
+import xarray as xr
+from pyproj import CRS
 
 from services.glm_aggregation import aggregate_glm_window, reproject_to_latlon
 
@@ -165,6 +168,91 @@ def test_reproject_carries_nan_nodata():
     assert np.isnan(reprojected.rio.nodata)
     assert (reprojected.values == 0).sum() == 0
     assert np.isnan(reprojected.values).any()
+
+
+_SYNTHETIC_BOUNDS = {"minx": -85.0, "maxx": -65.0, "miny": -10.0, "maxy": 10.0}
+
+
+def _synthetic_sparse_geos_dataset() -> xr.Dataset:
+    """A tiny mostly-NaN GLM grid in GOES GEOS coords, for data-free warp tests.
+
+    Mirrors the real aggregated geometry — scan-angle ``x``/``y`` coords plus a
+    ``goes_imager_projection`` carrying the CF geostationary attrs — but small
+    enough to warp in milliseconds. A block of finite, strictly-positive cells
+    sits near the sub-satellite point so it survives the EPSG:4326 clip.
+    """
+    x_rad = np.linspace(-0.02, 0.02, 48, dtype=np.float64)
+    y_rad = np.linspace(0.02, -0.02, 48, dtype=np.float64)
+    values = np.full((y_rad.size, x_rad.size), np.nan, dtype=np.float32)
+    values[20:24, 20:24] = np.arange(1, 17, dtype=np.float32).reshape(4, 4)
+
+    da = xr.DataArray(
+        values[np.newaxis, :, :],
+        dims=("time", "y", "x"),
+        coords={"time": [0], "y": y_rad, "x": x_rad},
+        name="flash_extent_density",
+    )
+    dataset = da.to_dataset()
+    dataset["goes_imager_projection"] = xr.DataArray(
+        0,
+        attrs={
+            "grid_mapping_name": "geostationary",
+            "perspective_point_height": 35786023.0,
+            "semi_major_axis": 6378137.0,
+            "semi_minor_axis": 6356752.31414,
+            "longitude_of_projection_origin": -75.0,
+            "latitude_of_projection_origin": 0.0,
+            "sweep_angle_axis": "x",
+        },
+    )
+    return dataset
+
+
+def _reference_nan_nodata_warp(dataset: xr.Dataset, bounds: dict) -> xr.DataArray:
+    """The pre-sentinel reproject behaviour, inline, for byte-identity comparison."""
+    sat_h = float(dataset["goes_imager_projection"].attrs["perspective_point_height"])
+    src_crs = CRS.from_cf(dataset["goes_imager_projection"].attrs)
+    da = dataset["flash_extent_density"].squeeze("time", drop=True)
+    da = da.assign_coords(x=da["x"].values * sat_h, y=da["y"].values * sat_h)
+    da.rio.write_crs(src_crs.to_string(), inplace=True)
+    da.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+    da.rio.write_nodata(np.nan, inplace=True)
+    reprojected = da.rio.reproject("EPSG:4326", resolution=None, nodata=float("nan"))
+    return reprojected.rio.clip_box(
+        minx=bounds["minx"],
+        miny=bounds["miny"],
+        maxx=bounds["maxx"],
+        maxy=bounds["maxy"],
+    )
+
+
+def test_reproject_sentinel_is_byte_identical_to_nan_nodata():
+    """The finite-sentinel warp must equal a nodata=NaN warp, cell-for-cell.
+
+    Locks the GLM speedup: reproject_to_latlon warps with a finite nodata
+    sentinel (fast ``==`` test) instead of NaN (slow ``isnan()`` test, ~4×
+    slower). Under nearest resampling that swap is exact, so every cell must
+    match the nodata=NaN reference. Runs on a synthetic grid, so it guards the
+    invariant in CI without the data-gated sample files.
+    """
+    result = reproject_to_latlon(
+        _synthetic_sparse_geos_dataset(),
+        var_name="flash_extent_density",
+        bounds=_SYNTHETIC_BOUNDS,
+    )
+    reference = _reference_nan_nodata_warp(
+        _synthetic_sparse_geos_dataset(), _SYNTHETIC_BOUNDS
+    )
+
+    assert np.isfinite(reference.values).any(), "synthetic warp produced no data"
+    assert result.shape == reference.shape
+    assert result.rio.crs.to_epsg() == 4326  # CRS survives the sentinel→NaN mask
+    assert np.isnan(result.rio.nodata)  # NaN-nodata contract preserved
+    assert (result.values == 0).sum() == 0  # sentinel is -3.4e38, never 0
+    # NaN positions match exactly and every finite cell is bit-identical.
+    np.testing.assert_array_equal(np.isnan(result.values), np.isnan(reference.values))
+    finite = ~np.isnan(reference.values)
+    np.testing.assert_array_equal(result.values[finite], reference.values[finite])
 
 
 def test_reproject_to_latlon_clips_to_bounds():
