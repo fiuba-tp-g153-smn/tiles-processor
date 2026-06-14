@@ -49,7 +49,8 @@ async def test_process_records_upload_stage_timing():
     collector.set_stage_timings.assert_called_once()
     stages = collector.set_stage_timings.call_args.args[0]
     assert stages["upload"] >= upload_s * 0.8  # ≈ the PUT duration
-    assert "list" in stages and "enqueue" in stages  # sibling stages present
+    assert "list" in stages  # existence-check stage still present
+    assert "enqueue" not in stages  # RabbitMQ publish no longer recorded (≈0.01s noise)
 
 
 @pytest.mark.asyncio

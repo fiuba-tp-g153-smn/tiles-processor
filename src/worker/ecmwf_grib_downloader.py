@@ -65,8 +65,8 @@ class EcmwfGribDownloader(InlineProcessor):
                        work_unit.source_uri == forecast ISO datetime string.
             mq_client: RabbitMQ client for publishing period-end work units.
             collector: Optional metrics accumulator; receives the per-stage
-                breakdown (upload / list / enqueue) so the producer row shows a
-                desglose instead of a bare total.
+                breakdown (upload / list) so the producer row shows a desglose
+                instead of a bare total.
         """
         if self._s3_client is None:
             raise RuntimeError("EcmwfGribDownloader requires an S3 client")
@@ -89,7 +89,6 @@ class EcmwfGribDownloader(InlineProcessor):
         )
         list_s += perf_counter() - list_start
 
-        enqueue_start = perf_counter()
         enqueued = 0
         for hour_end in _end_hours():
             end_time = forecast_time + timedelta(hours=hour_end)
@@ -118,7 +117,6 @@ class EcmwfGribDownloader(InlineProcessor):
             )
             mq_client.publish(period_unit)
             enqueued += 1
-        enqueue_s = perf_counter() - enqueue_start
 
         logger.info(
             "%s Enqueued %d work units for forecast %s",
@@ -127,12 +125,12 @@ class EcmwfGribDownloader(InlineProcessor):
             forecast_ts,
         )
 
-        # "upload" → "Subida" on the dashboard; "list"/"enqueue" render as-is.
+        # Dashboard stages: "upload" → "Subida", "list" → "Verif. existentes".
         # upload_s is ~0 when the GRIB already existed (PUT skipped) — correct.
+        # The RabbitMQ publish is intentionally not recorded: it is fire-and-
+        # forget and always ~0.01s, so it would add only noise to the breakdown.
         if collector is not None:
-            collector.set_stage_timings(
-                {"upload": upload_s, "list": list_s, "enqueue": enqueue_s}
-            )
+            collector.set_stage_timings({"upload": upload_s, "list": list_s})
 
     # ------------------------------------------------------------------
     # Internal helpers
