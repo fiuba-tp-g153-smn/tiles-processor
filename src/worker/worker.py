@@ -257,16 +257,18 @@ class Worker:  # pylint: disable=too-few-public-methods
 
         except TransientDownloadError as e:
             logger.warning(
-                "Transient download error, requeuing %s: %s", work_unit.image_id, e
+                "Rate-limited, will retry next discovery cycle %s: %s",
+                work_unit.image_id,
+                e,
             )
-            # Keep image_id marked in-progress so the producer's next cron tick
-            # does not re-discover the GRIB and enqueue a duplicate WorkUnit
-            # (which races with the requeued copy on the same work_dir).
-            # If all workers crash before the requeued copy is processed,
-            # ProgressTracker's TTL (JOB_TTL_MINUTES) eventually releases it.
-            self._mq_client.publish(work_unit, queue_name=source_queue)
+            # No instant republish: release so the next discovery tick re-emits
+            # the run (a natural ~5-min, availability-gated backoff) instead of a
+            # tight re-download loop that hammers the throttled endpoint. Acking
+            # without a requeued copy also removes the duplicate-in-flight that
+            # could race on the scratch dir.
+            self._handler.release_progress(work_unit)
             collector.mark_outcome(JobOutcome.REQUEUED, str(e))
-            self._mq_client.ack(delivery_tag)  # original acked; copy is requeued
+            self._mq_client.ack(delivery_tag)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             self._handle_processing_error(

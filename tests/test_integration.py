@@ -20,6 +20,7 @@ import pytest
 import numpy as np
 from config import Config
 import logging
+from data_sources.ecmwf_producer_source import TransientDownloadError
 from exceptions import UnprocessableInputError
 from worker.worker import Worker
 from worker.work_handler import WorkHandler
@@ -242,6 +243,39 @@ class TestWorkerIntegration:
             mock_rabbitmq.publish_to_dlq.assert_not_called()
             # Deterministic skip: must NOT release progress (would only re-skip).
             mock_handler.release_progress.assert_not_called()
+
+    def test_worker_releases_and_acks_on_transient_download_error(
+        self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
+    ):
+        """A 503 (rate limit) releases for re-discovery and acks — no instant requeue."""
+
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            worker = Worker(config, mock_rabbitmq, mock_tracker)
+
+            mock_handler = MagicMock()
+            mock_handler.handle = AsyncMock(
+                side_effect=TransientDownloadError("S3 rate limit (503 Slow Down)")
+            )
+            worker._handler = mock_handler
+
+            work_unit = WorkUnit.create(
+                image_id="20260217T0000Z",
+                source_uri="2026-02-17T00:00:00+00:00",
+                data_source_id="ecmwf_tp_producer",
+                processor_id="ecmwf_tp_grib_downloader",
+                output_prefix="grib/models/ecmwf",
+                bounds=config.get_bounds(),
+                band_id="ecmwf_tp_producer",
+            )
+
+            asyncio.run(worker._process_message_async(work_unit, 1, "tiles_work_queue"))
+
+            # Released for the next discovery tick, acked, and NOT republished.
+            mock_handler.release_progress.assert_called_once_with(work_unit)
+            mock_rabbitmq.ack.assert_called_once_with(1)
+            mock_rabbitmq.publish.assert_not_called()
+            mock_rabbitmq.publish_to_dlq.assert_not_called()
 
 
 class TestPipelineIntegration:

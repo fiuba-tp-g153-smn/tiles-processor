@@ -174,6 +174,36 @@ def test_abort_signals_all_live_process_groups_only():
     mock_thread.assert_called_once()  # SIGKILL escalation scheduled (not started)
 
 
+@pytest.mark.asyncio
+async def test_handle_uses_unique_work_dir_per_attempt(tmp_path):
+    """Two handle() calls for the same image_id resolve to different scratch dirs."""
+    config = MagicMock()
+    config.TMP_DIR = str(tmp_path)
+    handler = WorkHandler(
+        config=config,
+        progress_tracker=MagicMock(),
+        data_source_registry=MagicMock(),
+    )
+
+    data_source = MagicMock()
+    data_source.download = AsyncMock(side_effect=lambda _uri, path: path)
+    handler._data_source_registry.get = MagicMock(return_value=data_source)
+    handler._run_processing_subprocess = AsyncMock()  # skip real subprocess
+
+    captured: list = []
+    handler._cleanup_directory = lambda path: captured.append(path)
+
+    work_unit = _work_unit("FC.grib")
+    await handler.handle(work_unit)
+    await handler.handle(work_unit)
+
+    assert len(captured) == 2
+    assert captured[0] != captured[1]  # distinct per attempt
+    for work_dir in captured:
+        assert work_dir.parent.name == work_unit.band_id
+        assert work_dir.name.startswith("FC-")  # "<image_stem>-<token>"
+
+
 def test_abort_is_a_noop_when_no_live_processes():
     handler = _handler()
     with patch("worker.work_handler.os.killpg") as mock_killpg, patch(

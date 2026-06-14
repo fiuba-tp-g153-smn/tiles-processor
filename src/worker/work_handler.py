@@ -13,6 +13,7 @@ from logging import getLogger
 from pathlib import Path
 from threading import Thread
 from time import perf_counter
+from uuid import uuid4
 
 from clients.message_queue_client import MessageQueueClient
 from clients.progress_tracker import ProgressTracker
@@ -88,16 +89,23 @@ class WorkHandler:
         # Get data source for download
         data_source = self._data_source_registry.get(work_unit.data_source_id)
 
-        # Setup per-image work directory to isolate concurrent workers
+        # Setup a per-attempt-unique work directory. Keying on a fresh token
+        # (not just band_id/image_id) means two concurrent copies of the same
+        # unit — a redelivery, or a producer re-discovery racing an in-flight
+        # one under WORKER_CONCURRENCY>1 — never share a scratch dir and so
+        # can't rmtree each other's raw file mid-flight.
         image_stem = Path(work_unit.image_id).stem
-        work_dir = self._ensure_dir(self._base_dir / work_unit.band_id / image_stem)
+        attempt = uuid4().hex[:8]
+        work_dir = self._ensure_dir(
+            self._base_dir / work_unit.band_id / f"{image_stem}-{attempt}"
+        )
         raw_dir = self._ensure_dir(work_dir / "raw")
         local_path = raw_dir / work_unit.image_id
 
         # Per-stage timings are written here by the subprocess. It is a SIBLING
         # of work_dir so neither the processor's nor this handler's rmtree of
         # work_dir removes it before we read it back.
-        metrics_sink = work_dir.parent / f"{image_stem}.metrics.json"
+        metrics_sink = work_dir.parent / f"{image_stem}-{attempt}.metrics.json"
 
         try:
             # Step 1: Download (lightweight, stays in main process)
