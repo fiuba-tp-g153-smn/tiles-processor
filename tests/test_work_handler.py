@@ -204,6 +204,43 @@ async def test_handle_uses_unique_work_dir_per_attempt(tmp_path):
         assert work_dir.name.startswith("FC-")  # "<image_stem>-<token>"
 
 
+@pytest.mark.asyncio
+async def test_handle_passes_collector_to_inline_processor(tmp_path):
+    """The inline branch threads the metrics collector into process()."""
+    config = MagicMock()
+    config.TMP_DIR = str(tmp_path)
+    inline = MagicMock()
+    inline.process = AsyncMock()
+    handler = WorkHandler(
+        config=config,
+        progress_tracker=MagicMock(),
+        data_source_registry=MagicMock(),
+        mq_client=MagicMock(),
+        inline_processors={"ecmwf_tp_grib_downloader": inline},
+    )
+
+    data_source = MagicMock()
+    data_source.download = AsyncMock(side_effect=lambda _uri, path: path)
+    handler._data_source_registry.get = MagicMock(return_value=data_source)
+    handler._cleanup_directory = lambda _path: None
+
+    work_unit = WorkUnit.create(
+        image_id="20260217T0000Z",
+        source_uri="2026-02-17T00:00:00+00:00",
+        data_source_id="ecmwf_tp_producer",
+        processor_id="ecmwf_tp_grib_downloader",
+        output_prefix="grib/models/ecmwf",
+        bounds={"minx": 0.0, "miny": 0.0, "maxx": 1.0, "maxy": 1.0},
+        band_id="ecmwf_tp_producer",
+    )
+    collector = MagicMock()
+
+    await handler.handle(work_unit, collector)
+
+    inline.process.assert_awaited_once()
+    assert inline.process.await_args.args[3] is collector  # 4th positional arg
+
+
 def test_abort_is_a_noop_when_no_live_processes():
     handler = _handler()
     with patch("worker.work_handler.os.killpg") as mock_killpg, patch(
