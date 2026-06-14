@@ -163,7 +163,6 @@ class GlmFedProcessor(ImageProcessor):
                 aggregated,
                 var_name,
                 work_unit.bounds,
-                self.config.GLM_RESOLUTION_DEG,
             )
         try:
             await self._generate_and_upload(

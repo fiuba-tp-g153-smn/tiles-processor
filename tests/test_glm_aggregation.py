@@ -160,7 +160,6 @@ def test_reproject_carries_nan_nodata():
         aggregated,
         var_name="flash_extent_density",
         bounds={"minx": -75.0, "maxx": -50.0, "miny": -40.0, "maxy": -20.0},
-        resolution_deg=0.1,
     )
 
     assert np.isnan(reprojected.rio.nodata)
@@ -182,7 +181,6 @@ def test_reproject_to_latlon_clips_to_bounds():
         aggregated,
         var_name="flash_extent_density",
         bounds=bounds,
-        resolution_deg=0.1,
     )
 
     assert reprojected.rio.crs.to_epsg() == 4326
@@ -195,3 +193,33 @@ def test_reproject_to_latlon_clips_to_bounds():
     assert bounds["miny"] - slack <= ymin <= bounds["miny"] + slack
     assert bounds["maxy"] - slack <= ymax <= bounds["maxy"] + slack
     assert "time" not in reprojected.dims
+
+
+def test_reproject_uses_native_resolution_not_forced_grid():
+    """With resolution=None the output grid is source-native, not a forced 0.02°.
+
+    Guards the GLM compute-cost fix: forcing resolution=0.02° inflated the full
+    GOES disk before clipping (the CLAUDE.md geostationary-reproject gotcha).
+    Leaving resolution=None makes rioxarray/GDAL derive the grid from the
+    ~5424² source, yielding a coarser, near-square native pixel — so the warp
+    no longer computes the discarded ~86% of pixels.
+    """
+    _require_sample_files()
+
+    aggregated = aggregate_glm_window(
+        SAMPLE_FILES,
+        window_start=datetime(2026, 3, 2, 14, 0),
+        window_end=datetime(2026, 3, 2, 14, 3),
+        accum_minutes=3,
+    )
+    reprojected = reproject_to_latlon(
+        aggregated,
+        var_name="flash_extent_density",
+        bounds={"minx": -75.0, "maxx": -50.0, "miny": -40.0, "maxy": -20.0},
+    )
+
+    res_x, res_y = reprojected.rio.resolution()
+    # Source-native geostationary grid → degrees-per-pixel well above the old
+    # forced 0.02°, and effectively square (|res_x| ≈ |res_y|).
+    assert abs(res_x) > 0.025, f"expected coarse native res, got {abs(res_x):.4f}°"
+    assert abs(abs(res_x) - abs(res_y)) < 0.005, "native grid should be ~square"

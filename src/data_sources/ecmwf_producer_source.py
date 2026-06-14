@@ -1,5 +1,6 @@
 """ECMWF producer data source: discovers missing GRIBs and downloads from ECMWF API."""
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -51,6 +52,8 @@ class EcmwfProducerDataSource(DataSource):
     ):
         self._product_config = product_config
         self._s3_client = s3_client
+        # Reused across discovery ticks for the availability HEADs (latest()).
+        self._client: Client | None = None
 
     @property
     def source_id(self) -> str:
@@ -75,15 +78,36 @@ class EcmwfProducerDataSource(DataSource):
             [t.strftime("%Y%m%dT%H%MZ") for t in candidate_times],
         )
 
-        existing_grib_keys = await self._list_existing_grib_keys()
-        logger.info("%s Existing GRIBs in S3: %d", prefix, len(existing_grib_keys))
+        # Availability gate: never enqueue a run ECMWF has not published yet.
+        # latest() HEADs the run URLs and returns the newest fully-published run;
+        # candidates after it are skipped (no doomed download → no SKIP loop). If
+        # availability can't be confirmed, emit nothing this tick (fail-safe).
+        latest = await asyncio.to_thread(self._latest_available_run)
+        if latest is None:
+            logger.info(
+                "%s Latest available run unknown this tick; emitting nothing", prefix
+            )
+            return []
+        logger.info("%s Latest available ECMWF run: %s", prefix, _fmt_ts(latest))
 
         new_images = []
         for forecast_time in candidate_times:
+            if forecast_time > latest:
+                logger.debug(
+                    "%s Run not yet published (%s > latest %s); skipping",
+                    prefix,
+                    _fmt_ts(forecast_time),
+                    _fmt_ts(latest),
+                )
+                continue
+
             forecast_ts = _fmt_ts(forecast_time)
             grib_key = f"{self._product_config.grib_prefix}/{forecast_ts}.grib"
 
-            if grib_key in existing_grib_keys:
+            # Direct HEAD on the known key (≤3/tick) instead of a prefix LIST.
+            # A non-404 HEAD error propagates to the producer's per-source
+            # try/except → this source is skipped this tick (fail-safe).
+            if await self._s3_client.head_exists(grib_key):
                 logger.debug("%s GRIB already cached: %s", prefix, grib_key)
                 continue
 
@@ -172,6 +196,37 @@ class EcmwfProducerDataSource(DataSource):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _latest_available_run(self) -> datetime | None:
+        """Newest fully-published ECMWF run for this product (UTC-aware), or None.
+
+        Uses ``Client.latest()`` to HEAD the run URLs for the LAST forecast step
+        (published last), so a hit means the run is complete. Synchronous
+        (``requests``) — call via ``asyncio.to_thread``. Returns None on any
+        failure (no run within 2 days, network/HTTP error) so discovery stays
+        fail-safe and emits nothing rather than guessing availability.
+        """
+        try:
+            latest = self._get_client().latest(
+                type="fc",
+                param=[self._product_config.parameter],
+                step=_STEPS[-1],
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "[%s] Could not determine latest available run: %s",
+                self._product_config.log_prefix,
+                exc,
+            )
+            return None
+        # latest() returns a naive UTC datetime; candidate times are tz-aware UTC.
+        return latest.replace(tzinfo=UTC) if latest.tzinfo is None else latest
+
+    def _get_client(self) -> Client:
+        """Lazily create and reuse one Open Data client for the availability HEADs."""
+        if self._client is None:
+            self._client = Client(source="aws")
+        return self._client
+
     def _get_candidate_forecast_times(self, now: datetime) -> list[datetime]:
         """Return the N most recent forecast base times that should be available."""
         candidates: list[datetime] = []
@@ -185,23 +240,6 @@ class EcmwfProducerDataSource(DataSource):
             if len(candidates) >= FORECASTS_TO_MAINTAIN:
                 break
         return candidates
-
-    async def _list_existing_grib_keys(self) -> set[str]:
-        """Return the set of GRIB S3 keys currently cached."""
-        if self._s3_client is None:
-            return set()
-        try:
-            keys = await self._s3_client.list_files(
-                f"{self._product_config.grib_prefix}/", ".grib"
-            )
-            return set(keys)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(
-                "[%s] Could not list existing GRIBs: %s",
-                self._product_config.log_prefix,
-                exc,
-            )
-            return set()
 
 
 def _fmt_ts(dt: datetime) -> str:

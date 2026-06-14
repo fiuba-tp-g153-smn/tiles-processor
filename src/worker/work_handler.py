@@ -1,22 +1,27 @@
 """Unified work handler for processing work units (download + process)."""
 
+import asyncio
 import json
 import os
 import shutil
 import signal as _signal
-import subprocess
 import sys
+import time
+from asyncio.subprocess import Process
 from collections import deque
 from logging import getLogger
 from pathlib import Path
 from threading import Thread
 from time import perf_counter
+from uuid import uuid4
 
 from clients.message_queue_client import MessageQueueClient
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from data_sources import DataSourceRegistry
+from exceptions import UnprocessableInputError
 from models.work_unit import WorkUnit
+from worker.exit_codes import EXIT_SKIP_CODE, SKIP_REASON_PREFIX
 from worker.inline_processor import InlineProcessor
 from worker.job_metrics_context import JobMetricsContext
 
@@ -53,7 +58,9 @@ class WorkHandler:
         self._mq_client = mq_client
         self._inline_processors: dict[str, InlineProcessor] = inline_processors or {}
         self._base_dir = Path(config.TMP_DIR)
-        self._current_process: subprocess.Popen | None = None
+        # Live processing subprocesses (one per in-flight unit under
+        # WORKER_CONCURRENCY). abort() signals all of them on shutdown.
+        self._processes: set[Process] = set()
 
     async def handle(
         self, work_unit: WorkUnit, collector: JobMetricsContext | None = None
@@ -82,16 +89,23 @@ class WorkHandler:
         # Get data source for download
         data_source = self._data_source_registry.get(work_unit.data_source_id)
 
-        # Setup per-image work directory to isolate concurrent workers
+        # Setup a per-attempt-unique work directory. Keying on a fresh token
+        # (not just band_id/image_id) means two concurrent copies of the same
+        # unit — a redelivery, or a producer re-discovery racing an in-flight
+        # one under WORKER_CONCURRENCY>1 — never share a scratch dir and so
+        # can't rmtree each other's raw file mid-flight.
         image_stem = Path(work_unit.image_id).stem
-        work_dir = self._ensure_dir(self._base_dir / work_unit.band_id / image_stem)
+        attempt = uuid4().hex[:8]
+        work_dir = self._ensure_dir(
+            self._base_dir / work_unit.band_id / f"{image_stem}-{attempt}"
+        )
         raw_dir = self._ensure_dir(work_dir / "raw")
         local_path = raw_dir / work_unit.image_id
 
         # Per-stage timings are written here by the subprocess. It is a SIBLING
         # of work_dir so neither the processor's nor this handler's rmtree of
         # work_dir removes it before we read it back.
-        metrics_sink = work_dir.parent / f"{image_stem}.metrics.json"
+        metrics_sink = work_dir.parent / f"{image_stem}-{attempt}.metrics.json"
 
         try:
             # Step 1: Download (lightweight, stays in main process)
@@ -112,7 +126,7 @@ class WorkHandler:
                 )
                 assert self._mq_client is not None
                 await self._inline_processors[work_unit.processor_id].process(
-                    str(local_path), work_unit, self._mq_client
+                    str(local_path), work_unit, self._mq_client, collector
                 )
             else:
                 logger.info(
@@ -120,7 +134,7 @@ class WorkHandler:
                     work_unit.image_id,
                     work_unit.processor_id,
                 )
-                self._run_processing_subprocess(
+                await self._run_processing_subprocess(
                     work_unit, str(local_path), metrics_sink
                 )
                 if collector is not None:
@@ -172,45 +186,53 @@ class WorkHandler:
         self._progress_tracker.mark_completed(work_unit.image_id, work_unit.band_id)
 
     def abort(self) -> None:
-        """Terminate the subprocess process group for graceful shutdown."""
-        if not self._current_process or self._current_process.poll() is not None:
+        """SIGTERM every live subprocess group for graceful shutdown.
+
+        Called from the worker's signal handler (a synchronous context), so it
+        signals the process groups directly rather than awaiting. A background
+        thread escalates to SIGKILL any group still alive after a grace period.
+        """
+        procs = [p for p in self._processes if p.returncode is None]
+        if not procs:
             return
 
         logger.info(
-            "[HANDLER] Terminating subprocess process group for graceful shutdown..."
+            "[HANDLER] Terminating %d subprocess group(s) for graceful shutdown...",
+            len(procs),
         )
-        try:
-            pgid = os.getpgid(self._current_process.pid)
-            os.killpg(pgid, _signal.SIGTERM)
-        except ProcessLookupError:
-            return  # Already exited
-
-        proc = self._current_process
+        for proc in procs:
+            self._signal_group(proc, _signal.SIGTERM)
 
         def _force_kill():
-            try:
-                proc.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "[HANDLER] Subprocess did not exit after SIGTERM; sending SIGKILL"
-                )
-                try:
-                    os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+            time.sleep(8)
+            for proc in procs:
+                if proc.returncode is None:
+                    logger.warning(
+                        "[HANDLER] Subprocess %s did not exit after SIGTERM; SIGKILL",
+                        proc.pid,
+                    )
+                    self._signal_group(proc, _signal.SIGKILL)
 
         Thread(target=_force_kill, daemon=True).start()
 
-    def _run_processing_subprocess(
+    @staticmethod
+    def _signal_group(proc: Process, sig: int) -> None:
+        """Send a signal to the subprocess's own process group, ignoring races."""
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except ProcessLookupError:
+            pass  # Already exited
+
+    async def _run_processing_subprocess(
         self, work_unit: WorkUnit, file_path: str, metrics_sink: Path
     ) -> None:
         """
         Run image processing in a subprocess for memory isolation.
 
-        When the subprocess exits, all memory from heavy libraries
-        (pyproj, rioxarray, GDAL) is reclaimed by the OS.
-
-        Subprocess logs are streamed to parent's logger in real-time.
+        Awaitable so the worker's event loop stays free to overlap this unit's
+        compute+upload tail with another unit's work. When the subprocess exits,
+        all heavy-library memory (pyproj, rioxarray, GDAL) is reclaimed by the OS.
+        Subprocess logs are streamed to the parent logger in real time.
 
         Args:
             work_unit: The work unit to process
@@ -218,90 +240,46 @@ class WorkHandler:
             metrics_sink: Path where the subprocess writes per-stage timings
 
         Raises:
-            RuntimeError: If subprocess fails (includes error details from stderr)
+            RuntimeError: If the subprocess fails or times out (includes error
+                details from the tail of its stderr).
         """
-        work_unit_json = work_unit.to_json()
-
-        # Start subprocess with pipes for real-time streaming
-        with subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "worker.subprocess_processor",
-                work_unit_json,
-                file_path,
-                str(metrics_sink),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,  # Line-buffered
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "worker.subprocess_processor",
+            work_unit.to_json(),
+            file_path,
+            str(metrics_sink),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
-        ) as process:
-            self._current_process = process
+        )
+        self._processes.add(proc)
 
-            # Keep last N lines of stderr for error reporting
-            stderr_buffer: deque[str] = deque(maxlen=50)
-
-            def stream_stdout(pipe):
-                """Stream stdout line by line to logger."""
-                try:
-                    for line in iter(pipe.readline, ""):
-                        line = line.rstrip()
-                        if line:
-                            logger.info(line)
-                finally:
-                    pipe.close()
-
-            def stream_stderr(pipe, buffer: deque):
-                """Stream stderr line by line to logger and buffer for errors."""
-                try:
-                    for line in iter(pipe.readline, ""):
-                        line = line.rstrip()
-                        if line:
-                            buffer.append(line)
-                            logger.error("[SUBPROCESS] %s", line)
-                finally:
-                    pipe.close()
-
-            # Start streaming threads
-            stdout_thread = Thread(
-                target=stream_stdout,
-                args=(process.stdout,),
-                daemon=True,
-            )
-            stderr_thread = Thread(
-                target=stream_stderr,
-                args=(process.stderr, stderr_buffer),
-                daemon=True,
-            )
-
-            stdout_thread.start()
-            stderr_thread.start()
-
-            # Wait for process to complete (with timeout)
+        stderr_buffer: deque[str] = deque(maxlen=50)
+        readers = asyncio.gather(
+            self._stream_stdout(proc.stdout),
+            self._stream_stderr(proc.stderr, stderr_buffer),
+            return_exceptions=True,
+        )
+        try:
             try:
-                return_code = process.wait(timeout=1800)  # 30 minute timeout
-            except subprocess.TimeoutExpired as exc:
-                process.kill()
-                process.wait()
-                self._current_process = None
-                # Wait for threads to capture any remaining output
-                stdout_thread.join(timeout=2)
-                stderr_thread.join(timeout=2)
+                return_code = await asyncio.wait_for(proc.wait(), timeout=1800)
+            except asyncio.TimeoutError as exc:
+                await self._kill(proc)
                 raise RuntimeError(
                     f"Processing subprocess timed out after 30 minutes "
                     f"for {work_unit.image_id}"
                 ) from exc
+            finally:
+                await readers  # drain any remaining stdout/stderr to EOF
 
-            # Wait for streaming threads to finish capturing all output
-            stdout_thread.join(timeout=5)
-            stderr_thread.join(timeout=5)
-            self._current_process = None
+            if return_code == EXIT_SKIP_CODE:
+                # Deterministic unprocessable input — re-raise across the process
+                # boundary so the worker records SKIPPED (ack, no retry/DLQ).
+                raise UnprocessableInputError(self._extract_skip_reason(stderr_buffer))
 
-            # Check for errors
             if return_code != 0:
-                # Build detailed error message from stderr buffer
                 error_details = (
                     "\n".join(stderr_buffer)
                     if stderr_buffer
@@ -311,6 +289,49 @@ class WorkHandler:
                     f"Processing subprocess failed for {work_unit.image_id} "
                     f"(exit code {return_code}):\n{error_details}"
                 )
+        finally:
+            self._processes.discard(proc)
+
+    @staticmethod
+    def _extract_skip_reason(stderr_buffer: "deque[str]") -> str:
+        """Pull the subprocess's marked skip reason from its stderr tail."""
+        for line in reversed(stderr_buffer):
+            if line.startswith(SKIP_REASON_PREFIX):
+                return line[len(SKIP_REASON_PREFIX) :]
+        return "unprocessable input"
+
+    @staticmethod
+    async def _stream_stdout(stream: asyncio.StreamReader | None) -> None:
+        """Stream subprocess stdout to the parent logger, line by line."""
+        if stream is None:
+            return
+        async for raw in stream:
+            line = raw.decode(errors="replace").rstrip()
+            if line:
+                logger.info(line)
+
+    @staticmethod
+    async def _stream_stderr(
+        stream: asyncio.StreamReader | None, buffer: "deque[str]"
+    ) -> None:
+        """Stream subprocess stderr to the logger and buffer the tail for errors."""
+        if stream is None:
+            return
+        async for raw in stream:
+            line = raw.decode(errors="replace").rstrip()
+            if line:
+                buffer.append(line)
+                logger.error("[SUBPROCESS] %s", line)
+
+    async def _kill(self, proc: Process) -> None:
+        """SIGKILL the subprocess group and reap it (best-effort)."""
+        if proc.returncode is not None:
+            return
+        self._signal_group(proc, _signal.SIGKILL)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pass
 
     def _ensure_dir(self, directory: Path) -> Path:
         """Ensure directory exists and return it."""

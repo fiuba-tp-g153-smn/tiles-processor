@@ -50,6 +50,13 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.S3_TILES_DATA_SECURE: bool = (
             os.getenv("S3_TILES_DATA_SECURE", "false").lower() == "true"
         )
+        # Max concurrent tile/COG/GRIB uploads per S3 client (separate from
+        # downloads); also sizes the aioboto3 connection pool. Total concurrent
+        # PUTs against the gateway ≈ workers × WORKER_CONCURRENCY × this. `or`
+        # (not getenv default) so a compose-supplied empty string also defaults.
+        self.S3_UPLOAD_CONCURRENCY: int = int(
+            os.getenv("S3_UPLOAD_CONCURRENCY") or "32"
+        )
 
         # RabbitMQ Configuration
         self.RABBITMQ_HOST: str = self._get_required_env("RABBITMQ_HOST")
@@ -79,6 +86,15 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         if self.WORKER_TYPE not in ("normal", "light"):
             raise ValueError(
                 f"WORKER_TYPE must be 'normal' or 'light', got '{self.WORKER_TYPE}'"
+            )
+
+        # How many work units a worker processes concurrently as asyncio tasks.
+        # Overlaps one unit's I/O-bound upload tail with the next unit's
+        # CPU-bound compute. `or` so a compose-supplied empty string defaults.
+        self.WORKER_CONCURRENCY: int = int(os.getenv("WORKER_CONCURRENCY") or "2")
+        if self.WORKER_CONCURRENCY < 1:
+            raise ValueError(
+                f"WORKER_CONCURRENCY must be >= 1, got {self.WORKER_CONCURRENCY}"
             )
 
         # Stable identifier for this worker, recorded as `worker_host` on every
@@ -159,7 +175,6 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.GLM_PRODUCE_EVERY_MINUTES: int = int(
             settings.get("glm_produce_every_minutes", 10)
         )
-        self.GLM_RESOLUTION_DEG: float = float(settings.get("glm_resolution_deg", 0.02))
 
         # WRF Configuration
         self.ENABLED_WRF_PRODUCTS: dict[str, bool] = {
@@ -190,20 +205,6 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
 
         # Job Configuration
         self.JOB_TTL_MINUTES: int = int(self._get_required_env("JOB_TTL_MINUTES"))
-
-        # SeaweedFS Filer (optional — only needed when using SeaweedFS)
-        self.SEAWEEDFS_FILER_ENDPOINT: str | None = os.getenv(
-            "SEAWEEDFS_FILER_ENDPOINT"
-        )
-        self.SEAWEEDFS_TILE_TTL: str | None = os.getenv("SEAWEEDFS_TILE_TTL", "1m")
-        self.SEAWEEDFS_RADAR_TILE_TTL: str | None = os.getenv(
-            "SEAWEEDFS_RADAR_TILE_TTL"
-        )
-        self.SEAWEEDFS_ECMWF_TTL: str | None = os.getenv("SEAWEEDFS_ECMWF_TTL")
-        self.SEAWEEDFS_ECMWF_GRIB_TTL: str | None = os.getenv(
-            "SEAWEEDFS_ECMWF_GRIB_TTL"
-        )
-        self.SEAWEEDFS_WRF_TTL: str | None = os.getenv("SEAWEEDFS_WRF_TTL")
 
         # Health Check
         self.HEALTH_PORT: int = int(os.getenv("HEALTH_PORT", "8080"))
@@ -328,7 +329,6 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             )
         logger.info("GLM_ACCUM_MINUTES: %s", self.GLM_ACCUM_MINUTES)
         logger.info("GLM_PRODUCE_EVERY_MINUTES: %s", self.GLM_PRODUCE_EVERY_MINUTES)
-        logger.info("GLM_RESOLUTION_DEG: %s", self.GLM_RESOLUTION_DEG)
         for pid, enabled in self.ENABLED_WRF_PRODUCTS.items():
             logger.info("ENABLE_WRF_%s: %s", pid, enabled)
         logger.info("WRF_INPUT_DIR: %s", self.WRF_INPUT_DIR)
@@ -341,18 +341,14 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("S3_TILES_DATA_ENDPOINT: %s", self.S3_TILES_DATA_ENDPOINT)
         logger.info("S3_TILES_DATA_BUCKET_NAME: %s", self.S3_TILES_DATA_BUCKET_NAME)
         logger.info("S3_TILES_DATA_SECURE: %s", self.S3_TILES_DATA_SECURE)
-        logger.info("SEAWEEDFS_FILER_ENDPOINT: %s", self.SEAWEEDFS_FILER_ENDPOINT)
-        logger.info("SEAWEEDFS_TILE_TTL: %s", self.SEAWEEDFS_TILE_TTL)
-        logger.info("SEAWEEDFS_RADAR_TILE_TTL: %s", self.SEAWEEDFS_RADAR_TILE_TTL)
-        logger.info("SEAWEEDFS_ECMWF_TTL: %s", self.SEAWEEDFS_ECMWF_TTL)
-        logger.info("SEAWEEDFS_ECMWF_GRIB_TTL: %s", self.SEAWEEDFS_ECMWF_GRIB_TTL)
-        logger.info("SEAWEEDFS_WRF_TTL: %s", self.SEAWEEDFS_WRF_TTL)
+        logger.info("S3_UPLOAD_CONCURRENCY: %s", self.S3_UPLOAD_CONCURRENCY)
         logger.info("RABBITMQ_HOST: %s", self.RABBITMQ_HOST)
         logger.info("RABBITMQ_PORT: %s", self.RABBITMQ_PORT)
         logger.info("RABBITMQ_QUEUE: %s", self.RABBITMQ_QUEUE)
         logger.info("RABBITMQ_RADAR_LIGHT_QUEUE: %s", self.RABBITMQ_RADAR_LIGHT_QUEUE)
         logger.info("RABBITMQ_WRF_LIGHT_QUEUE: %s", self.RABBITMQ_WRF_LIGHT_QUEUE)
         logger.info("WORKER_TYPE: %s", self.WORKER_TYPE)
+        logger.info("WORKER_CONCURRENCY: %s", self.WORKER_CONCURRENCY)
         logger.info("RABBITMQ_DLQ: %s", self.RABBITMQ_DLQ)
         logger.info("RABBITMQ_DLX: %s", self.RABBITMQ_DLX)
         logger.info("WORKER_ID: %s", self.WORKER_ID)

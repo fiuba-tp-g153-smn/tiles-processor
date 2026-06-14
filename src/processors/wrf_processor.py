@@ -207,7 +207,7 @@ class WrfProcessor(ImageProcessor):
 
     def __init__(self, config: Config):
         super().__init__(config)
-        self._s3_client = create_s3_client(config, with_ttl=config.SEAWEEDFS_WRF_TTL)
+        self._s3_client = create_s3_client(config)
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute full WRF processing pipeline for one product / forecast step."""
@@ -262,34 +262,28 @@ class WrfProcessor(ImageProcessor):
                 geotiff_gcp_path.unlink(missing_ok=True)
             self._check_shutdown()
 
-            # COG: same two-stage pipeline. Float field needs bilinear
-            # resampling so NaN/finite transitions stay clean.
+            # Float COGs: the primary point-query field and every secondary
+            # share the same GCP grid, float32 dtype, NaN nodata and warp
+            # params, so the expensive thin-plate-spline solve + per-pixel
+            # mapping runs ONCE over a stacked multiband raster instead of once
+            # per field (the old primary + N secondary warps). Each band is then
+            # split out into its own single-band COG — pixel-identical to
+            # warping separately. Bilinear keeps NaN/finite transitions clean.
             cog_path = work_dir / f"{work_unit.image_id}_cog.tif"
             with self._time_stage("cog"):
-                cog_gcp_path = work_dir / f"{work_unit.image_id}_cog_gcp.tif"
-                self._save_float_geotiff_gcp(
-                    payload["primary_cog"], payload["lat"], payload["lon"], cog_gcp_path
-                )
-                self._warp_to_epsg4326(
-                    cog_gcp_path,
-                    cog_path,
-                    of="COG",
-                    resampling="bilinear",
-                    extra_creation_options=(
-                        "COMPRESS=DEFLATE",
-                        "PREDICTOR=3",
-                        "BLOCKSIZE=512",
-                    ),
-                )
-                cog_gcp_path.unlink(missing_ok=True)
-            self._check_shutdown()
-
-            # Secondary point-query COGs (wind magnitude + flagged contours).
-            # Same float pipeline as the primary; one COG per secondary var.
-            with self._time_stage("secondary_cog"):
-                secondary_cog_paths = self._generate_secondary_cogs(
+                warped_stack_path, secondary_vars = self._warp_float_stack(
                     work_dir, work_unit.image_id, payload, product_config
                 )
+                self._split_band_to_cog(warped_stack_path, 1, cog_path)
+            self._check_shutdown()
+
+            # Secondary point-query COGs (wind magnitude + flagged contours):
+            # cheap per-band splits off the single warped stack, one COG each.
+            with self._time_stage("secondary_cog"):
+                secondary_cog_paths = self._split_secondary_cogs(
+                    warped_stack_path, work_dir, work_unit.image_id, secondary_vars
+                )
+                warped_stack_path.unlink(missing_ok=True)
             self._check_shutdown()
 
             with self._time_stage("geojson"):
@@ -623,18 +617,24 @@ class WrfProcessor(ImageProcessor):
 
     @staticmethod
     def _save_float_geotiff_gcp(
-        data: np.ndarray,
+        bands: list[np.ndarray],
         lat: np.ndarray,
         lon: np.ndarray,
         output_path: Path,
     ) -> None:
-        """Write a single-band float32 GeoTIFF tagged with GCPs.
+        """Write a multiband float32 GeoTIFF tagged with GCPs.
 
-        Used as an intermediate before warping to the final COG via
-        ``_warp_to_epsg4326(of="COG")``. NaN is preserved as nodata so the
-        warp + downstream point queries see masked pixels correctly.
+        Each entry of ``bands`` becomes one raster band (band 1 = primary
+        field, bands 2.. = secondary point-query fields), all sharing the
+        curvilinear grid's GCPs. Used as the single intermediate before one
+        multiband ``gdalwarp -tps`` pass in ``_warp_float_stack``: stacking the
+        float fields lets the expensive thin-plate-spline solve run once instead
+        of once per field. NaN is preserved as nodata on every band so the warp
+        and downstream point queries see masked pixels correctly.
         """
-        nrows, ncols = data.shape
+        if not bands:
+            raise ValueError("_save_float_geotiff_gcp requires at least one band")
+        nrows, ncols = bands[0].shape
         gcps = WrfProcessor._build_gcps(lat, lon, WrfProcessor.GCP_STEP)
         tmp_path = output_path.parent / f"{uuid.uuid4()}.tif"
         try:
@@ -644,16 +644,21 @@ class WrfProcessor(ImageProcessor):
                 driver="GTiff",
                 height=nrows,
                 width=ncols,
-                count=1,
+                count=len(bands),
                 dtype="float32",
                 compress="DEFLATE",
                 predictor=3,
                 nodata=float("nan"),
             ) as dst:
                 dst.gcps = (gcps, CRS.from_epsg(4326))
-                dst.write(data.astype(np.float32), 1)
+                for idx, band in enumerate(bands, start=1):
+                    dst.write(band.astype(np.float32), idx)
             tmp_path.rename(output_path)
-            logger.info("[WRF] Float GeoTIFF written (GCP-tagged): %s", output_path.name)
+            logger.info(
+                "[WRF] Float GeoTIFF written (GCP-tagged, %d band(s)): %s",
+                len(bands),
+                output_path.name,
+            )
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
@@ -706,31 +711,102 @@ class WrfProcessor(ImageProcessor):
             raise
 
     # ------------------------------------------------------------------
-    # Secondary point-query COGs
+    # Float COGs (primary + secondary point-query) — one multiband warp
     # ------------------------------------------------------------------
 
-    def _generate_secondary_cogs(
+    def _warp_float_stack(
         self,
         work_dir: Path,
         image_id: str,
         payload: dict,
         product_config: WrfProductConfig,
-    ) -> dict[str, Path]:
-        """Build one float COG per queryable secondary variable.
+    ) -> tuple[Path, list[str]]:
+        """Warp the primary + all secondary float fields in ONE multiband tps pass.
 
-        Returns a map ``{variable_name: cog_path}`` uploaded later as
-        ``{cog}/{init}/{F}.{variable_name}.tif``. Mirrors the primary COG
-        pipeline (GCP-tagged float → tps warp → COG) so point queries align.
+        Stacks ``[primary_cog, *secondary scalars]`` into a single GCP-tagged
+        float32 raster and warps it to a regular EPSG:4326 grid with one
+        ``gdalwarp -tps`` invocation, so the thin-plate-spline solve happens
+        once for the whole product instead of once per field. Returns the path
+        to the multiband warped raster plus the ordered secondary variable
+        names (band 1 is the primary; bands 2.. follow this list). The caller
+        splits each band into its own COG and deletes the warped stack.
         """
-        scalars = self._build_secondary_scalars(payload, product_config)
+        secondary = self._build_secondary_scalars(payload, product_config)
+        secondary_vars = list(secondary.keys())
+        bands = [payload["primary_cog"], *secondary.values()]
+
+        stack_gcp_path = work_dir / f"{image_id}_floatstack_gcp.tif"
+        self._save_float_geotiff_gcp(
+            bands, payload["lat"], payload["lon"], stack_gcp_path
+        )
+
+        warped_stack_path = work_dir / f"{image_id}_floatstack.tif"
+        self._warp_to_epsg4326(
+            stack_gcp_path,
+            warped_stack_path,
+            resampling="bilinear",
+            extra_creation_options=("COMPRESS=DEFLATE", "PREDICTOR=3"),
+        )
+        stack_gcp_path.unlink(missing_ok=True)
+        return warped_stack_path, secondary_vars
+
+    def _split_secondary_cogs(
+        self,
+        warped_stack_path: Path,
+        work_dir: Path,
+        image_id: str,
+        secondary_vars: list[str],
+    ) -> dict[str, Path]:
+        """Split each secondary band of the warped stack into its own COG.
+
+        Band 1 is the primary (split by the caller); secondary variables occupy
+        bands 2.. in ``secondary_vars`` order. Returns a map
+        ``{variable_name: cog_path}`` uploaded later as
+        ``{cog}/{init}/{F}.{variable_name}.tif``.
+        """
         outputs: dict[str, Path] = {}
-        for variable, arr in scalars.items():
-            cog_path = self._float_field_to_cog(
-                arr, payload["lat"], payload["lon"], work_dir, f"{image_id}_{variable}"
-            )
+        for offset, variable in enumerate(secondary_vars, start=2):
+            cog_path = work_dir / f"{image_id}_{variable}_cog.tif"
+            self._split_band_to_cog(warped_stack_path, offset, cog_path)
             outputs[variable] = cog_path
             logger.info("[WRF] Secondary COG '%s' built for %s", variable, image_id)
         return outputs
+
+    @staticmethod
+    def _split_band_to_cog(source_path: Path, band: int, output_path: Path) -> None:
+        """Extract one band of the warped float stack into a single-band COG.
+
+        Uses ``gdal_translate -b N -of COG`` with the same creation options the
+        primary/secondary COGs used when each was warped separately, so every
+        output band is pixel-identical to the old per-field pipeline and a valid
+        COG. NaN nodata carried on the source band is preserved.
+        """
+        tmp_path = output_path.parent / f"{uuid.uuid4()}.tif"
+        cmd = [
+            "gdal_translate",
+            "-b",
+            str(band),
+            "-of",
+            "COG",
+            "-co",
+            "COMPRESS=DEFLATE",
+            "-co",
+            "PREDICTOR=3",
+            "-co",
+            "BLOCKSIZE=512",
+            str(source_path),
+            str(tmp_path),
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                logger.error("[WRF] gdal_translate error: %s", result.stderr)
+                raise RuntimeError(f"gdal_translate failed: {result.stderr}")
+            tmp_path.rename(output_path)
+            logger.info("[WRF] Split band %d → COG: %s", band, output_path.name)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _build_secondary_scalars(
@@ -755,32 +831,6 @@ class WrfProcessor(ImageProcessor):
                 scalars[contour.name] = arr
 
         return scalars
-
-    def _float_field_to_cog(
-        self,
-        data: np.ndarray,
-        lat: np.ndarray,
-        lon: np.ndarray,
-        work_dir: Path,
-        name: str,
-    ) -> Path:
-        """Run the float field → GCP TIFF → EPSG:4326 COG pipeline."""
-        gcp_path = work_dir / f"{name}_cog_gcp.tif"
-        self._save_float_geotiff_gcp(data, lat, lon, gcp_path)
-        cog_path = work_dir / f"{name}_cog.tif"
-        self._warp_to_epsg4326(
-            gcp_path,
-            cog_path,
-            of="COG",
-            resampling="bilinear",
-            extra_creation_options=(
-                "COMPRESS=DEFLATE",
-                "PREDICTOR=3",
-                "BLOCKSIZE=512",
-            ),
-        )
-        gcp_path.unlink(missing_ok=True)
-        return cog_path
 
     # ------------------------------------------------------------------
     # Vector layers

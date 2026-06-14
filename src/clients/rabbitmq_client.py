@@ -71,6 +71,10 @@ class RabbitMQClient(MessageQueueClient):
         self._channel: Optional[BlockingChannel] = None
         # Drives the consume() drain loop; flipped off by stop_consuming().
         self._consuming = False
+        # Persistent round-robin cursor for poll_one's light-queue tier: one past
+        # the last served queue, so successive polls alternate fairly and neither
+        # light queue head-of-line blocks the other.
+        self._rr = 0
 
     def _get_connection_params(self) -> pika.ConnectionParameters:
         """Build connection parameters."""
@@ -257,14 +261,11 @@ class RabbitMQClient(MessageQueueClient):
         Drain messages from two tiers: strict-priority then round-robin.
 
         Blocks until stop_consuming() is called or the connection drops. Each
-        iteration first scans ``strict_queues`` in order and processes the first
-        message found (a normal worker drains its normal queue fully before
-        touching any light work). Only when every strict queue is empty does it
-        pull from ``round_robin_queues``, alternating fairly between them so
-        neither light queue head-of-line blocks the other. After any message it
-        restarts from the strict tier, so strict priority always preempts the
-        next round-robin pickup. When all queues are empty it idles for
-        _IDLE_POLL_S (keeping the connection's heartbeats alive) and polls again.
+        iteration pulls one message via poll_one (strict tier first, then a fair
+        round-robin of the light queues); when every queue is empty it idles for
+        _IDLE_POLL_S (servicing heartbeats) and polls again. This callback form
+        processes one message at a time; the worker's bounded-concurrency drain
+        loop uses poll_one/service_events directly to overlap units.
 
         Args:
             callback: Called per message with
@@ -286,89 +287,83 @@ class RabbitMQClient(MessageQueueClient):
             round_robin_queues,
         )
         self._consuming = True
-        # Where the next round-robin scan starts; advances past each served queue
-        # so the two light queues alternate. Not reset on a strict-tier hit (else
-        # a busy normal queue would let one light queue starve the other).
-        rr = 0
         while self._consuming:
-            if self._drain_strict(callback, strict_queues):
-                continue  # re-check the strict tier first (strict priority)
+            message = self.poll_one(strict_queues, round_robin_queues)
+            if message is None:
+                # Every queue empty: idle while servicing heartbeats/I/O.
+                self.service_events(self._IDLE_POLL_S)
+                continue
+            work_unit, delivery_tag, source_queue = message
+            try:
+                if callback(work_unit, self, delivery_tag, source_queue):
+                    self.ack(delivery_tag)
+                    logger.debug("Acknowledged work unit: %s", work_unit)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.exception("Error processing message: %s", e)
+                # Reject and don't requeue - let it go to DLQ.
+                self.nack(delivery_tag, requeue=False)
 
-            rr, served = self._drain_round_robin(callback, round_robin_queues, rr)
-            if served:
-                continue  # back to the strict tier (strict still wins)
+    def poll_one(
+        self, strict_queues: list[str], round_robin_queues: list[str]
+    ) -> tuple[WorkUnit, int, str] | None:
+        """Fetch one message without acking; None when every queue is empty.
 
-            # Every queue empty: idle while servicing heartbeats/I/O.
-            self._channel.connection.process_data_events(time_limit=self._IDLE_POLL_S)
+        Scans ``strict_queues`` in order and returns the first message found
+        (strict priority); only when all are empty does it pull from
+        ``round_robin_queues``, advancing a persistent cursor so the light
+        queues alternate fairly and neither head-of-line blocks the other.
+        Returns ``(work_unit, delivery_tag, source_queue)``. Undecodable bodies
+        are dead-lettered and skipped. The caller acks/nacks after processing.
+        """
+        if not self._channel or self._channel.is_closed:
+            raise RuntimeError("Not connected to RabbitMQ")
 
-    def _drain_strict(
-        self,
-        callback: Callable[[WorkUnit, "MessageQueueClient", int, str], bool],
-        queues: list[str],
-    ) -> bool:
-        """Handle one message from the first non-empty queue. True if served."""
-        if self._channel is None:
-            raise RuntimeError("RabbitMQ channel is not initialized")
-        for queue_name in queues:
-            method, _props, body = self._channel.basic_get(
-                queue=queue_name, auto_ack=False
-            )
-            if method is None or body is None:
-                continue  # this queue is empty — fall through to the next
-            self._handle_message(callback, queue_name, method.delivery_tag, body)
-            return True
-        return False
+        for queue_name in strict_queues:
+            message = self._basic_get_one(queue_name)
+            if message is not None:
+                return message
 
-    def _drain_round_robin(
-        self,
-        callback: Callable[[WorkUnit, "MessageQueueClient", int, str], bool],
-        queues: list[str],
-        start: int,
-    ) -> tuple[int, bool]:
-        """Handle one message, scanning circularly from ``start``.
+        count = len(round_robin_queues)
+        for offset in range(count):
+            index = (self._rr + offset) % count
+            message = self._basic_get_one(round_robin_queues[index])
+            if message is not None:
+                self._rr = (index + 1) % count
+                return message
+        return None
 
-        Returns the next start index (one past the served queue) and whether a
-        message was served. The circular scan means an empty starting queue
-        still tries the others before giving up, so neither queue starves.
+    def _basic_get_one(self, queue_name: str) -> tuple[WorkUnit, int, str] | None:
+        """basic_get one message and decode it; None when the queue is empty.
+
+        Undecodable bodies are nacked to the DLQ (not requeued) and reported as
+        absent so the drain loop keeps making progress.
         """
         if self._channel is None:
             raise RuntimeError("RabbitMQ channel is not initialized")
-        count = len(queues)
-        for offset in range(count):
-            index = (start + offset) % count
-            queue_name = queues[index]
-            method, _props, body = self._channel.basic_get(
-                queue=queue_name, auto_ack=False
-            )
-            if method is None or body is None:
-                continue
-            self._handle_message(callback, queue_name, method.delivery_tag, body)
-            return (index + 1) % count, True
-        return start, False
-
-    def _handle_message(
-        self,
-        callback: Callable[[WorkUnit, "MessageQueueClient", int, str], bool],
-        source_queue: str,
-        delivery_tag: int,
-        body: bytes,
-    ) -> None:
-        """Decode one message, run the callback, and ack on success."""
-        if self._channel is None:
-            raise RuntimeError("RabbitMQ channel is not initialized")
+        method, _props, body = self._channel.basic_get(queue=queue_name, auto_ack=False)
+        if method is None or body is None:
+            return None
         try:
             work_unit = WorkUnit.from_json(body.decode("utf-8"))
-            logger.info("Received work unit from %s: %s", source_queue, work_unit)
-
-            should_ack = callback(work_unit, self, delivery_tag, source_queue)
-
-            if should_ack:
-                self._channel.basic_ack(delivery_tag=delivery_tag)
-                logger.debug("Acknowledged work unit: %s", work_unit)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.exception("Error processing message: %s", e)
-            # Reject and don't requeue - let it go to DLQ.
-            self._channel.basic_nack(delivery_tag=delivery_tag, requeue=False)
+            logger.exception(
+                "Discarding undecodable message from %s: %s", queue_name, e
+            )
+            self._channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return None
+        logger.info("Received work unit from %s: %s", queue_name, work_unit)
+        return work_unit, method.delivery_tag, queue_name
+
+    def service_events(self, time_limit: float = 0.0) -> None:
+        """Pump connection I/O (heartbeats, acks) without consuming a message.
+
+        Lets the worker's bounded-concurrency drain loop keep the connection's
+        heartbeat alive while it awaits in-flight work, without blocking on new
+        messages. ``time_limit=0`` returns as soon as pending events are drained.
+        """
+        if self._channel is None or self._channel.is_closed:
+            return
+        self._channel.connection.process_data_events(time_limit=time_limit)
 
     def ack(self, delivery_tag: int) -> None:
         """Manually acknowledge a message."""

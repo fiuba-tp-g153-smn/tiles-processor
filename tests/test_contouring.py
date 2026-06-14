@@ -11,6 +11,9 @@ import xarray as xr
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from services.contouring import (  # noqa: E402  pylint: disable=wrong-import-position
+    BARB_ZOOM_STRIDES,
+    extract_barbs,
+    extract_barbs_tiled,
     extract_isolines,
     smooth_field,
     write_geojson,
@@ -187,6 +190,53 @@ class TestWriteGeoJSON:
         write_geojson([], out)
         payload = json.loads(out.read_text())
         assert payload == {"type": "FeatureCollection", "features": []}
+
+
+def _wind_grid(n: int = 160):
+    """Finite u/v wind field on a curvilinear lon/lat mesh over Argentina.
+
+    Large enough (n>150) that the coarsest stride (150) still yields barbs, so
+    every zoom in BARB_ZOOM_STRIDES produces at least one tile.
+    """
+    lon, lat = np.meshgrid(np.linspace(-75.0, -55.0, n), np.linspace(-40.0, -20.0, n))
+    u = np.full((n, n), 12.0, dtype=np.float64)
+    v = np.full((n, n), -7.0, dtype=np.float64)
+    return u, v, lon, lat
+
+
+class TestExtractBarbsTiled:
+    """Barb tiling is capped at z8; z10/z12 (redundant stride-9 re-tiling) gone."""
+
+    def test_strides_capped_at_z8(self):
+        """The redundant high-zoom barb tilesets must no longer be configured."""
+        assert set(BARB_ZOOM_STRIDES) == {2, 4, 6, 8}
+        assert 10 not in BARB_ZOOM_STRIDES and 12 not in BARB_ZOOM_STRIDES
+
+    def test_tiled_emits_only_capped_zooms(self):
+        """extract_barbs_tiled must bucket features only into zooms {2,4,6,8}."""
+        u, v, lon, lat = _wind_grid()
+        tiled = extract_barbs_tiled(u, v, lon, lat)
+
+        zooms = {zoom for (zoom, _tx, _ty) in tiled}
+        assert zooms == {2, 4, 6, 8}
+        assert max(zooms) == 8  # no z10/z12 write storm
+
+    def test_z8_preserves_full_stride9_point_set(self):
+        """No barb DATA is lost: the z8 tiles together hold every stride-9 point.
+
+        z8/z10/z12 all used stride 9 — identical points. Dropping z10/z12 only
+        removes redundant re-tiling, so the union of all z8 tile features must
+        still equal the complete stride-9 barb set.
+        """
+        u, v, lon, lat = _wind_grid()
+        tiled = extract_barbs_tiled(u, v, lon, lat)
+
+        z8_count = sum(
+            len(feats) for (zoom, _tx, _ty), feats in tiled.items() if zoom == 8
+        )
+        expected = len(extract_barbs(u, v, lon, lat, stride=BARB_ZOOM_STRIDES[8]))
+        assert z8_count == expected
+        assert expected > 0  # sanity: the fixture actually produced barbs
 
 
 if __name__ == "__main__":

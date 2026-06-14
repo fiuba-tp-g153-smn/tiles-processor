@@ -1,5 +1,6 @@
 """Worker implementation for processing work units from RabbitMQ."""
 
+import asyncio
 import shutil
 from asyncio import AbstractEventLoop, new_event_loop, set_event_loop
 from logging import getLogger
@@ -16,6 +17,7 @@ from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from db.migrate import ensure_migrations
+from exceptions import UnprocessableInputError
 from factories import (
     create_data_source_registry,
     create_rabbitmq_client,
@@ -52,6 +54,11 @@ class Worker:  # pylint: disable=too-few-public-methods
         - Permanent errors: Send to dead letter queue
         - Handler exceptions are caught and logged
     """
+
+    # When every queue is empty (or all concurrency slots are busy), wait this
+    # long per drain iteration before polling again — bounds pickup latency
+    # while servicing RabbitMQ heartbeats. Negligible for second-to-minute jobs.
+    _IDLE_POLL_S = 1.0
 
     def __init__(
         self,
@@ -99,15 +106,8 @@ class Worker:  # pylint: disable=too-few-public-methods
         signal(SIGTERM, self._signal_handler)
 
         try:
-            # Start consuming (blocking). Normal workers drain their normal
-            # queue strict-first, then round-robin the two light queues; light
-            # workers only round-robin the light queues.
-            strict, round_robin = self._consume_tiers()
-            self._mq_client.consume(
-                callback=self._process_message,
-                strict_queues=strict,
-                round_robin_queues=round_robin,
-            )
+            # Run the bounded-concurrency async drain loop on the worker's loop.
+            self._loop.run_until_complete(self._drain())
         except KeyboardInterrupt:
             logger.info("Worker interrupted by user")
         finally:
@@ -153,43 +153,90 @@ class Worker:  # pylint: disable=too-few-public-methods
 
         logger.info("Worker stopped")
 
-    def _process_message(
-        self,
-        work_unit: WorkUnit,
-        client: MessageQueueClient,
-        _delivery_tag: int,
-        source_queue: str,
-    ) -> bool:
-        """
-        Process a single work unit message.
+    async def _drain(self) -> None:
+        """Bounded-concurrency async consume loop.
 
-        This is called by the RabbitMQ consumer for each message.
-        Returns True to acknowledge the message, False to reject it.
+        Pulls up to WORKER_CONCURRENCY work units and runs each as a concurrent
+        task, so one unit's I/O-bound upload tail overlaps another unit's
+        CPU-bound compute. Each iteration services RabbitMQ heartbeats without
+        blocking on new messages. Strict-priority then round-robin tiers come
+        from the MQ client's poll_one.
+        """
+        assert self._loop is not None
+        strict, round_robin = self._consume_tiers()
+        concurrency = self._config.WORKER_CONCURRENCY
+        logger.info(
+            "Worker draining: strict=%s round-robin=%s concurrency=%d",
+            strict,
+            round_robin,
+            concurrency,
+        )
+        inflight: set[asyncio.Task] = set()
+        while self._running:
+            while len(inflight) < concurrency:
+                message = self._mq_client.poll_one(strict, round_robin)
+                if message is None:
+                    break
+                inflight.add(
+                    self._loop.create_task(self._process_message_async(*message))
+                )
+
+            # Keep heartbeats/acks flowing without blocking on new messages.
+            self._mq_client.service_events(0.0)
+
+            if inflight:
+                done, inflight = await asyncio.wait(
+                    inflight,
+                    timeout=self._IDLE_POLL_S,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                self._log_task_errors(done)
+            else:
+                await asyncio.sleep(self._IDLE_POLL_S)
+
+        await self._drain_inflight(inflight)
+
+    @staticmethod
+    def _log_task_errors(tasks: "set[asyncio.Task]") -> None:
+        """Surface any unexpected task crash (per-unit handling is internal)."""
+        for task in tasks:
+            exc = task.exception()
+            if exc is not None:
+                logger.error("Work unit task crashed: %s", exc, exc_info=exc)
+
+    async def _drain_inflight(self, inflight: "set[asyncio.Task]") -> None:
+        """Await in-flight units on shutdown; abort() kills their subprocesses."""
+        if not inflight:
+            return
+        logger.info("Awaiting %d in-flight unit(s) before shutdown", len(inflight))
+        for result in await asyncio.gather(*inflight, return_exceptions=True):
+            if isinstance(result, Exception):
+                logger.error("In-flight unit ended with error: %s", result)
+
+    async def _process_message_async(
+        self, work_unit: WorkUnit, delivery_tag: int, source_queue: str
+    ) -> None:
+        """
+        Process a single work unit end-to-end, then ack / retry / DLQ.
+
+        Runs as a concurrent task in the drain loop. Acks on success or skip,
+        republishes + acks on retry/DLQ, and on shutdown leaves the message for
+        redelivery (nack-requeue).
 
         Args:
             work_unit: The work unit to process
-            client: RabbitMQ client for publishing
-            _delivery_tag: Message delivery tag for ack/nack
+            delivery_tag: Message delivery tag for ack/nack
             source_queue: Queue this message came from. Requeues and retries go
                 back here so a light unit stolen by a normal worker returns to
                 the light queue, not the worker's primary (normal) queue.
-
-        Returns:
-            True if message should be acknowledged
         """
         logger.info("Processing: %s", work_unit)
         collector = JobMetricsContext(work_unit, worker_host=self._config.WORKER_ID)
-
         try:
-            # Run the async handler in the shared event loop
-            if self._loop is None:
-                raise RuntimeError("Event loop is not initialized")
-
-            self._loop.run_until_complete(self._handler.handle(work_unit, collector))
-
+            await self._handler.handle(work_unit, collector)
             logger.info("Successfully processed %s", work_unit.image_id)
             collector.mark_outcome(JobOutcome.SUCCESS)
-            return True  # Acknowledge
+            self._mq_client.ack(delivery_tag)
 
         except ForecastNotAvailableError as e:
             logger.warning(
@@ -197,52 +244,71 @@ class Worker:  # pylint: disable=too-few-public-methods
             )
             self._handler.release_progress(work_unit)
             collector.mark_outcome(JobOutcome.SKIPPED, str(e))
-            return (
-                True  # Acknowledge without retry; producer will re-enqueue next cycle
-            )
+            self._mq_client.ack(delivery_tag)  # producer re-enqueues next cycle
+
+        except UnprocessableInputError as e:
+            # Deterministic bad input (e.g. radar sweeps with incompatible range
+            # geometry). Ack and record SKIPPED — no retry, no DLQ. Unlike the
+            # forecast case we do NOT release_progress: re-discovering it would
+            # only re-skip it; the JOB_TTL reclaims the (short-lived) unit.
+            logger.warning("Skipping unprocessable %s: %s", work_unit.image_id, e)
+            collector.mark_outcome(JobOutcome.SKIPPED, str(e))
+            self._mq_client.ack(delivery_tag)
 
         except TransientDownloadError as e:
             logger.warning(
-                "Transient download error, requeuing %s: %s", work_unit.image_id, e
+                "Rate-limited, will retry next discovery cycle %s: %s",
+                work_unit.image_id,
+                e,
             )
-            # Keep image_id marked in-progress so the producer's next cron tick
-            # does not re-discover the GRIB and enqueue a duplicate WorkUnit
-            # (which races with the requeued copy on the same work_dir).
-            # If all workers crash before the requeued copy is processed,
-            # ProgressTracker's TTL (JOB_TTL_MINUTES) eventually releases it.
-            client.publish(work_unit, queue_name=source_queue)
+            # No instant republish: release so the next discovery tick re-emits
+            # the run (a natural ~5-min, availability-gated backoff) instead of a
+            # tight re-download loop that hammers the throttled endpoint. Acking
+            # without a requeued copy also removes the duplicate-in-flight that
+            # could race on the scratch dir.
+            self._handler.release_progress(work_unit)
             collector.mark_outcome(JobOutcome.REQUEUED, str(e))
-            return True  # Acknowledge original; copy is back in the queue
+            self._mq_client.ack(delivery_tag)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
-            if not self._running:
-                logger.info("Shutdown interrupted processing of %s", work_unit.image_id)
-                # Leave outcome unset: the message is requeued, not terminal.
-                return False  # Don't ack - RabbitMQ will requeue on disconnect
-
-            logger.exception("Error processing %s: %s", work_unit, e)
-
-            # Check if we can retry
-            if work_unit.can_retry:
-                retry_unit = work_unit.create_retry()
-                logger.info(
-                    "Retrying %s (attempt %d/%d)",
-                    work_unit,
-                    retry_unit.retry_count,
-                    retry_unit.max_retries,
-                )
-                client.publish(retry_unit, queue_name=source_queue)
-                collector.mark_outcome(JobOutcome.ERROR, str(e))
-            else:
-                # Max retries exceeded, send to DLQ
-                logger.error("Max retries exceeded for %s, sending to DLQ", work_unit)
-                client.publish_to_dlq(work_unit, str(e))
-                collector.mark_outcome(JobOutcome.DLQ, str(e))
-
-            return True  # Acknowledge (we've handled it via retry or DLQ)
+            self._handle_processing_error(
+                work_unit, delivery_tag, source_queue, collector, e
+            )
 
         finally:
             self._record_metrics(collector)
+
+    def _handle_processing_error(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        work_unit: WorkUnit,
+        delivery_tag: int,
+        source_queue: str,
+        collector: JobMetricsContext,
+        error: Exception,
+    ) -> None:
+        """Ack+retry, ack+DLQ, or (on shutdown) nack-requeue a failed unit."""
+        if not self._running:
+            logger.info("Shutdown interrupted processing of %s", work_unit.image_id)
+            # Leave outcome unset and redeliver: not a terminal failure.
+            self._mq_client.nack(delivery_tag, requeue=True)
+            return
+
+        logger.exception("Error processing %s: %s", work_unit, error)
+        if work_unit.can_retry:
+            retry_unit = work_unit.create_retry()
+            logger.info(
+                "Retrying %s (attempt %d/%d)",
+                work_unit,
+                retry_unit.retry_count,
+                retry_unit.max_retries,
+            )
+            self._mq_client.publish(retry_unit, queue_name=source_queue)
+            collector.mark_outcome(JobOutcome.ERROR, str(error))
+        else:
+            logger.error("Max retries exceeded for %s, sending to DLQ", work_unit)
+            self._mq_client.publish_to_dlq(work_unit, str(error))
+            collector.mark_outcome(JobOutcome.DLQ, str(error))
+        self._mq_client.ack(delivery_tag)
 
     def _record_metrics(self, collector: JobMetricsContext) -> None:
         """Persist one metrics row. Never lets a metrics failure break the worker."""
@@ -313,10 +379,7 @@ def run_worker(config: Config) -> None:
         loop.run_until_complete(
             s3_client.configure_lifecycle_policy(config.TILE_RETENTION_DAYS)
         )
-        logger.info(
-            "S3 lifecycle configured: tiles will expire after %d days",
-            config.TILE_RETENTION_DAYS,
-        )
+        logger.info("S3 per-prefix lifecycle configured for tile expiration")
     finally:
         loop.close()
 
@@ -330,21 +393,19 @@ def run_worker(config: Config) -> None:
         metrics_repository = MetricsRepository(Path(config.METRICS_DB_PATH))
 
     # Build inline processors (run in main process, need MQ access).
-    # GRIB uploads use SEAWEEDFS_ECMWF_GRIB_TTL — independent from the output
-    # TTL (SEAWEEDFS_ECMWF_TTL) so operators can keep raw GRIB inputs around
-    # longer than the derived COG/tile/GeoJSON outputs (or vice versa).
+    # GRIB inputs and ECMWF outputs each expire via their own per-prefix bucket
+    # lifecycle rule (grib/models/ecmwf vs cog|tiles|geojson/models/ecmwf), so
+    # operators can retain raw GRIB inputs independently of derived outputs.
     inline_processors: dict[str, InlineProcessor] = {}
     if config.ENABLE_ECMWF_PRECIPITATION:
-        ecmwf_tp_s3 = create_s3_client(config, with_ttl=config.SEAWEEDFS_ECMWF_GRIB_TTL)
+        ecmwf_tp_s3 = create_s3_client(config)
         inline_processors[ECMWF_TP_CONFIG.inline_processor_id] = EcmwfGribDownloader(
             product_config=ECMWF_TP_CONFIG,
             s3_client=ecmwf_tp_s3,
             bounds=config.get_bounds(),
         )
     if config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE:
-        ecmwf_mslp_s3 = create_s3_client(
-            config, with_ttl=config.SEAWEEDFS_ECMWF_GRIB_TTL
-        )
+        ecmwf_mslp_s3 = create_s3_client(config)
         inline_processors[ECMWF_MSLP_CONFIG.inline_processor_id] = EcmwfGribDownloader(
             product_config=ECMWF_MSLP_CONFIG,
             s3_client=ecmwf_mslp_s3,

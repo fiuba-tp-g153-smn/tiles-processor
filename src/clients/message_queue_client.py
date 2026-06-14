@@ -78,6 +78,25 @@ class MessageQueueClient(ABC):
         """
 
     @abstractmethod
+    def poll_one(
+        self, strict_queues: list[str], round_robin_queues: list[str]
+    ) -> tuple[WorkUnit, int, str] | None:
+        """Fetch one message without acking, or None if every queue is empty.
+
+        Scans the strict tier in order, then the round-robin tier fairly. Returns
+        (work_unit, delivery_tag, source_queue); the caller acks/nacks. Lets a
+        bounded-concurrency consumer pull work without blocking on a callback.
+        """
+
+    @abstractmethod
+    def service_events(self, time_limit: float = 0.0) -> None:
+        """Pump connection I/O (heartbeats, acks) without consuming a message.
+
+        Args:
+            time_limit: Max seconds to spend; 0 returns once pending events drain.
+        """
+
+    @abstractmethod
     def ack(self, delivery_tag: int) -> None:
         """
         Manually acknowledge a message.

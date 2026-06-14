@@ -10,8 +10,45 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import numpy as np
 import pytest
 
+from exceptions import UnprocessableInputError
 from models.work_unit import WorkUnit
 from processors.radar_processor import RadarProcessor
+
+
+def _radar_processor(tmp_path) -> RadarProcessor:
+    config = MagicMock()
+    config.TMP_DIR = str(tmp_path)
+    with patch("processors.radar_processor.create_s3_client", return_value=AsyncMock()):
+        return RadarProcessor(config)
+
+
+def test_read_radar_skips_incompatible_sweep_geometry(tmp_path):
+    """pyart's 'changes between sweeps' ValueError → UnprocessableInputError (skip)."""
+    processor = _radar_processor(tmp_path)
+    fake_pyart = MagicMock()
+    fake_pyart.aux_io.read_sinarame_h5.side_effect = ValueError(
+        "range start changes between sweeps"
+    )
+
+    with patch.dict(sys.modules, {"pyart": fake_pyart}):
+        with pytest.raises(UnprocessableInputError, match="sweep range geometry"):
+            processor._read_radar(Path("RMA11_KDP_20260114T170040Z.H5"))
+
+
+def test_read_radar_reraises_unrelated_valueerror(tmp_path):
+    """A different ValueError is a real error — it must NOT be swallowed as a skip."""
+    processor = _radar_processor(tmp_path)
+    fake_pyart = MagicMock()
+    fake_pyart.aux_io.read_sinarame_h5.side_effect = ValueError(
+        "totally unrelated boom"
+    )
+
+    with patch.dict(sys.modules, {"pyart": fake_pyart}):
+        with pytest.raises(ValueError) as excinfo:
+            processor._read_radar(Path("RMA11_DBZH_x.H5"))
+
+    assert not isinstance(excinfo.value, UnprocessableInputError)
+    assert "unrelated boom" in str(excinfo.value)
 
 
 @pytest.mark.asyncio

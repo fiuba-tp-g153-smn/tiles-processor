@@ -20,6 +20,8 @@ import pytest
 import numpy as np
 from config import Config
 import logging
+from data_sources.ecmwf_producer_source import TransientDownloadError
+from exceptions import UnprocessableInputError
 from worker.worker import Worker
 from worker.work_handler import WorkHandler
 from models.work_unit import WorkUnit
@@ -100,9 +102,6 @@ class TestWorkerIntegration:
             mock_handler.handle = AsyncMock()
             worker._handler = mock_handler
 
-            # Initialize loop for the worker manually since we are not calling start()
-            worker._loop = asyncio.new_event_loop()
-
             # Create a test work unit using new format
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
@@ -114,13 +113,11 @@ class TestWorkerIntegration:
                 band_id="band_13",
             )
 
-            # Process the message
-            result = worker._process_message(
-                work_unit, mock_rabbitmq, 1, "tiles_work_queue"
-            )
+            # Process the message (the coroutine acks via the MQ client now)
+            asyncio.run(worker._process_message_async(work_unit, 1, "tiles_work_queue"))
 
             # Verify acknowledgement
-            assert result is True
+            mock_rabbitmq.ack.assert_called_once_with(1)
 
             # Verify handler was called with the work unit (plus the per-job
             # metrics collector the worker now threads through as 2nd arg).
@@ -144,9 +141,6 @@ class TestWorkerIntegration:
             mock_handler.handle = AsyncMock(side_effect=Exception("Processing failed"))
             worker._handler = mock_handler
 
-            # Initialize loop
-            worker._loop = asyncio.new_event_loop()
-
             # Create work unit
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
@@ -159,12 +153,12 @@ class TestWorkerIntegration:
             )
 
             # Process (light unit stolen by a normal worker: came from a light queue)
-            result = worker._process_message(
-                work_unit, mock_rabbitmq, 1, "tiles_radar_light_queue"
+            asyncio.run(
+                worker._process_message_async(work_unit, 1, "tiles_radar_light_queue")
             )
 
-            # Should still acknowledge (to remove original message)
-            assert result is True
+            # Should still acknowledge (to remove the original message)
+            mock_rabbitmq.ack.assert_called_once_with(1)
 
             # Should publish retry back to the queue it came from, not the
             # worker's primary queue.
@@ -189,9 +183,6 @@ class TestWorkerIntegration:
             mock_handler.handle = AsyncMock(side_effect=Exception("Persistent failure"))
             worker._handler = mock_handler
 
-            # Initialize loop
-            worker._loop = asyncio.new_event_loop()
-
             # Create work unit with max retries reached
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
@@ -206,15 +197,85 @@ class TestWorkerIntegration:
             work_unit.max_retries = 3
 
             # Process
-            result = worker._process_message(
-                work_unit, mock_rabbitmq, 1, "tiles_work_queue"
-            )
+            asyncio.run(worker._process_message_async(work_unit, 1, "tiles_work_queue"))
 
             # Should not publish retry
             mock_rabbitmq.publish.assert_not_called()
 
-            # Should send to DLQ
+            # Should send to DLQ, then ack the original
             mock_rabbitmq.publish_to_dlq.assert_called_once()
+            mock_rabbitmq.ack.assert_called_once_with(1)
+
+    def test_worker_skips_unprocessable_input(
+        self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
+    ):
+        """Unprocessable input is acked as SKIPPED — no retry, no DLQ, no release."""
+
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            worker = Worker(config, mock_rabbitmq, mock_tracker)
+
+            mock_handler = MagicMock()
+            mock_handler.handle = AsyncMock(
+                side_effect=UnprocessableInputError(
+                    "Incompatible sweep range geometry for RMA11_KDP_x.H5"
+                )
+            )
+            worker._handler = mock_handler
+
+            work_unit = WorkUnit.create(
+                image_id="RMA11_KDP_20260114T170040Z",
+                source_uri="/data/radar/RMA11_KDP_20260114T170040Z.H5",
+                data_source_id="radar_KDP",
+                processor_id="radar",
+                output_prefix="tiles/radar",
+                bounds=config.get_bounds(),
+                band_id="radar_KDP",
+            )
+
+            asyncio.run(
+                worker._process_message_async(work_unit, 1, "tiles_radar_light_queue")
+            )
+
+            # Acked once (removed), and NOT retried / DLQ'd / re-discovered.
+            mock_rabbitmq.ack.assert_called_once_with(1)
+            mock_rabbitmq.publish.assert_not_called()
+            mock_rabbitmq.publish_to_dlq.assert_not_called()
+            # Deterministic skip: must NOT release progress (would only re-skip).
+            mock_handler.release_progress.assert_not_called()
+
+    def test_worker_releases_and_acks_on_transient_download_error(
+        self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
+    ):
+        """A 503 (rate limit) releases for re-discovery and acks — no instant requeue."""
+
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            worker = Worker(config, mock_rabbitmq, mock_tracker)
+
+            mock_handler = MagicMock()
+            mock_handler.handle = AsyncMock(
+                side_effect=TransientDownloadError("S3 rate limit (503 Slow Down)")
+            )
+            worker._handler = mock_handler
+
+            work_unit = WorkUnit.create(
+                image_id="20260217T0000Z",
+                source_uri="2026-02-17T00:00:00+00:00",
+                data_source_id="ecmwf_tp_producer",
+                processor_id="ecmwf_tp_grib_downloader",
+                output_prefix="grib/models/ecmwf",
+                bounds=config.get_bounds(),
+                band_id="ecmwf_tp_producer",
+            )
+
+            asyncio.run(worker._process_message_async(work_unit, 1, "tiles_work_queue"))
+
+            # Released for the next discovery tick, acked, and NOT republished.
+            mock_handler.release_progress.assert_called_once_with(work_unit)
+            mock_rabbitmq.ack.assert_called_once_with(1)
+            mock_rabbitmq.publish.assert_not_called()
+            mock_rabbitmq.publish_to_dlq.assert_not_called()
 
 
 class TestPipelineIntegration:

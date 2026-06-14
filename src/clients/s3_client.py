@@ -8,16 +8,77 @@ Supports both:
 
 import asyncio
 import logging
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, AsyncIterator, Callable
 
 import aioboto3
+from boto3.s3.transfer import TransferConfig
 from botocore import UNSIGNED
 from botocore.config import Config as BotoConfig
-
-from clients.tile_upload_backend import TileUploadBackend
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
+
+# Default concurrency for the dedicated upload semaphore (separate from the
+# download semaphore). Sized to match max_pool_connections so concurrent tile
+# PUTs never starve the connection pool. Env-overridable via S3_UPLOAD_CONCURRENCY.
+DEFAULT_UPLOAD_CONCURRENCY = 32
+
+# Single objects at/above this size upload as parallel multipart transfers,
+# streamed from disk (never the whole file in RAM). Smaller ones are one PUT.
+_MULTIPART_THRESHOLD_BYTES = 8 * 1024 * 1024
+# Parts in flight per large single-object transfer.
+_MULTIPART_MAX_CONCURRENCY = 8
+
+# Cap any single S3 op stalled by gateway contention at seconds, not botocore's
+# 60s default read timeout (which turned contended LISTs into ~60s blocks).
+# read_timeout is per-socket-read, so a progressing multipart transfer resets it
+# each chunk and won't false-abort a slow-but-moving upload; 'standard' mode adds
+# bounded exponential-backoff retries so a contention burst can pass before retry.
+_CONNECT_TIMEOUT_S = 5
+_READ_TIMEOUT_S = 30
+_MAX_ATTEMPTS = 3
+
+
+# Per-prefix object retention, in days. Sub-day expiries (radar 6h, GRIB 3h)
+# are rounded up to the S3 lifecycle minimum of 1 day — the portability cost of
+# expressing expiry as standard per-prefix bucket lifecycle rules instead of
+# SeaweedFS-only per-object TTLs. S3 Filter.Prefix is a literal startswith, so
+# "tiles/band_" covers band_2/9/13 and "tiles/glm_" covers fed/toe/mfa.
+TILE_LIFECYCLE_RETENTION_DAYS = {
+    "tiles/band_": 1,
+    "cog/band_": 1,
+    "tiles/glm_": 1,
+    "cog/glm_": 1,
+    "tiles/radar": 1,
+    "cog/radar": 1,
+    "tiles/wrf": 2,
+    "cog/wrf": 2,
+    "geojson/wrf": 2,
+    "tiles/models/ecmwf": 2,
+    "cog/models/ecmwf": 2,
+    "geojson/models/ecmwf": 2,
+    "grib/models/ecmwf": 1,
+}
+
+
+def _build_lifecycle_rules(retention_map: dict[str, int]) -> list[dict]:
+    """Build one non-overlapping S3 lifecycle rule per explicit prefix.
+
+    No empty-prefix catch-all: overlap-resolution semantics differ across
+    AWS/MinIO/SeaweedFS, and every uploader writes under one of the enumerated
+    prefixes. Rules are sorted by prefix for deterministic output.
+    """
+    return [
+        {
+            "ID": f"expire-{prefix.replace('/', '-')}",
+            "Status": "Enabled",
+            "Expiration": {"Days": max(1, days)},
+            "Filter": {"Prefix": prefix},
+        }
+        for prefix, days in sorted(retention_map.items())
+    ]
 
 
 class S3Client:
@@ -43,7 +104,7 @@ class S3Client:
         max_concurrent_downloads: int = 6,
         access_key: str | None = None,
         secret_key: str | None = None,
-        tile_uploader_overwritten: TileUploadBackend | None = None,
+        upload_concurrency: int = DEFAULT_UPLOAD_CONCURRENCY,
     ):
         """
         Initialize S3 client.
@@ -51,25 +112,36 @@ class S3Client:
         Args:
             bucket_name: S3 bucket name
             endpoint_url: S3 endpoint URL (optional, for S3-compatible services)
-            max_concurrent_downloads: Maximum number of concurrent operations
+            max_concurrent_downloads: Maximum number of concurrent downloads
             access_key: S3 access key (optional, for authenticated access)
             secret_key: S3 secret key (optional, for authenticated access)
-            tile_uploader_overwritten: Optional upload backend (e.g. SeaweedFsFilerUploader).
-                           When None, uploads use the standard S3 put_object call.
+            upload_concurrency: Maximum number of concurrent uploads (separate
+                from downloads); also sizes the connection pool.
         """
         self._bucket_name = bucket_name
         self._endpoint_url = endpoint_url
         self._max_concurrent_downloads = max_concurrent_downloads
+        self._upload_concurrency = upload_concurrency
         self._semaphore = asyncio.Semaphore(self._max_concurrent_downloads)
+        self._upload_semaphore = asyncio.Semaphore(self._upload_concurrency)
         self._session = aioboto3.Session()
         self._access_key = access_key
         self._secret_key = secret_key
-        self._tile_uploader_overwritten = tile_uploader_overwritten
-        self._backend_label = (
-            type(tile_uploader_overwritten).__name__
-            if tile_uploader_overwritten
-            else "S3"
+        self._backend_label = "S3"
+        self._transfer_config = TransferConfig(
+            multipart_threshold=_MULTIPART_THRESHOLD_BYTES,
+            max_concurrency=_MULTIPART_MAX_CONCURRENCY,
         )
+        # One aioboto3 client reused across a loop's calls (warm connection
+        # pool). Lazily created in _get_client and recreated if the running loop
+        # changes (e.g. worker startup's throwaway loop → persistent loop). The
+        # exit stack owns the client context so it can be closed in aclose().
+        self._client: Any = None
+        self._exit_stack: AsyncExitStack | None = None
+        self._client_loop: asyncio.AbstractEventLoop | None = None
+        # Serializes concurrent first-use creation; rebound per loop.
+        self._client_lock: asyncio.Lock | None = None
+        self._lock_loop: asyncio.AbstractEventLoop | None = None
 
     @classmethod
     def create_with_credentials(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -80,7 +152,7 @@ class S3Client:
         secret_key: str,
         secure: bool = False,
         max_concurrent_operations: int = 10,
-        tile_uploader_overwritten: TileUploadBackend | None = None,
+        upload_concurrency: int = DEFAULT_UPLOAD_CONCURRENCY,
     ) -> "S3Client":
         """
         Factory method to create an authenticated S3 client for S3.
@@ -91,8 +163,8 @@ class S3Client:
             access_key: Access key (username)
             secret_key: Secret key (password)
             secure: Use HTTPS (default: False)
-            max_concurrent_operations: Max parallel operations
-            tile_uploader_overwritten: Optional upload backend (e.g. SeaweedFsFilerUploader).
+            max_concurrent_operations: Max parallel downloads
+            upload_concurrency: Max parallel uploads (also sizes the pool)
         """
         protocol = "https" if secure else "http"
         endpoint_url = f"{protocol}://{endpoint}"
@@ -102,18 +174,110 @@ class S3Client:
             max_concurrent_downloads=max_concurrent_operations,
             access_key=access_key,
             secret_key=secret_key,
-            tile_uploader_overwritten=tile_uploader_overwritten,
+            upload_concurrency=upload_concurrency,
         )
 
     def _get_client_kwargs(self, authenticated: bool = False) -> dict:
-        """Get kwargs for creating S3 client based on auth mode."""
+        """Get kwargs for creating S3 client based on auth mode.
+
+        Path-style addressing and a connection pool sized to this client's
+        concurrency are applied on both branches: path-style is required for
+        S3-compatible gateways addressed as host:port (SeaweedFS, MinIO), and
+        the pool keeps concurrent operations from contending for a single
+        default connection.
+        """
         kwargs: dict[str, Any] = {"endpoint_url": self._endpoint_url}
+        pool = max(
+            self._max_concurrent_downloads,
+            self._upload_concurrency,
+            _MULTIPART_MAX_CONCURRENCY,
+        )
+        boto_kwargs: dict[str, Any] = {
+            "s3": {"addressing_style": "path"},
+            "max_pool_connections": pool,
+            "connect_timeout": _CONNECT_TIMEOUT_S,
+            "read_timeout": _READ_TIMEOUT_S,
+            "retries": {"max_attempts": _MAX_ATTEMPTS, "mode": "standard"},
+        }
         if authenticated and self._access_key and self._secret_key:
             kwargs["aws_access_key_id"] = self._access_key
             kwargs["aws_secret_access_key"] = self._secret_key
         else:
-            kwargs["config"] = BotoConfig(signature_version=UNSIGNED)
+            boto_kwargs["signature_version"] = UNSIGNED
+        kwargs["config"] = BotoConfig(**boto_kwargs)
         return kwargs
+
+    def _lock_for_loop(self, loop: asyncio.AbstractEventLoop) -> asyncio.Lock:
+        """Return a creation lock bound to ``loop``, rebinding on loop change.
+
+        Synchronous and await-free, so concurrent callers on the same loop
+        observe the same lock instance (no interleave); cross-loop use is always
+        sequential here, so rebinding is safe.
+        """
+        if self._client_lock is None or self._lock_loop is not loop:
+            self._client_lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._client_lock
+
+    async def _get_client(self):
+        """Return a cached aioboto3 S3 client for the running loop.
+
+        Created on first use and reused across the loop's calls (warm pool). If
+        the running loop differs from the one the client was bound to, the stale
+        client is dropped (it cannot be closed from another loop) and a fresh one
+        is created.
+        """
+        loop = asyncio.get_running_loop()
+        if self._client is not None and self._client_loop is loop:
+            return self._client
+        async with self._lock_for_loop(loop):
+            if self._client is not None and self._client_loop is loop:
+                return self._client
+            if self._client is not None:
+                logger.debug("Discarding S3 client bound to a previous event loop")
+                self._client = self._exit_stack = self._client_loop = None
+            # The exit stack keeps the client open beyond this call (reused
+            # across the loop) and owns its eventual close in aclose().
+            stack = AsyncExitStack()
+            self._client = await stack.enter_async_context(
+                self._session.client(
+                    "s3", **self._get_client_kwargs(authenticated=True)
+                )
+            )
+            self._exit_stack = stack
+            self._client_loop = loop
+            return self._client
+
+    @asynccontextmanager
+    async def _client_session(self) -> AsyncIterator[Any]:
+        """Yield the reused client without closing it (close is lifecycle-owned)."""
+        yield await self._get_client()
+
+    async def aclose(self) -> None:
+        """Close the cached client and its pool. Call on producer/worker shutdown.
+
+        Only awaits the close when running on the client's own loop; otherwise
+        the references are dropped (a client cannot be closed from a foreign loop).
+        """
+        stack = self._exit_stack
+        if stack is None:
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is not None and self._client_loop is running:
+            try:
+                await stack.aclose()
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.debug("Error closing S3 client: %s", e)
+        self._client = self._exit_stack = self._client_loop = None
+
+    async def __aenter__(self) -> "S3Client":
+        return self
+
+    async def __aexit__(self, *_exc) -> None:
+        await self.aclose()
 
     async def download_to_file(
         self,
@@ -138,9 +302,7 @@ class S3Client:
         flush_size = 20 * 1024 * 1024  # 20 MB
         read_chunk = 65_536  # 64 KB
 
-        async with self._session.client(
-            "s3", **self._get_client_kwargs(authenticated=True)
-        ) as s3_client:
+        async with self._client_session() as s3_client:
             for attempt in range(retries):
                 try:
                     async with self._semaphore:
@@ -198,9 +360,7 @@ class S3Client:
         Returns:
             File content as bytes, or None if download failed
         """
-        async with self._session.client(
-            "s3", **self._get_client_kwargs(authenticated=True)
-        ) as s3_client:
+        async with self._client_session() as s3_client:
             _, content = await self._download_file_internal(
                 s3_client, s3_key, retries=retries
             )
@@ -319,9 +479,7 @@ class S3Client:
 
         # Use authenticated=True so it uses credentials if available,
         # otherwise falls back to UNSIGNED
-        async with self._session.client(
-            "s3", **self._get_client_kwargs(authenticated=True)
-        ) as s3_client:
+        async with self._client_session() as s3_client:
             tasks = [
                 self._download_file_internal(
                     s3_client, fp, local_cache_dir=local_cache_dir
@@ -343,6 +501,24 @@ class S3Client:
         )
         return files
 
+    async def head_exists(self, key: str) -> bool:
+        """Return True if the exact object exists (HEAD 200), False on 404.
+
+        Direct O(1) existence check — avoids a prefix LIST + filter when the
+        caller already knows the full key (and avoids a heavy scan that competes
+        with concurrent uploads). Non-404 errors propagate so a transient gateway
+        failure is never silently read as "missing".
+        """
+        async with self._client_session() as s3_client:
+            try:
+                await s3_client.head_object(Bucket=self._bucket_name, Key=key)
+                return True
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code")
+                if code in ("404", "NoSuchKey", "NotFound"):
+                    return False
+                raise
+
     async def list_files(self, folder_path: str, file_pattern: str) -> list[str]:
         """
         List files in an S3 folder matching a pattern.
@@ -362,9 +538,7 @@ class S3Client:
         file_paths = []
         try:
             # Use authenticated=True so it uses credentials if available
-            async with self._session.client(
-                "s3", **self._get_client_kwargs(authenticated=True)
-            ) as s3_client:
+            async with self._client_session() as s3_client:
                 logger.debug(
                     "Listing objects in bucket '%s' with prefix '%s'",
                     self._bucket_name,
@@ -434,9 +608,7 @@ class S3Client:
             s3_prefix,
         )
 
-        async with self._session.client(
-            "s3", **self._get_client_kwargs(authenticated=True)
-        ) as s3_client:
+        async with self._client_session() as s3_client:
             tasks = [
                 self._upload_file_with_limit(s3_client, file_path, s3_key)
                 for file_path, s3_key in files_to_upload
@@ -467,27 +639,22 @@ class S3Client:
     async def _upload_file_with_limit(
         self, s3_client, file_path: Path, s3_key: str
     ) -> bool:
-        """Upload a single file with semaphore-controlled concurrency."""
-        async with self._semaphore:
+        """Upload a single file bounded by the dedicated upload semaphore."""
+        async with self._upload_semaphore:
             return await self._upload_file(s3_client, file_path, s3_key)
 
     async def _upload_file(self, s3_client, file_path: Path, s3_key: str) -> bool:
-        """Upload a single file, delegating to the tile uploader when configured."""
+        """Upload a single file via S3 put_object."""
         try:
             content = await asyncio.to_thread(file_path.read_bytes)
             content_type = self._get_content_type(file_path)
 
-            if self._tile_uploader_overwritten is not None:
-                await self._tile_uploader_overwritten.upload(
-                    s3_key, content, content_type
-                )
-            else:
-                await s3_client.put_object(
-                    Bucket=self._bucket_name,
-                    Key=s3_key,
-                    Body=content,
-                    ContentType=content_type,
-                )
+            await s3_client.put_object(
+                Bucket=self._bucket_name,
+                Key=s3_key,
+                Body=content,
+                ContentType=content_type,
+            )
 
             logger.debug("Uploaded via %s: %s", self._backend_label, s3_key)
             return True
@@ -498,11 +665,11 @@ class S3Client:
             return False
 
     async def upload_file(self, key: str, file_path: Path) -> bool:
-        """Upload a single local file and return whether the upload succeeded.
+        """Upload a single local file via the managed transfer API.
 
-        Uses the same backend selection as directory uploads: if
-        ``tile_uploader_overwritten`` is configured it will be used, otherwise this
-        falls back to S3 ``put_object``.
+        Large objects (COG/GRIB) upload as parallel multipart transfers streamed
+        from disk — never the whole file in RAM — while small files fall back to a
+        single PUT automatically. Bounded by the dedicated upload semaphore.
 
         Args:
             key: Destination object key (e.g., "cog/band_13/image.tif").
@@ -511,10 +678,23 @@ class S3Client:
         Returns:
             ``True`` when upload succeeds, ``False`` when it fails.
         """
-        async with self._session.client(
-            "s3", **self._get_client_kwargs(authenticated=True)
-        ) as s3_client:
-            return await self._upload_file(s3_client, file_path, key)
+        try:
+            s3_client = await self._get_client()
+            async with self._upload_semaphore:
+                await s3_client.upload_file(
+                    str(file_path),
+                    self._bucket_name,
+                    key,
+                    ExtraArgs={"ContentType": self._get_content_type(file_path)},
+                    Config=self._transfer_config,
+                )
+            logger.debug(
+                "Uploaded via %s (managed transfer): %s", self._backend_label, key
+            )
+            return True
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.debug("Failed to upload %s to %s: %s", file_path, key, e)
+            return False
 
     async def delete_prefix(self, s3_prefix: str) -> int:
         """
@@ -528,9 +708,7 @@ class S3Client:
         """
         logger.info("Deleting objects under s3://%s/%s", self._bucket_name, s3_prefix)
 
-        async with self._session.client(
-            "s3", **self._get_client_kwargs(authenticated=True)
-        ) as s3_client:
+        async with self._client_session() as s3_client:
             objects_to_delete = []
 
             paginator = s3_client.get_paginator("list_objects_v2")
@@ -570,9 +748,7 @@ class S3Client:
         """
         prefixes = []
 
-        async with self._session.client(
-            "s3", **self._get_client_kwargs(authenticated=True)
-        ) as s3_client:
+        async with self._client_session() as s3_client:
             paginator = s3_client.get_paginator("list_objects_v2")
             async for page in paginator.paginate(
                 Bucket=self._bucket_name, Prefix=prefix, Delimiter=delimiter
@@ -590,9 +766,7 @@ class S3Client:
             True if bucket exists or was created successfully
         """
         try:
-            async with self._session.client(
-                "s3", **self._get_client_kwargs(authenticated=True)
-            ) as s3_client:
+            async with self._client_session() as s3_client:
                 try:
                     await s3_client.head_bucket(Bucket=self._bucket_name)
                     logger.debug("Bucket '%s' exists", self._bucket_name)
@@ -607,13 +781,15 @@ class S3Client:
 
     async def configure_lifecycle_policy(self, retention_days: int) -> bool:
         """
-        Configure S3 lifecycle policy to automatically expire old tiles.
+        Configure S3 lifecycle policy to automatically expire old objects.
 
-        S3 will automatically delete objects older than the specified retention
-        period. This eliminates the need for application-level retention management.
+        Emits one per-prefix expiration rule (see TILE_LIFECYCLE_RETENTION_DAYS)
+        so each product family expires on its own schedule via portable S3 bucket
+        lifecycle rules — no application-level reaper or SeaweedFS-specific TTL.
 
         Args:
-            retention_days: Number of days to retain tiles before expiration
+            retention_days: Default retention, logged for reference only.
+                Per-prefix retention comes from TILE_LIFECYCLE_RETENTION_DAYS.
 
         Returns:
             True if lifecycle policy was configured successfully
@@ -623,27 +799,17 @@ class S3Client:
             so objects may not be deleted exactly at the expiration time.
         """
         try:
-            async with self._session.client(
-                "s3", **self._get_client_kwargs(authenticated=True)
-            ) as s3_client:
-                lifecycle_config = {
-                    "Rules": [
-                        {
-                            "ID": "ExpireOldTiles",
-                            "Status": "Enabled",
-                            "Expiration": {"Days": retention_days},
-                            "Filter": {"Prefix": ""},
-                        }
-                    ]
-                }
-
+            rules = _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+            async with self._client_session() as s3_client:
                 await s3_client.put_bucket_lifecycle_configuration(
                     Bucket=self._bucket_name,
-                    LifecycleConfiguration=lifecycle_config,  # type: ignore[arg-type]
+                    LifecycleConfiguration={"Rules": rules},  # type: ignore[arg-type]
                 )
 
                 logger.info(
-                    "Configured lifecycle policy for bucket '%s': expire after %d days",
+                    "Configured %d per-prefix lifecycle rules for bucket '%s' "
+                    "(default retention %d days)",
+                    len(rules),
                     self._bucket_name,
                     retention_days,
                 )

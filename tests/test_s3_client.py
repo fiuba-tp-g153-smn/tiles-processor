@@ -8,7 +8,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import pytest
-from clients.s3_client import S3Client
+from botocore import UNSIGNED
+from botocore.exceptions import ClientError
+from clients.s3_client import (
+    S3Client,
+    TILE_LIFECYCLE_RETENTION_DAYS,
+    _CONNECT_TIMEOUT_S,
+    _MAX_ATTEMPTS,
+    _READ_TIMEOUT_S,
+    _build_lifecycle_rules,
+)
 
 
 class _AsyncClientContext:
@@ -461,76 +470,110 @@ class TestS3ClientGetFolderFilePaths:
 
 
 class TestS3ClientUploadFile:
-    """Tests for S3Client.upload_file method."""
+    """Tests for S3Client.upload_file (managed multipart transfer)."""
 
-    @pytest.mark.asyncio
-    async def test_upload_file_uses_overridden_backend_and_returns_true(self, tmp_path):
-        """upload_file should delegate to _upload_file and honor backend override."""
-        file_path = tmp_path / "sample.tif"
-        file_path.write_bytes(b"abc")
-
-        override_backend = AsyncMock()
+    @staticmethod
+    def _make_client():
         s3_client = S3Client(
             bucket_name="tiles-data",
             endpoint_url="http://s3:9000",
             access_key="user",
             secret_key="pass",
-            tile_uploader_overwritten=override_backend,
         )
-
         boto_client = AsyncMock()
-        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+        s3_client._session.client = lambda *a, **k: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+        return s3_client, boto_client
+
+    @pytest.mark.asyncio
+    async def test_upload_file_uses_managed_transfer_with_multipart_config(
+        self, tmp_path
+    ):
+        """upload_file routes through the managed transfer API (not put_object)."""
+        file_path = tmp_path / "sample.tif"
+        file_path.write_bytes(b"abc")
+        s3_client, boto_client = self._make_client()
 
         uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
 
         assert uploaded is True
-        override_backend.upload.assert_awaited_once()
         boto_client.put_object.assert_not_awaited()
+        boto_client.upload_file.assert_awaited_once()
+        args, kwargs = boto_client.upload_file.call_args
+        assert args[0] == str(file_path)
+        assert args[1] == "tiles-data"
+        assert args[2] == "cog/band_13/image.tif"
+        assert kwargs["ExtraArgs"]["ContentType"] == "image/tiff"
+        assert kwargs["Config"] is s3_client._transfer_config
+        assert kwargs["Config"].multipart_threshold == 8 * 1024 * 1024
 
     @pytest.mark.asyncio
-    async def test_upload_file_returns_false_on_backend_failure(self, tmp_path):
-        """upload_file should not raise and should return False on upload errors."""
+    async def test_upload_file_returns_false_on_transfer_failure(self, tmp_path):
+        """upload_file should not raise and should return False on transfer errors."""
         file_path = tmp_path / "sample.tif"
         file_path.write_bytes(b"abc")
-
-        override_backend = AsyncMock()
-        override_backend.upload.side_effect = RuntimeError("boom")
-
-        s3_client = S3Client(
-            bucket_name="tiles-data",
-            endpoint_url="http://s3:9000",
-            access_key="user",
-            secret_key="pass",
-            tile_uploader_overwritten=override_backend,
-        )
-
-        boto_client = AsyncMock()
-        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+        s3_client, boto_client = self._make_client()
+        boto_client.upload_file.side_effect = RuntimeError("boom")
 
         uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
 
         assert uploaded is False
 
-    @pytest.mark.asyncio
-    async def test_upload_file_success_without_overridden_backend(self, tmp_path):
-        """upload_file should use boto put_object when no override backend is configured."""
-        file_path = tmp_path / "sample.tif"
-        file_path.write_bytes(b"abc")
 
+class TestS3ClientReuse:
+    """The aioboto3 client is created once per loop and reused across calls."""
+
+    @pytest.mark.asyncio
+    async def test_client_created_once_and_reused_within_a_loop(self, tmp_path):
+        file_path = tmp_path / "f.tif"
+        file_path.write_bytes(b"abc")
         s3_client = S3Client(
             bucket_name="tiles-data",
             endpoint_url="http://s3:9000",
             access_key="user",
             secret_key="pass",
         )
-
         boto_client = AsyncMock()
-        s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
+        create = MagicMock(side_effect=lambda *a, **k: _AsyncClientContext(boto_client))
+        s3_client._session.client = create  # type: ignore[attr-defined]
 
-        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
+        await s3_client.upload_file("cog/a.tif", file_path)
+        await s3_client.upload_file("cog/b.tif", file_path)
 
-        assert uploaded is True
-        boto_client.put_object.assert_awaited_once()
+        assert create.call_count == 1  # one warm client across both uploads
+
+    def test_client_recreated_on_a_different_loop(self):
+        s3_client = S3Client(
+            bucket_name="tiles-data",
+            endpoint_url="http://s3:9000",
+            access_key="user",
+            secret_key="pass",
+        )
+        boto_client = AsyncMock()
+        create = MagicMock(side_effect=lambda *a, **k: _AsyncClientContext(boto_client))
+        s3_client._session.client = create  # type: ignore[attr-defined]
+
+        asyncio.run(s3_client._get_client())
+        asyncio.run(s3_client._get_client())
+
+        assert create.call_count == 2  # loop-aware recreate
+
+
+class TestS3ClientUploadConcurrency:
+    """S3_UPLOAD_CONCURRENCY sizes the upload semaphore and the connection pool."""
+
+    def test_upload_concurrency_flows_to_semaphore_and_pool(self):
+        client = S3Client.create_with_credentials(
+            bucket_name="tiles-data",
+            endpoint="s3:9000",
+            access_key="user",
+            secret_key="pass",
+            max_concurrent_operations=10,
+            upload_concurrency=20,
+        )
+        assert client._upload_concurrency == 20
+        assert client._upload_semaphore._value == 20
+        cfg = client._get_client_kwargs(authenticated=True)["config"]
+        assert cfg.max_pool_connections == 20  # max(10, 20, 8)
 
 
 class TestS3ClientUploadDirectory:
@@ -548,17 +591,14 @@ class TestS3ClientUploadDirectory:
         for i in range(5):
             (tile_dir / f"{i}.json").write_bytes(b"{}")
 
-        override_backend = AsyncMock()
-        override_backend.upload.side_effect = RuntimeError("seaweedfs down")
-
         s3_client = S3Client(
             bucket_name="tiles-data",
             endpoint_url="http://s3:9000",
             access_key="user",
             secret_key="pass",
-            tile_uploader_overwritten=override_backend,
         )
         boto_client = AsyncMock()
+        boto_client.put_object.side_effect = RuntimeError("s3 down")
         s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
 
         with caplog.at_level(logging.DEBUG, logger="clients.s3_client"):
@@ -575,3 +615,117 @@ class TestS3ClientUploadDirectory:
         assert uploaded == 0
         assert len(errors) == 1  # single summary, not one-per-file
         assert len(debug_failures) == 5
+
+
+class TestBuildLifecycleRules:
+    """Tests for the pure per-prefix lifecycle-rule builder."""
+
+    def test_one_rule_per_prefix_and_no_empty_catchall(self):
+        rules = _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+
+        assert len(rules) == len(TILE_LIFECYCLE_RETENTION_DAYS)
+        prefixes = [r["Filter"]["Prefix"] for r in rules]
+        assert "" not in prefixes  # R1: no empty-prefix catch-all
+        assert set(prefixes) == set(TILE_LIFECYCLE_RETENTION_DAYS)
+
+    def test_expected_prefix_to_days_mapping(self):
+        days_by_prefix = {
+            r["Filter"]["Prefix"]: r["Expiration"]["Days"]
+            for r in _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+        }
+        assert days_by_prefix["tiles/radar"] == 1
+        assert days_by_prefix["tiles/wrf"] == 2
+        assert days_by_prefix["grib/models/ecmwf"] == 1
+        assert days_by_prefix["geojson/models/ecmwf"] == 2
+
+    def test_sub_day_retention_rounds_up_to_one_and_ids_unique(self):
+        rules = _build_lifecycle_rules(
+            {"tiles/radar": 0, "tiles/wrf": 2, "cog/radar": -3}
+        )
+        assert all(r["Status"] == "Enabled" for r in rules)
+        assert all(r["Expiration"]["Days"] >= 1 for r in rules)
+        ids = [r["ID"] for r in rules]
+        assert len(ids) == len(set(ids))
+
+    def test_real_map_has_unique_ids_and_is_sorted(self):
+        rules = _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+        ids = [r["ID"] for r in rules]
+        prefixes = [r["Filter"]["Prefix"] for r in rules]
+        assert len(ids) == len(set(ids))
+        assert prefixes == sorted(prefixes)  # deterministic ordering
+
+
+class TestS3ClientGetClientKwargs:
+    """Tests for path-style + connection-pool addressing on both auth branches."""
+
+    def test_authenticated_uses_path_style_pool_and_no_unsigned(self):
+        client = S3Client(
+            bucket_name="tiles-data",
+            endpoint_url="http://s3:9000",
+            max_concurrent_downloads=7,
+            access_key="user",
+            secret_key="pass",
+            upload_concurrency=40,
+        )
+        kwargs = client._get_client_kwargs(authenticated=True)
+
+        assert kwargs["aws_access_key_id"] == "user"
+        assert kwargs["aws_secret_access_key"] == "pass"
+        cfg = kwargs["config"]
+        assert cfg.s3["addressing_style"] == "path"
+        assert cfg.max_pool_connections == 40  # max(downloads=7, uploads=40, 8)
+        assert cfg.signature_version != UNSIGNED
+        assert cfg.connect_timeout == _CONNECT_TIMEOUT_S
+        assert cfg.read_timeout == _READ_TIMEOUT_S
+        assert cfg.retries == {"max_attempts": _MAX_ATTEMPTS, "mode": "standard"}
+
+    def test_unauthenticated_uses_path_style_pool_and_unsigned(self):
+        client = S3Client(
+            bucket_name="noaa-goes19", max_concurrent_downloads=6, upload_concurrency=12
+        )
+        kwargs = client._get_client_kwargs(authenticated=False)
+
+        assert "aws_access_key_id" not in kwargs
+        cfg = kwargs["config"]
+        assert cfg.s3["addressing_style"] == "path"
+        assert cfg.max_pool_connections == 12  # max(downloads=6, uploads=12, 8)
+        assert cfg.signature_version == UNSIGNED
+        assert cfg.connect_timeout == _CONNECT_TIMEOUT_S
+        assert cfg.read_timeout == _READ_TIMEOUT_S
+        assert cfg.retries == {"max_attempts": _MAX_ATTEMPTS, "mode": "standard"}
+
+
+class TestS3ClientHeadExists:
+    """head_exists: HEAD 200 → True, 404-class → False, other errors propagate."""
+
+    @staticmethod
+    def _session_ctx(mock_s3_client):
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_s3_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        return mock_ctx
+
+    async def _head_exists(self, head_object_mock, key="grib/x/20260217T0000Z.grib"):
+        client = S3Client(bucket_name="tiles-data")
+        mock_s3_client = AsyncMock()
+        mock_s3_client.head_object = head_object_mock
+        with patch.object(client, "_session") as mock_session:
+            mock_session.client.return_value = self._session_ctx(mock_s3_client)
+            return await client.head_exists(key)
+
+    @pytest.mark.asyncio
+    async def test_head_200_returns_true(self):
+        result = await self._head_exists(AsyncMock(return_value={}))
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_head_404_returns_false(self):
+        err = ClientError({"Error": {"Code": "404"}}, "HeadObject")
+        result = await self._head_exists(AsyncMock(side_effect=err))
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_head_other_error_propagates(self):
+        err = ClientError({"Error": {"Code": "500"}}, "HeadObject")
+        with pytest.raises(ClientError):
+            await self._head_exists(AsyncMock(side_effect=err))

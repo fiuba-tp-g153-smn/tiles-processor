@@ -208,7 +208,14 @@ def extract_barbs(
     return features
 
 
-BARB_ZOOM_STRIDES: dict[int, int] = {2: 150, 4: 38, 6: 16, 8: 9, 10: 9, 12: 9}
+# Web-Mercator zoom → grid subsample stride for barb tiles. Capped at z8: zooms
+# 8/10/12 all used stride 9, so z10/z12 extracted the *identical* barb points,
+# just re-bucketed into ~10–50× more tiny GeoJSON files for the same rendered
+# barbs — a write storm on the shared tile volume with zero added fidelity. The
+# frontend now overzooms the z8 barb tiles for render-zooms >8 (identical
+# barbs). Each remaining stride is distinct, so extract_barbs runs once per
+# density.
+BARB_ZOOM_STRIDES: dict[int, int] = {2: 150, 4: 38, 6: 16, 8: 9}
 
 _LAT_CLIP = 85.05112878
 
