@@ -91,6 +91,20 @@ def test_timing_series_groups_success_only(tmp_path):
     assert row["stages"]["georef"] == 3.2
 
 
+def test_error_outcome_counts_toward_fail_rate(tmp_path):
+    """An 'error' row (e.g. a missing source file) lifts the dashboard fail %."""
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    repo.record(_make_metrics("a", JobOutcome.SUCCESS.value))
+    repo.record(_make_metrics("b", JobOutcome.ERROR.value))
+
+    summary = repo.summary(since="2026-06-04T00:00:00+00:00")
+    entry = next(s for s in summary if s["job_type"] == "goes19_abi_band_13")
+
+    assert entry["counts"]["error"] == 1
+    assert entry["counts"]["total"] == 2
+    assert entry["error_rate"] == 0.5  # (error + dlq) / total
+
+
 def test_summary_keeps_idle_types_in_window(tmp_path):
     """A type with no jobs in the window still appears: zero counts, real last run."""
     repo = MetricsRepository(tmp_path / "metrics.db")

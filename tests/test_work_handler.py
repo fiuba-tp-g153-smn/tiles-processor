@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import pytest
-from exceptions import UnprocessableInputError
+from exceptions import SourceFileNotFoundError, UnprocessableInputError
 from models.work_unit import WorkUnit
 from worker.exit_codes import EXIT_SKIP_CODE, SKIP_REASON_PREFIX
 from worker.work_handler import WorkHandler
@@ -239,6 +239,31 @@ async def test_handle_passes_collector_to_inline_processor(tmp_path):
 
     inline.process.assert_awaited_once()
     assert inline.process.await_args.args[3] is collector  # 4th positional arg
+
+
+@pytest.mark.asyncio
+async def test_handle_raises_source_file_not_found_when_download_missing(tmp_path):
+    """A missing raw file → SourceFileNotFoundError; the work dir is still cleaned up."""
+    config = MagicMock()
+    config.TMP_DIR = str(tmp_path)
+    handler = WorkHandler(
+        config=config,
+        progress_tracker=MagicMock(),
+        data_source_registry=MagicMock(),
+    )
+
+    data_source = MagicMock()
+    data_source.download = AsyncMock(side_effect=FileNotFoundError("pruned upstream"))
+    handler._data_source_registry.get = MagicMock(return_value=data_source)
+
+    cleaned: list = []
+    handler._cleanup_directory = lambda path: cleaned.append(path)
+
+    work_unit = _work_unit("RMA1_DBZH_x.H5")
+    with pytest.raises(SourceFileNotFoundError, match="not found"):
+        await handler.handle(work_unit)
+
+    assert cleaned, "finally-block work-dir cleanup must still run"
 
 
 def test_abort_is_a_noop_when_no_live_processes():

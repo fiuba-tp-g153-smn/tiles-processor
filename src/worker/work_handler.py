@@ -19,7 +19,7 @@ from clients.message_queue_client import MessageQueueClient
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from data_sources import DataSourceRegistry
-from exceptions import UnprocessableInputError
+from exceptions import SourceFileNotFoundError, UnprocessableInputError
 from models.work_unit import WorkUnit
 from worker.exit_codes import EXIT_SKIP_CODE, SKIP_REASON_PREFIX
 from worker.inline_processor import InlineProcessor
@@ -111,7 +111,19 @@ class WorkHandler:
             # Step 1: Download (lightweight, stays in main process)
             download_start = perf_counter()
             logger.info("[HANDLER] Downloading %s", work_unit.image_id)
-            local_path = await data_source.download(work_unit.source_uri, local_path)
+            try:
+                local_path = await data_source.download(
+                    work_unit.source_uri, local_path
+                )
+            except FileNotFoundError as exc:
+                # The raw file this unit points at is gone (pruned upstream before
+                # we got to it). Translate to a terminal, non-retryable signal so
+                # the worker records a visible ERROR instead of retry-looping a
+                # download that can never succeed.
+                raise SourceFileNotFoundError(
+                    f"Source file not found for {work_unit.image_id}: "
+                    f"{work_unit.source_uri}"
+                ) from exc
             download_time = perf_counter() - download_start
             if collector is not None:
                 collector.set_download_seconds(download_time)

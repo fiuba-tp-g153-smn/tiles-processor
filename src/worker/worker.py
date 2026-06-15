@@ -17,7 +17,7 @@ from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from db.migrate import ensure_migrations
-from exceptions import UnprocessableInputError
+from exceptions import SourceFileNotFoundError, UnprocessableInputError
 from factories import (
     create_data_source_registry,
     create_rabbitmq_client,
@@ -268,6 +268,16 @@ class Worker:  # pylint: disable=too-few-public-methods
             # could race on the scratch dir.
             self._handler.release_progress(work_unit)
             collector.mark_outcome(JobOutcome.REQUEUED, str(e))
+            self._mq_client.ack(delivery_tag)
+
+        except SourceFileNotFoundError as e:
+            # The source raw file is gone and will not reappear, so this is a
+            # terminal, NON-retryable failure. Record it as a visible ERROR (it
+            # counts in the dashboard fail % = error + dlq) — not a silent skip
+            # and not a pointless retry/DLQ loop. JOB_TTL reclaims the in-progress
+            # entry; if the file ever returns the producer re-discovers it.
+            logger.error("%s", e)
+            collector.mark_outcome(JobOutcome.ERROR, str(e))
             self._mq_client.ack(delivery_tag)
 
         except Exception as e:  # pylint: disable=broad-exception-caught

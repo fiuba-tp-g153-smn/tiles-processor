@@ -21,9 +21,11 @@ import numpy as np
 from config import Config
 import logging
 from data_sources.ecmwf_producer_source import TransientDownloadError
-from exceptions import UnprocessableInputError
+from exceptions import SourceFileNotFoundError, UnprocessableInputError
 from worker.worker import Worker
 from worker.work_handler import WorkHandler
+from worker.job_metrics_context import JobMetricsContext
+from models.job_metrics import JobOutcome
 from models.work_unit import WorkUnit
 from models.band_config import BandConfig
 
@@ -276,6 +278,53 @@ class TestWorkerIntegration:
             mock_rabbitmq.ack.assert_called_once_with(1)
             mock_rabbitmq.publish.assert_not_called()
             mock_rabbitmq.publish_to_dlq.assert_not_called()
+
+    def test_worker_records_error_when_source_file_missing(
+        self, temp_settings_file, env_vars, mock_rabbitmq, mock_tracker
+    ):
+        """A missing source file is a terminal, VISIBLE ERROR — acked, no retry/DLQ."""
+
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            worker = Worker(config, mock_rabbitmq, mock_tracker)
+
+            mock_handler = MagicMock()
+            mock_handler.handle = AsyncMock(
+                side_effect=SourceFileNotFoundError(
+                    "Source file not found for RMA1_DBZH_x: "
+                    "/data/radar/RMA1_DBZH_x.H5"
+                )
+            )
+            worker._handler = mock_handler
+
+            work_unit = WorkUnit.create(
+                image_id="RMA1_DBZH_20260114T170040Z",
+                source_uri="/data/radar/RMA1_DBZH_20260114T170040Z.H5",
+                data_source_id="radar_DBZH",
+                processor_id="radar",
+                output_prefix="tiles/radar",
+                bounds=config.get_bounds(),
+                band_id="radar_DBZH",
+            )
+
+            with mock.patch.object(JobMetricsContext, "mark_outcome") as mark_outcome:
+                asyncio.run(
+                    worker._process_message_async(
+                        work_unit, 1, "tiles_radar_light_queue"
+                    )
+                )
+
+            # Recorded as a VISIBLE failure (ERROR), carrying the missing-file reason.
+            mark_outcome.assert_called_once()
+            outcome_arg, message_arg = mark_outcome.call_args.args
+            assert outcome_arg == JobOutcome.ERROR
+            assert "not found" in message_arg
+
+            # Terminal: acked once, NOT retried, NOT DLQ'd, NOT released.
+            mock_rabbitmq.ack.assert_called_once_with(1)
+            mock_rabbitmq.publish.assert_not_called()
+            mock_rabbitmq.publish_to_dlq.assert_not_called()
+            mock_handler.release_progress.assert_not_called()
 
 
 class TestPipelineIntegration:

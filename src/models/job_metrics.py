@@ -17,7 +17,7 @@ class JobOutcome(str, Enum):
     """
 
     SUCCESS = "success"  # processed and uploaded
-    ERROR = "error"  # attempt failed but was retried
+    ERROR = "error"  # attempt failed (retried, or terminal — e.g. missing source file)
     DLQ = "dlq"  # attempt failed and max retries exceeded
     REQUEUED = "requeued"  # transient error, copy put back on the queue
     SKIPPED = "skipped"  # nothing to do (e.g. forecast not yet available)
