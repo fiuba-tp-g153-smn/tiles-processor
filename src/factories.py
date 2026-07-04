@@ -178,10 +178,10 @@ def create_rabbitmq_client(config: Config) -> RabbitMQClient:
 def create_s3_client(config: Config) -> S3Client:
     """Build an authenticated S3 client for tile storage.
 
-    Uploads go through the plain S3 ``put_object`` API, so the backend (SeaweedFS
-    gateway, MinIO, AWS S3) is swappable. Object expiry is handled by per-prefix
-    bucket lifecycle rules (see ``S3Client.configure_lifecycle_policy``), not by
-    a backend-specific per-object TTL.
+    Uploads go through the plain S3 ``put_object`` API, so the backend (RustFS,
+    MinIO, AWS S3, any S3-compatible gateway) is swappable. Object expiry is
+    handled by per-prefix bucket lifecycle rules (see
+    ``S3Client.configure_lifecycle_policy``), not by a backend-specific per-object TTL.
     """
     return S3Client.create_with_credentials(
         bucket_name=config.S3_TILES_DATA_BUCKET_NAME,

@@ -2,7 +2,7 @@
 
 <img src="https://uptime.mapasmn.com/api/badge/9/status?style=flat-square" /> <img src="https://uptime.mapasmn.com/api/badge/9/uptime?style=flat-square" /> <img src="https://uptime.mapasmn.com/api/badge/9/ping?style=flat-square" />
 
-Distributed Python system for processing GOES-19 satellite data from NOAA S3 — ABI radiance bands, GLM lightning detections, and local radar H5 files. Produces colorized GeoTIFFs and XYZ map tiles (WebP, zoom 3–7) stored in SeaweedFS.
+Distributed Python system for processing GOES-19 satellite data from NOAA S3 — ABI radiance bands, GLM lightning detections, and local radar H5 files. Produces colorized GeoTIFFs and XYZ map tiles (WebP, zoom 3–7) stored in RustFS (S3-compatible object storage).
 
 ## Table of Contents
 
@@ -35,7 +35,7 @@ Distributed Python system for processing GOES-19 satellite data from NOAA S3 —
 - **Queue-based Architecture**: RabbitMQ producer-worker pattern. Workers process images sequentially per worker (prefetch=1) with manual ack and a dead-letter queue for failures.
 - **Subprocess Isolation**: Each image is processed in an isolated subprocess to guarantee full memory reclamation between jobs.
 - **Smart Skip**: Producer checks S3 before publishing — already-processed tilesets are never re-queued.
-- **Tile Retention**: S3 lifecycle TTL configured per bucket (`tile_retention_days` in `settings.json`).
+- **Tile Retention**: per-prefix S3 lifecycle expiry rules (`tile_retention_days` in `settings.json`). Best-effort on RustFS — lifecycle support is still maturing; failures are logged and non-fatal.
 - **Feature Toggles**: Individual products enabled/disabled in `settings.json`.
 
 ## Tech Stack
@@ -44,7 +44,7 @@ Distributed Python system for processing GOES-19 satellite data from NOAA S3 —
 | -------------------- | --------------------------- | ------------------------------------------------------ |
 | **Language**         | Python 3.12                 | Application runtime                                    |
 | **Message broker**   | RabbitMQ 4.2.4              | Work queue with DLQ, AMQP protocol                     |
-| **Object storage**   | SeaweedFS 4.17              | S3-compatible tile storage with built-in TTL via filer |
+| **Object storage**   | RustFS (1.0.0-beta)         | S3-compatible tile storage (standard S3 API)           |
 | **Geospatial I/O**   | GDAL / rasterio / rioxarray | CRS reprojection, GeoTIFF writing, `gdal2tiles`        |
 | **Scientific data**  | xarray / h5py / arm-pyart   | NetCDF/HDF5 reading, radar processing                  |
 | **Async I/O**        | asyncio / aioboto3          | Non-blocking S3 and network operations                 |
@@ -82,7 +82,7 @@ Distributed Python system for processing GOES-19 satellite data from NOAA S3 —
 1. **Producer** (`src/producer/`)
    - Runs on a cron schedule.
    - Scans NOAA's S3 for the latest images per enabled product.
-   - Deduplicates against SeaweedFS — skips already-processed tilesets.
+   - Deduplicates against S3 (RustFS) — skips already-processed tilesets.
    - Publishes `WorkUnit` messages to the RabbitMQ `tiles_work_queue`.
 
 2. **Workers** (`src/worker/`)
@@ -93,7 +93,7 @@ Distributed Python system for processing GOES-19 satellite data from NOAA S3 —
      3. **Science** — brightness temperature (IR/WV) or reflectance (visible).
      4. **GeoTIFF** — colorize and write EPSG:4326 GeoTIFF.
      5. **Tile generation** — `gdal2tiles` → XYZ tiles (zoom 3–7).
-     6. **Upload** — push tiles to SeaweedFS/MinIO.
+     6. **Upload** — push tiles to RustFS (S3).
      7. **Cleanup** — delete all local temporary files.
    - Failed messages (max 3 retries) are routed to the dead-letter queue.
 
@@ -180,7 +180,7 @@ OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
 ```
 
 - **Local**: No local retention — all temporary files (raw NetCDF, GeoTIFFs, tiles) are deleted after upload.
-- **S3**: Retention controlled by `tile_retention_days` in `settings.json` (default: 30 days). S3 lifecycle TTL is applied via SeaweedFS filer TTL header on upload.
+- **S3**: Retention controlled by `tile_retention_days` in `settings.json`. Applied as portable per-prefix S3 bucket lifecycle expiry rules on worker startup (`S3Client.configure_lifecycle_policy`). Best-effort on RustFS — if lifecycle is unsupported the call is logged and skipped (no crash).
 
 ## S3 Storage Layout
 
@@ -245,13 +245,13 @@ pylint src --ignore-patterns="test_.*?py"
 ./scripts/generate-compose.sh 3 docker-compose-custom.yaml
 ```
 
-### MinIO Setup
+### Object storage (RustFS)
 
-```bash
-./scripts/setup_minio.sh    # Create bucket + set public read access
-```
-
-MinIO Console: `http://localhost:9001`
+Buckets are created automatically on startup by the one-shot `rustfs-init` service
+(`aws-cli` `s3 mb` via the standard S3 API), and the app also self-creates its write
+bucket via `S3Client.ensure_bucket_exists`. To inspect/manage objects, users, and access
+keys, open the **RustFS Console** at `http://localhost:${RUSTFS_CONSOLE_PORT}` (default
+`http://localhost:9001`), logging in with `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY`.
 
 ## Environment Variables
 
@@ -259,7 +259,7 @@ MinIO Console: `http://localhost:9001`
 | :--------------------------------------- | :------------------------------------------------------ | :------- |
 | `LOG_LEVEL`                              | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | Required |
 | `DATA_DIR`                               | Container path for data files                           | Required |
-| `S3_TILES_DATA_ENDPOINT`                 | SeaweedFS/MinIO S3 endpoint (`host:port`)               | Required |
+| `S3_TILES_DATA_ENDPOINT`                 | RustFS S3 endpoint (`host:port`, e.g. `rustfs:9000`)    | Required |
 | `S3_TILES_DATA_TILES_PROCESSOR_USER`     | S3 access key                                           | Required |
 | `S3_TILES_DATA_TILES_PROCESSOR_PASSWORD` | S3 secret key                                           | Required |
 | `S3_TILES_DATA_BUCKET_NAME`              | S3 bucket name                                          | Required |
@@ -272,8 +272,9 @@ MinIO Console: `http://localhost:9001`
 | `RABBITMQ_DLQ`                           | Dead-letter queue name                                  | Required |
 | `RABBITMQ_DLX`                           | Dead-letter exchange name                               | Required |
 | `JOB_TTL_MINUTES`                        | Max age of a queued job before discard                  | Required |
-| `SEAWEEDFS_FILER_ENDPOINT`               | SeaweedFS Filer endpoint (optional)                     | —        |
-| `SEAWEEDFS_TILE_TTL`                     | TTL for uploaded tiles (e.g. `30d`)                     | `1m`     |
+| `RUSTFS_ACCESS_KEY`                      | RustFS root access key (shared by all consumers)        | Required |
+| `RUSTFS_SECRET_KEY`                      | RustFS root secret key                                  | Required |
+| `RUSTFS_CONSOLE_PORT`                    | Host port for the RustFS console UI (container `:9001`) | `9001`   |
 | `HEALTH_PORT`                            | Port for `/health` and `/ready` endpoints               | `8080`   |
 
 ## Settings Configuration (`settings.json`)
@@ -305,7 +306,7 @@ MinIO Console: `http://localhost:9001`
 }
 ```
 
-- **`tile_retention_days`**: S3 TTL applied via SeaweedFS filer on every tile upload.
+- **`tile_retention_days`**: applied as per-prefix S3 bucket lifecycle expiry rules (best-effort on RustFS).
 - **`features`**: Enable/disable individual products without restarting containers.
 - **`bounds`**: Geographic clip region in EPSG:4326. Applied to all outputs.
 - **`radar_input_dir`**: Directory scanned for `.H5` radar files.

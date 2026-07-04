@@ -16,5 +16,6 @@ benchmark_results/
 .vscode
 data_s3/
 data_s3*/
+data_rustfs/
 sftpgo/
 .fuse_*

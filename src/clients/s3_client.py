@@ -44,7 +44,7 @@ _MAX_ATTEMPTS = 3
 # Per-prefix object retention, in days. Sub-day expiries (radar 6h, GRIB 3h)
 # are rounded up to the S3 lifecycle minimum of 1 day — the portability cost of
 # expressing expiry as standard per-prefix bucket lifecycle rules instead of
-# SeaweedFS-only per-object TTLs. S3 Filter.Prefix is a literal startswith, so
+# backend-specific per-object TTLs. S3 Filter.Prefix is a literal startswith, so
 # "tiles/band_" covers band_2/9/13 and "tiles/glm_" covers fed/toe/mfa.
 TILE_LIFECYCLE_RETENTION_DAYS = {
     "tiles/band_": 1,
@@ -67,7 +67,7 @@ def _build_lifecycle_rules(retention_map: dict[str, int]) -> list[dict]:
     """Build one non-overlapping S3 lifecycle rule per explicit prefix.
 
     No empty-prefix catch-all: overlap-resolution semantics differ across
-    AWS/MinIO/SeaweedFS, and every uploader writes under one of the enumerated
+    AWS/MinIO/RustFS, and every uploader writes under one of the enumerated
     prefixes. Rules are sorted by prefix for deterministic output.
     """
     return [
@@ -182,7 +182,7 @@ class S3Client:
 
         Path-style addressing and a connection pool sized to this client's
         concurrency are applied on both branches: path-style is required for
-        S3-compatible gateways addressed as host:port (SeaweedFS, MinIO), and
+        S3-compatible gateways addressed as host:port (RustFS, MinIO), and
         the pool keeps concurrent operations from contending for a single
         default connection.
         """
@@ -785,7 +785,7 @@ class S3Client:
 
         Emits one per-prefix expiration rule (see TILE_LIFECYCLE_RETENTION_DAYS)
         so each product family expires on its own schedule via portable S3 bucket
-        lifecycle rules — no application-level reaper or SeaweedFS-specific TTL.
+        lifecycle rules — no application-level reaper or backend-specific TTL.
 
         Args:
             retention_days: Default retention, logged for reference only.

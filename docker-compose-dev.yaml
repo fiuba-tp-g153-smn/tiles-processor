@@ -37,47 +37,61 @@ services:
       start_interval: 1s
 
   # S3-compatible object storage
-  seaweedfs:
-    image: chrislusf/seaweedfs:4.20
-    container_name: tiles-processor-dev-seaweedfs
-    stop_grace_period: 60s
-    entrypoint: /bin/sh
-    command: -c "sh /start.sh"
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.8
+    container_name: tiles-processor-dev-rustfs
+    # Dev only: run as the host user so bind-mounted ./data_rustfs files are owned
+    # by you (readable/deletable without sudo) for debugging. The ./data_rustfs dir
+    # must exist and be owned by this UID before start — `make up` creates it.
+    user: "${RUSTFS_UID:-1000}:${RUSTFS_GID:-1000}"
+    stop_grace_period: 30s
     ports:
-      - "${S3_TILES_DATA_PORT}:8333"      # S3 API
-      - "8888:8888"      # Seaweedfs Filer
-      - "9333:9333"      # Seaweedfs Master
-      - "23646:23646"    # Seaweedfs Admin
-      # - "9340:9340"      # Seaweedfs Volume server
+      - "${S3_TILES_DATA_PORT}:9000"          # S3 API
+      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"   # Console UI
     environment:
-      - S3_ROOT_USER=${S3_ROOT_USER}
-      - S3_ROOT_PASSWORD=${S3_ROOT_PASSWORD}
-      - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
-      - S3_TILES_DATA_TILES_PROCESSOR_USER=${S3_TILES_DATA_TILES_PROCESSOR_USER}
-      - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
-      - S3_TILES_DATA_DATA_SERVICE_USER=${S3_TILES_DATA_DATA_SERVICE_USER}
-      - S3_TILES_DATA_DATA_SERVICE_PASSWORD=${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
-      - S3_INTERSECTION_DATA_BUCKET_NAME=${S3_INTERSECTION_DATA_BUCKET_NAME}
-      - S3_INTERSECTION_DATA_ALERTS_SERVICE_USER=${S3_INTERSECTION_DATA_ALERTS_SERVICE_USER}
-      - S3_INTERSECTION_DATA_ALERTS_SERVICE_PASSWORD=${S3_INTERSECTION_DATA_ALERTS_SERVICE_PASSWORD}
-      - SEAWEEDFS_METRICS_ADDRESS=${SEAWEEDFS_METRICS_ADDRESS}
-      - PROMETHEUS_PUSHGATEWAY_HTTP_PROTO=${PROMETHEUS_PUSHGATEWAY_HTTP_PROTO}
-      - PROMETHEUS_PUSHGATEWAY_USER=${PROMETHEUS_PUSHGATEWAY_USER}
-      - PROMETHEUS_PUSHGATEWAY_PASS=${PROMETHEUS_PUSHGATEWAY_PASS}
-      - S3_BASEMAP_BUCKET_NAME=${S3_BASEMAP_BUCKET_NAME}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - RUSTFS_VOLUMES=/data
+      - RUSTFS_ADDRESS=0.0.0.0:9000
+      - RUSTFS_CONSOLE_ADDRESS=0.0.0.0:9001
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}
+      - RUSTFS_CORS_ALLOWED_ORIGINS=${RUSTFS_CORS_ALLOWED_ORIGINS:-*}
+      - RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS=${RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS:-*}
     volumes:
-      - ./data_s3:/data
-      - ./data_s3/data/filerldb2:/data/filerldb2
-      - ./scripts/seaweedfs_start.sh:/start.sh:ro
+      - ./data_rustfs:/data       # dev bind mount for debugging (host-visible objects)
     healthcheck:
-      test: ["CMD-SHELL", "test -f /tmp/seaweedfs_ready && wget -qO /dev/null http://seaweedfs:9333/cluster/status"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      start_period: 20s
       start_interval: 2s
+
+  # One-shot bucket bootstrap: creates the three buckets via the standard S3 API
+  # (aws-cli, path-style; head-bucket-or-create makes it idempotent on restart).
+  # App services gate on this so they start only after buckets exist.
+  rustfs-init:
+    image: amazon/aws-cli:latest
+    container_name: tiles-processor-dev-rustfs-init
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=${RUSTFS_ACCESS_KEY}
+      - AWS_SECRET_ACCESS_KEY=${RUSTFS_SECRET_KEY}
+      - AWS_DEFAULT_REGION=us-east-1
+      - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
+      - S3_INTERSECTION_DATA_BUCKET_NAME=${S3_INTERSECTION_DATA_BUCKET_NAME}
+      - S3_BASEMAP_BUCKET_NAME=${S3_BASEMAP_BUCKET_NAME}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        aws configure set default.s3.addressing_style path &&
+        for b in "$$S3_TILES_DATA_BUCKET_NAME" "$$S3_INTERSECTION_DATA_BUCKET_NAME" "$$S3_BASEMAP_BUCKET_NAME"; do
+        aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket "$$b" 2>/dev/null ||
+        aws --endpoint-url http://rustfs:9000 s3 mb "s3://$$b";
+        done
+    restart: "no"
 
   # Producer - discovers new images and publishes work units
   # Runs continuously with APScheduler (every 5 minutes)
@@ -87,8 +101,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -99,7 +113,7 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}
@@ -144,8 +158,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -157,7 +171,7 @@ services:
       - WORKER_ID=worker1
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}
@@ -202,8 +216,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -215,7 +229,7 @@ services:
       - WORKER_ID=worker2
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}
@@ -260,8 +274,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -273,7 +287,7 @@ services:
       - WORKER_ID=worker-light1
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}
@@ -319,8 +333,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -332,7 +346,7 @@ services:
       - WORKER_ID=worker-light2
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}
@@ -378,8 +392,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -391,7 +405,7 @@ services:
       - WORKER_ID=worker-light3
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}
@@ -449,7 +463,7 @@ services:
       - DATA_DIR=${DATA_DIR}
       - METRICS_API_PORT=6020
       - METRICS_API_KEY=${METRICS_API_KEY}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}

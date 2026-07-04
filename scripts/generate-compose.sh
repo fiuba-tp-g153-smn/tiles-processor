@@ -17,6 +17,11 @@
 #   ./scripts/generate-compose.sh --dev --light 4 2          # 2 normal + 4 light -> docker-compose-dev.yaml
 #   ./scripts/generate-compose.sh 3 docker-compose-prod.yaml # 3 normal workers -> docker-compose-prod.yaml
 #
+# NOTE: the checked-in docker-compose.yaml / docker-compose-dev.yaml are HAND-EDITED
+# beyond what this template emits (pinned RustFS tag, console port, CORS, input-S3
+# credentials, settings.json mount). They are the authoritative files — edit them
+# directly. Regenerating will NOT reproduce those manual edits verbatim.
+#
 
 set -e
 
@@ -80,21 +85,27 @@ fi
 # Set mode-specific variables
 if [ "$DEV_MODE" = true ]; then
     MODE_LABEL="dev"
-    SEAWEEDFS_CONTAINER_NAME="tiles-processor-dev-seaweedfs"
+    RUSTFS_CONTAINER_NAME="tiles-processor-dev-rustfs"
+    RUSTFS_INIT_CONTAINER_NAME="tiles-processor-dev-rustfs-init"
     RABBITMQ_VOLUME="rabbitmq_dev_data"
-    SEAWEEDFS_DATA_VOLUME="./data_s3:/data"
+    # Dev: host bind mount + run as host user so files are debuggable (owned by you).
+    RUSTFS_DATA_VOLUME="./data_rustfs:/data"
+    RUSTFS_USER_LINE='    user: "${RUSTFS_UID:-1000}:${RUSTFS_GID:-1000}"'
     APP_DATA_VOLUME="./data:\${DATA_DIR}"
     RABBITMQ_RETRIES="10"
-    SEAWEEDFS_RETRIES="10"
+    RUSTFS_RETRIES="10"
     APP_RETRIES="3"
 else
     MODE_LABEL="prod"
-    SEAWEEDFS_CONTAINER_NAME="tiles-processor-seaweedfs"
+    RUSTFS_CONTAINER_NAME="tiles-processor-rustfs"
+    RUSTFS_INIT_CONTAINER_NAME="tiles-processor-rustfs-init"
     RABBITMQ_VOLUME="rabbitmq_data"
-    SEAWEEDFS_DATA_VOLUME="seaweedfs_data:/data"
+    # Prod: named volume + image default user (UID 10001); no user override.
+    RUSTFS_DATA_VOLUME="rustfs_data:/data"
+    RUSTFS_USER_LINE=""
     APP_DATA_VOLUME="tiles_data:/app/data"
     RABBITMQ_RETRIES="10"
-    SEAWEEDFS_RETRIES="10"
+    RUSTFS_RETRIES="10"
     APP_RETRIES="20"
 fi
 
@@ -142,31 +153,57 @@ services:
       start_interval: 1s
 
   # S3-compatible object storage
-  seaweedfs:
-    image: chrislusf/seaweedfs:latest
-    container_name: ${SEAWEEDFS_CONTAINER_NAME}
-    entrypoint: /bin/sh
-    command: -c "sh /start.sh"
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.8
+    container_name: ${RUSTFS_CONTAINER_NAME}
+${RUSTFS_USER_LINE}
+    stop_grace_period: 30s
     ports:
-      - "\${S3_TILES_DATA_PORT}:8333"      # S3 API
+      - "\${S3_TILES_DATA_PORT}:9000"          # S3 API
+      - "\${RUSTFS_CONSOLE_PORT:-9001}:9001"   # Console UI
     environment:
-      - S3_ROOT_USER=\${S3_ROOT_USER}
-      - S3_ROOT_PASSWORD=\${S3_ROOT_PASSWORD}
-      - S3_TILES_DATA_BUCKET_NAME=\${S3_TILES_DATA_BUCKET_NAME}
-      - S3_TILES_DATA_TILES_PROCESSOR_USER=\${S3_TILES_DATA_TILES_PROCESSOR_USER}
-      - S3_TILES_DATA_TILES_PROCESSOR_PASSWORD=\${S3_TILES_DATA_TILES_PROCESSOR_PASSWORD}
-      - S3_TILES_DATA_DATA_SERVICE_USER=\${S3_TILES_DATA_DATA_SERVICE_USER}
-      - S3_TILES_DATA_DATA_SERVICE_PASSWORD=\${S3_TILES_DATA_DATA_SERVICE_PASSWORD}
+      - RUSTFS_VOLUMES=/data
+      - RUSTFS_ADDRESS=0.0.0.0:9000
+      - RUSTFS_CONSOLE_ADDRESS=0.0.0.0:9001
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_ACCESS_KEY=\${RUSTFS_ACCESS_KEY}
+      - RUSTFS_SECRET_KEY=\${RUSTFS_SECRET_KEY}
+      - RUSTFS_CORS_ALLOWED_ORIGINS=\${RUSTFS_CORS_ALLOWED_ORIGINS:-*}
+      - RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS=\${RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS:-*}
     volumes:
-      - ${SEAWEEDFS_DATA_VOLUME}
-      - ./scripts/seaweedfs_start.sh:/start.sh:ro
+      - ${RUSTFS_DATA_VOLUME}
     healthcheck:
-      test: ["CMD-SHELL", "test -f /tmp/seaweedfs_ready && wget -qO /dev/null http://localhost:9333/cluster/status"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/health || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: ${SEAWEEDFS_RETRIES}
-      start_period: 30s
+      retries: ${RUSTFS_RETRIES}
+      start_period: 20s
       start_interval: 2s
+
+  # One-shot bucket bootstrap: creates the three buckets via the standard S3 API
+  # (aws-cli, path-style; head-bucket-or-create makes it idempotent on restart).
+  rustfs-init:
+    image: amazon/aws-cli:latest
+    container_name: ${RUSTFS_INIT_CONTAINER_NAME}
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=\${RUSTFS_ACCESS_KEY}
+      - AWS_SECRET_ACCESS_KEY=\${RUSTFS_SECRET_KEY}
+      - AWS_DEFAULT_REGION=us-east-1
+      - S3_TILES_DATA_BUCKET_NAME=\${S3_TILES_DATA_BUCKET_NAME}
+      - S3_INTERSECTION_DATA_BUCKET_NAME=\${S3_INTERSECTION_DATA_BUCKET_NAME}
+      - S3_BASEMAP_BUCKET_NAME=\${S3_BASEMAP_BUCKET_NAME}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        aws configure set default.s3.addressing_style path &&
+        for b in "\$\$S3_TILES_DATA_BUCKET_NAME" "\$\$S3_INTERSECTION_DATA_BUCKET_NAME" "\$\$S3_BASEMAP_BUCKET_NAME"; do
+        aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket "\$\$b" 2>/dev/null ||
+        aws --endpoint-url http://rustfs:9000 s3 mb "s3://\$\$b";
+        done
+    restart: "no"
 
   # Producer - discovers new images and publishes work units
   # Runs continuously with APScheduler (every 5 minutes)
@@ -176,8 +213,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -188,7 +225,7 @@ services:
     environment:
       - LOG_LEVEL=\${LOG_LEVEL}
       - DATA_DIR=\${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=\${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - S3_TILES_DATA_TILES_PROCESSOR_USER=\${S3_TILES_DATA_TILES_PROCESSOR_USER}
@@ -226,8 +263,8 @@ for i in $(seq 1 "$NUM_WORKERS"); do
     depends_on:
       rabbitmq:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -239,7 +276,7 @@ for i in $(seq 1 "$NUM_WORKERS"); do
       - WORKER_ID=worker${i}
       - LOG_LEVEL=\${LOG_LEVEL}
       - DATA_DIR=\${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=\${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - S3_TILES_DATA_TILES_PROCESSOR_USER=\${S3_TILES_DATA_TILES_PROCESSOR_USER}
@@ -278,8 +315,8 @@ for i in $(seq 1 "$NUM_LIGHT_WORKERS"); do
     depends_on:
       rabbitmq:
         condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -291,7 +328,7 @@ for i in $(seq 1 "$NUM_LIGHT_WORKERS"); do
       - WORKER_ID=worker-light${i}
       - LOG_LEVEL=\${LOG_LEVEL}
       - DATA_DIR=\${DATA_DIR}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=\${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - S3_TILES_DATA_TILES_PROCESSOR_USER=\${S3_TILES_DATA_TILES_PROCESSOR_USER}
@@ -344,7 +381,7 @@ cat >> "$OUTPUT_FILE" << METRICS_API
       - DATA_DIR=\${DATA_DIR}
       - METRICS_API_PORT=6020
       - METRICS_API_KEY=\${METRICS_API_KEY}
-      - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
+      - S3_TILES_DATA_ENDPOINT=rustfs:9000
       - S3_TILES_DATA_BUCKET_NAME=\${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
       - S3_TILES_DATA_TILES_PROCESSOR_USER=\${S3_TILES_DATA_TILES_PROCESSOR_USER}
@@ -372,6 +409,7 @@ METRICS_API
 
 # Add volumes section
 if [ "$DEV_MODE" = true ]; then
+    # Dev: RustFS uses a ./data_rustfs bind mount (not a named volume).
     cat >> "$OUTPUT_FILE" << VOLUMES
 volumes:
   ${RABBITMQ_VOLUME}:
@@ -380,7 +418,7 @@ else
     cat >> "$OUTPUT_FILE" << VOLUMES
 volumes:
   tiles_data:
-  s3_data:
+  rustfs_data:
   ${RABBITMQ_VOLUME}:
 VOLUMES
 fi

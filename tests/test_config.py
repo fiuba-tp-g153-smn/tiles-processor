@@ -180,7 +180,7 @@ class TestConfig:
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "radar_input_mode": "s3",
             "radar_s3_bucket": "radar-input",
-            "radar_s3_endpoint": "seaweedfs:8333",
+            "radar_s3_endpoint": "rustfs:9000",
             "radar_s3_prefix": "radar_h5/",
             "radar_s3_secure": True,
         }
@@ -192,7 +192,7 @@ class TestConfig:
 
             assert config.RADAR_INPUT.is_s3
             assert config.RADAR_INPUT.s3_bucket == "radar-input"
-            assert config.RADAR_INPUT.s3_endpoint == "seaweedfs:8333"
+            assert config.RADAR_INPUT.s3_endpoint == "rustfs:9000"
             assert config.RADAR_INPUT.s3_prefix == "radar_h5/"
             assert config.RADAR_INPUT.s3_secure is True
             assert config.GLM_FOLDER_INPUT.mode == "local"

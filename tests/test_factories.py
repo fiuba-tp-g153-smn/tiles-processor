@@ -90,7 +90,7 @@ class TestCreateDataSourceRegistry:
             mode="s3",
             input_dir="/tmp/radar",
             s3_bucket="radar-input",
-            s3_endpoint="seaweedfs:8333",
+            s3_endpoint="rustfs:9000",
             s3_prefix="radar_h5/",
         )
         with patch("factories.S3Client") as mock_s3_cls:
@@ -100,7 +100,7 @@ class TestCreateDataSourceRegistry:
         assert isinstance(radar_source._repository, S3RadarFileRepository)
         _, kwargs = mock_s3_cls.call_args
         assert kwargs["bucket_name"] == "radar-input"
-        assert kwargs["endpoint_url"] == "http://seaweedfs:8333"
+        assert kwargs["endpoint_url"] == "http://rustfs:9000"
 
     def test_glm_s3_mode_builds_s3_repository(self):
         config = self._build_config(tp=False, mslp=False)

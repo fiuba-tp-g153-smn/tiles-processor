@@ -77,7 +77,7 @@ class EcmwfGribDownloader(InlineProcessor):
         grib_s3_key = f"{self._product_config.grib_prefix}/{forecast_ts}.grib"
 
         # Step 1: Upload GRIB (idempotent). Splits its own time into the
-        # existence LIST and the actual PUT (the SeaweedFS write we care about).
+        # existence LIST and the actual PUT (the S3 write we care about).
         list_s, upload_s = await self._upload_grib_if_missing(
             file_path, grib_s3_key, forecast_ts
         )

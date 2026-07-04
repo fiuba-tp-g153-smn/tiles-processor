@@ -32,7 +32,7 @@ class EcmwfMslpProcessor(ImageProcessor):
     step, converts Pa → hPa, reprojects/clips, and produces:
       * a Cloud Optimized GeoTIFF with the raw pressure field, and
       * a GeoJSON of isobars (multiples of 5 hPa, simplified geometry).
-    Both are uploaded to S3/SeaweedFS.
+    Both are uploaded to S3 (RustFS).
     """
 
     def __init__(self, config: Config):

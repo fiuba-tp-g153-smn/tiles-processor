@@ -39,7 +39,7 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
 
     Reads the cached GRIB, computes the precipitation differential for the
     6h window that ends at hour_end (accumulating the previous 6 hours), generates
-    a COG (raw mm values) and colorized tiles, then uploads both to S3/SeaweedFS.
+    a COG (raw mm values) and colorized tiles, then uploads both to S3 (RustFS).
     """
 
     def __init__(self, config: Config):
