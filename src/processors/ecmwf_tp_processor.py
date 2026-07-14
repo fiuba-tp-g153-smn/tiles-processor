@@ -186,8 +186,38 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
 
         logger.info("[ECMWF-TP] Step 5: Generating colorized GeoTIFF")
         with self._time_stage("geotiff"):
-            geotiff_path = self._colorize_and_save(clipped, geotiff_dir, image_id)
+            smoothed = self._upsample_bilinear(clipped)
+            geotiff_path = self._colorize_and_save(smoothed, geotiff_dir, image_id)
+            del smoothed
+            gc.collect()
         return cog_path, geotiff_path
+
+    def _upsample_bilinear(self, array: xr.DataArray) -> xr.DataArray:
+        """Bilinearly upsample the precipitation field to a fine grid for smooth tiles.
+
+        Interpolates the coarse native grid (~0.25°) to a finer resolution so the
+        threshold color boundaries render as smooth curves instead of blocky cells.
+        Only the visualization tiles use this; the COG keeps the native resolution.
+        Bilinear is a convex combination of neighbors, so with tp >= 0 it never
+        produces negative precipitation or spurious maxima. Returns the input
+        unchanged when smoothing is disabled (resolution <= 0).
+        """
+        from rasterio.enums import Resampling  # pylint: disable=import-outside-toplevel
+
+        res = self.config.ECMWF_TP_SMOOTHING_RESOLUTION_DEG
+        if res <= 0:
+            return array
+
+        logger.info(
+            "[ECMWF-TP] Upsampling field to %.4f° (bilinear) for smoothing", res
+        )
+        smoothed = array.rio.reproject(
+            array.rio.crs,
+            resolution=res,
+            resampling=Resampling.bilinear,
+        )
+        smoothed.rio.write_nodata(float("nan"), inplace=True)
+        return smoothed
 
     def _colorize_and_save(
         self, clipped: xr.DataArray, output_dir: Path, image_id: str
