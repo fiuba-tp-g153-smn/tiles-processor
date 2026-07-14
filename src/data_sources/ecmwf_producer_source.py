@@ -33,6 +33,8 @@ class TransientDownloadError(Exception):
 _FORECAST_BASE_HOURS = (0, 12)  # UTC hours at which ECMWF issues forecasts
 _STEPS = list(range(STEP_HOURS, 145, STEP_HOURS))  # [3, 6, ..., 144]
 
+_DEFAULT_OPENDATA_SOURCES = ("ecmwf", "azure", "aws")
+
 
 class EcmwfProducerDataSource(DataSource):
     """
@@ -49,11 +51,11 @@ class EcmwfProducerDataSource(DataSource):
         self,
         product_config: EcmwfProductConfig = ECMWF_TP_CONFIG,
         s3_client: S3Client | None = None,
+        sources: tuple[str, ...] | None = None,
     ):
         self._product_config = product_config
         self._s3_client = s3_client
-        # Reused across discovery ticks for the availability HEADs (latest()).
-        self._client: Client | None = None
+        self._sources = tuple(sources) if sources else _DEFAULT_OPENDATA_SOURCES
 
     @property
     def source_id(self) -> str:
@@ -132,7 +134,12 @@ class EcmwfProducerDataSource(DataSource):
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         """
-        Download a GRIB from the ECMWF Open Data API.
+        Download a GRIB from the ECMWF Open Data API, falling back across mirrors.
+
+        Tries each configured mirror in order; the first that responds wins. A
+        transient (503) or not-yet-published (404) failure on one mirror falls
+        through to the next instead of aborting, so a single flaky mirror does
+        not block ingestion.
 
         Args:
             source_uri: ISO-8601 datetime string for the forecast base time.
@@ -140,33 +147,85 @@ class EcmwfProducerDataSource(DataSource):
 
         Returns:
             Path to the downloaded .grib file.
+
+        Raises:
+            TransientDownloadError: every mirror failed transiently (requeue).
+            ForecastNotAvailableError: no mirror has the run yet (skip).
         """
         prefix = f"[{self._product_config.log_prefix}]"
         forecast_time = datetime.fromisoformat(source_uri)
         target = dest_path.with_suffix(".grib")
         target.parent.mkdir(parents=True, exist_ok=True)
+        when = forecast_time.strftime("%Y-%m-%d %H:%M UTC")
 
-        logger.info(
-            "%s Downloading GRIB for %s to %s",
-            prefix,
-            forecast_time.strftime("%Y-%m-%d %H:%M UTC"),
-            target,
-        )
+        logger.info("%s Downloading GRIB for %s to %s", prefix, when, target)
 
-        client = Client(source="aws")
+        saw_transient = False
+        saw_not_available = False
+        for source in self._sources:
+            try:
+                self._retrieve_from_mirror(source, forecast_time, target)
+            except TransientDownloadError as exc:
+                saw_transient = True
+                logger.warning(
+                    "%s Mirror '%s' unavailable, trying next: %s", prefix, source, exc
+                )
+                continue
+            except ForecastNotAvailableError as exc:
+                saw_not_available = True
+                logger.warning(
+                    "%s Mirror '%s' has no data yet, trying next: %s",
+                    prefix,
+                    source,
+                    exc,
+                )
+                continue
 
-        # Intercept 503 Slow Down BEFORE multiurl's internal retry loop
-        # (which waits 120s × 500 attempts). Raising a non-HTTPError exception
-        # bypasses multiurl's catch and lets us requeue the work unit immediately.
+            logger.info(
+                "%s GRIB downloaded from '%s': %s (%.1f MB)",
+                prefix,
+                source,
+                target,
+                target.stat().st_size / 1e6,
+            )
+            return target
+
+        if saw_transient:
+            raise TransientDownloadError(
+                f"All ECMWF mirrors {list(self._sources)} unavailable for {when}"
+            )
+        if saw_not_available:
+            raise ForecastNotAvailableError(
+                f"Forecast not yet available on any ECMWF mirror: {when}"
+            )
+        raise TransientDownloadError(f"No ECMWF mirrors configured to download {when}")
+
+    def _retrieve_from_mirror(
+        self, source: str, forecast_time: datetime, target: Path
+    ) -> None:
+        """Retrieve the GRIB from a single mirror into ``target``.
+
+        Raises:
+            TransientDownloadError: mirror returned 503 (intercepted before
+                multiurl's retry loop).
+            ForecastNotAvailableError: mirror returned 404 (run not published).
+        """
+        when = forecast_time.strftime("%Y-%m-%d %H:%M UTC")
+
+        # Intercept 503 BEFORE multiurl's internal retry loop . Raising a
+        # non-HTTPError exception bypasses multiurl's catch and lets us move to
+        # the next mirror immediately.
         def _reject_slow_down(
             response, *args, **kwargs
         ):  # pylint: disable=unused-argument
             if response.status_code == 503:
                 raise TransientDownloadError(
-                    f"S3 rate limit (503 Slow Down) downloading {forecast_time.strftime('%Y-%m-%d %H:%M UTC')}"
+                    f"HTTP 503 from mirror '{source}' for {when}"
                 )
 
+        client = Client(source=source)
         client.session.hooks["response"].append(_reject_slow_down)
+        target.unlink(missing_ok=True)
 
         try:
             client.retrieve(
@@ -180,17 +239,9 @@ class EcmwfProducerDataSource(DataSource):
         except requests.exceptions.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
                 raise ForecastNotAvailableError(
-                    f"Forecast not yet available on ECMWF Open Data: {forecast_time.strftime('%Y-%m-%d %H:%M UTC')}"
+                    f"Forecast not available on mirror '{source}': {when}"
                 ) from exc
             raise
-
-        logger.info(
-            "%s GRIB downloaded: %s (%.1f MB)",
-            prefix,
-            target,
-            target.stat().st_size / 1e6,
-        )
-        return target
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -200,32 +251,31 @@ class EcmwfProducerDataSource(DataSource):
         """Newest fully-published ECMWF run for this product (UTC-aware), or None.
 
         Uses ``Client.latest()`` to HEAD the run URLs for the LAST forecast step
-        (published last), so a hit means the run is complete. Synchronous
-        (``requests``) — call via ``asyncio.to_thread``. Returns None on any
-        failure (no run within 2 days, network/HTTP error) so discovery stays
-        fail-safe and emits nothing rather than guessing availability.
+        (published last), so a hit means the run is complete. Tries each mirror
+        in order and returns the first that answers, so one flaky mirror does not
+        stall discovery. Synchronous (``requests``) — call via
+        ``asyncio.to_thread``. Returns None if no mirror answers so discovery
+        stays fail-safe and emits nothing rather than guessing availability.
         """
-        try:
-            latest = self._get_client().latest(
-                type="fc",
-                param=[self._product_config.parameter],
-                step=_STEPS[-1],
-            )
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(
-                "[%s] Could not determine latest available run: %s",
-                self._product_config.log_prefix,
-                exc,
-            )
-            return None
-        # latest() returns a naive UTC datetime; candidate times are tz-aware UTC.
-        return latest.replace(tzinfo=UTC) if latest.tzinfo is None else latest
-
-    def _get_client(self) -> Client:
-        """Lazily create and reuse one Open Data client for the availability HEADs."""
-        if self._client is None:
-            self._client = Client(source="aws")
-        return self._client
+        for source in self._sources:
+            try:
+                latest = Client(source=source).latest(
+                    type="fc",
+                    param=[self._product_config.parameter],
+                    step=_STEPS[-1],
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "[%s] Mirror '%s' could not determine latest run: %s",
+                    self._product_config.log_prefix,
+                    source,
+                    exc,
+                )
+                continue
+            if latest is not None:
+                # latest() returns naive UTC; candidate times are tz-aware UTC.
+                return latest.replace(tzinfo=UTC) if latest.tzinfo is None else latest
+        return None
 
     def _get_candidate_forecast_times(self, now: datetime) -> list[datetime]:
         """Return the N most recent forecast base times that should be available."""

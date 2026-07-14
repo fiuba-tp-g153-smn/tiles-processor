@@ -140,12 +140,20 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     # Register ECMWF data sources (feature-flagged)
     if config is not None and config.ENABLE_ECMWF_PRECIPITATION:
         ecmwf_s3 = create_s3_client(config)
-        registry.register(EcmwfProducerDataSource(ECMWF_TP_CONFIG, ecmwf_s3))
+        registry.register(
+            EcmwfProducerDataSource(
+                ECMWF_TP_CONFIG, ecmwf_s3, config.ECMWF_OPENDATA_SOURCES
+            )
+        )
         registry.register(EcmwfPeriodDataSource(ECMWF_TP_CONFIG, ecmwf_s3))
 
     if config is not None and config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE:
         ecmwf_mslp_s3 = create_s3_client(config)
-        registry.register(EcmwfProducerDataSource(ECMWF_MSLP_CONFIG, ecmwf_mslp_s3))
+        registry.register(
+            EcmwfProducerDataSource(
+                ECMWF_MSLP_CONFIG, ecmwf_mslp_s3, config.ECMWF_OPENDATA_SOURCES
+            )
+        )
         registry.register(EcmwfPeriodDataSource(ECMWF_MSLP_CONFIG, ecmwf_mslp_s3))
 
     return registry

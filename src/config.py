@@ -126,6 +126,16 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.ECMWF_MSLP_SMOOTHING_SIGMA: float = float(
             settings.get("ecmwf_mslp_smoothing_sigma", 1.5)
         )
+        self.ECMWF_TP_SMOOTHING_RESOLUTION_DEG: float = float(
+            os.getenv("ECMWF_TP_SMOOTHING_RESOLUTION_DEG") or "0.01"
+        )
+        self.ECMWF_OPENDATA_SOURCES: tuple[str, ...] = tuple(
+            s.strip()
+            for s in (os.getenv("ECMWF_OPENDATA_SOURCES") or "ecmwf,azure,aws").split(
+                ","
+            )
+            if s.strip()
+        )
         _radar_product_ids = ["DBZH", "ZDR", "RHOHV", "KDP", "VRAD"]
         self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
             pid: settings["features"].get(f"enable_radar_{pid}", False)
