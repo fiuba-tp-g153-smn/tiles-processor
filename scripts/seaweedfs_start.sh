@@ -184,6 +184,18 @@ until wget -qO /dev/null http://seaweedfs:9333/cluster/status 2>/dev/null; do
     sleep 1
 done
 
+echo "Waiting for SeaweedFS filer..."
+RETRIES=0
+until wget -qO /dev/null http://seaweedfs:8888/ 2>/dev/null; do
+    RETRIES=$((RETRIES + 1))
+    if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
+        echo "SeaweedFS filer did not become ready in time. Aborting."
+        kill -TERM "$WEED_PID" 2>/dev/null
+        exit 1
+    fi
+    sleep 1
+done
+
 # Check if the bucket already exists before creating it, to avoid a noisy
 # error on container restarts when the /data volume is persisted.
 echo "Checking bucket ${S3_TILES_DATA_BUCKET_NAME}..."
