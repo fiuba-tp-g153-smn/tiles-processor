@@ -38,7 +38,7 @@ services:
 
   # S3-compatible object storage
   seaweedfs:
-    image: chrislusf/seaweedfs:4.29
+    image: chrislusf/seaweedfs:4.39
     container_name: tiles-processor-seaweedfs
     stop_grace_period: 60s
     entrypoint: /bin/sh
