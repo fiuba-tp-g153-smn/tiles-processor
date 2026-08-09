@@ -160,7 +160,17 @@ SEAWEEDFS_ADMIN_SCRIPT_INTERVAL_MINUTES="${SEAWEEDFS_ADMIN_SCRIPT_INTERVAL_MINUT
 SEAWEEDFS_METALOG_RETENTION_DAYS="${SEAWEEDFS_METALOG_RETENTION_DAYS:-2}"
 
 # Buckets (space-separated) using the lifecycle TTL fast path. "" = all worker-driven.
-SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS="${SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS:-${S3_TILES_DATA_BUCKET_NAME}}"
+#
+# Every bucket whose objects are meant to expire belongs here, because worker-driven expiry does not
+# work on this cluster: the s3_lifecycle task replays the filer metadata log and its cursor sits
+# ~27 days behind a log now purged at 2 days, so it reports status=ok while expiring nothing.
+#   tiles-data            per-prefix 1-2 d rules (TILE_LIFECYCLE_RETENTION_DAYS, tiles-processor)
+#   basemap-tiles         bucket-wide 35 d     (basemap_s3_object_ttl_days, data-service)
+#   weather-stations-data 2 d scoped to weather-stations/snapshots/ — the resolver honours the rule
+#                         prefix, so stations.json / latest.json at the bucket root keep NO TTL
+# Deliberately excluded: api-keys and intersection-data hold static singletons with no expiry rule,
+# and a bucket with no Expiration.Days rule gets no TTL stamped anyway.
+SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS="${SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS:-${S3_TILES_DATA_BUCKET_NAME} ${S3_BASEMAP_BUCKET_NAME} ${S3_WEATHER_STATIONS_BUCKET_NAME:-weather-stations-data}}"
 
 # Drop benign "volume_layout.go … becomes (un)?crowded" spam from weed server logs (glog.V(0),
 # no gate; pending-delta bursts cross threshold even with volumes ~30 % full). awk+fflush
