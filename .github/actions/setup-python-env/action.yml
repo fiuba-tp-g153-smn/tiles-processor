@@ -1,0 +1,36 @@
+name: Setup Python environment
+description: Install the Poetry environment into ./.venv with lockfile-keyed caching.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      id: python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.12.3"
+
+    - name: Restore Poetry environment
+      id: poetry-cache
+      uses: actions/cache@v6
+      with:
+        path: |
+          .venv
+          ~/.cache/pypoetry
+        key: v1-poetry-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('poetry.lock') }}
+        restore-keys: |
+          v1-poetry-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-
+
+    - name: Install Poetry and dependencies
+      shell: bash
+      run: |
+        if [ "${{ steps.poetry-cache.outputs.cache-hit }}" = "true" ]; then
+          echo "- Poetry env cache: hit (install is a near no-op)" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "- Poetry env cache: cold (resolving this run)" >> "$GITHUB_STEP_SUMMARY"
+        fi
+        pip install --disable-pip-version-check "poetry==2.3.2"
+        poetry config virtualenvs.in-project true
+        poetry install --with dev --no-root --no-ansi
+        echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$GITHUB_WORKSPACE/.venv" >> "$GITHUB_ENV"

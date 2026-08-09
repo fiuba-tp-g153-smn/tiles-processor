@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches-ignore:
+      - main
+  pull_request:
+    branches-ignore:
+      - main
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a run on main: deploy.yml gates on this workflow via workflow_call.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast guard: poetry.lock must stay consistent with pyproject.toml. No venv
+  # install needed, so this fails in seconds on a lock that wasn't re-run.
+  lockfile-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.3"
+
+      - name: Check poetry.lock is consistent
+        run: |
+          pip install --disable-pip-version-check "poetry==2.3.2"
+          poetry check --lock
+
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python environment
+        uses: ./.github/actions/setup-python-env
+
+      # Pylint's exit code is a bitmask (1=fatal 2=error 4=warning 8=refactor
+      # 16=convention); fail only on fatal/error so pre-existing style debt does
+      # not block. Same target and ignore patterns as .pre-commit-config.yaml.
+      - name: Pylint
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          ec=0
+          poetry run pylint src --ignore-patterns=".*\.json" --ignore-patterns="test_.*?py,(.)*_test\\.py" || ec=$?
+          echo "pylint exit code: $ec (1=fatal 2=error 4=warning 8=refactor 16=convention)"
+          if (( ec & 3 )); then
+            echo "::error::pylint reported fatal/error-level issues (exit $ec)"
+            exit 1
+          fi
+
+  type-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python environment
+        uses: ./.github/actions/setup-python-env
+
+      # Rolling cache: unique key per commit (mypy's cache mutates every run),
+      # restore-keys falls back to the newest previous entry; a lockfile change
+      # starts fresh. Split restore/save so the save runs right after mypy — the
+      # combined action's post step never fires when a newer push cancels the run.
+      - name: Restore mypy cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-${{ hashFiles('poetry.lock') }}-${{ github.sha }}
+          restore-keys: |
+            mypy-${{ runner.os }}-${{ hashFiles('poetry.lock') }}-
+
+      - name: Mypy
+        run: poetry run mypy src --check-untyped-defs
+
+      - name: Save mypy cache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-${{ hashFiles('poetry.lock') }}-${{ github.sha }}
+
+  unit-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Python environment
+        uses: ./.github/actions/setup-python-env
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Run tests
+        run: poetry run pytest tests/ -m "not skip" --color=yes --junitxml=reports/junit_report.xml --cov=src --cov-report term --cov-report html:reports/coverage -W ignore::DeprecationWarning
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: reports/
+
+  # Aggregate gate: the single status context to require in branch protection.
+  # Always runs; fails only if a needed job actually failed or was cancelled.
+  # Add new CI jobs to `needs` to include them in the gate.
+  ci-gate:
+    needs: [lockfile-check, lint, type-check, unit-tests]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Gate on CI job results
+        run: |
+          echo "job results: ${{ join(needs.*.result, ' ') }}"
+          for r in ${{ join(needs.*.result, ' ') }}; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::A required CI job did not pass (result: $r)"
+              exit 1
+            fi
+          done
+          echo "All CI jobs passed ✅"

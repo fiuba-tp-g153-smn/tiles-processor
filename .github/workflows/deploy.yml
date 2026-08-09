@@ -10,30 +10,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  test:
-    uses: ./.github/workflows/test.yml
+permissions:
+  contents: read
 
-  image-scan:
-    name: vulnerabilities scan (trivy)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: docker build -t tiles-processor:scan .
-      - name: Install Trivy
-        env:
-          TRIVY_VERSION: "0.70.0"
-        run: |
-          curl -sSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | tar -xz -C /usr/local/bin trivy
-      - name: Scan image for vulnerabilities
-        run: |
-          trivy image --download-db-only
-          trivy image --format table --exit-code 0 --severity HIGH --scanners vuln,misconfig,license --skip-db-update tiles-processor:scan
-          trivy image --format table --exit-code 1 --severity CRITICAL --scanners vuln,misconfig,license --skip-db-update --quiet tiles-processor:scan
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
 
   deploy:
-    needs: [test]
+    needs: [verify]
     runs-on: ubuntu-24.04
     environment:
       name: ${{ (github.ref_name == 'main' && 'prod') || 'unknown' }}

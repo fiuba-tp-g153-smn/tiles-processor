@@ -1,0 +1,135 @@
+name: Security
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  # Weekly re-scan: new CVEs and leaked-secret patterns appear against
+  # unchanged code, so a push-only trigger is not enough.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Secret scanning over the full git history, version + checksum pinned.
+  secret-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+    steps:
+      - name: Checkout code (full history)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # Scan-only job: don't leave the repo token on disk.
+          persist-credentials: false
+
+      # Keyed on version + checksum, so bumping either starts a fresh cache.
+      - name: Restore gitleaks download
+        uses: actions/cache@v6
+        with:
+          path: gitleaks.tar.gz
+          key: gitleaks-${{ env.GITLEAKS_VERSION }}-${{ env.GITLEAKS_SHA256 }}
+
+      # Checksum-verified on every run — including cache hits — so a swapped
+      # release asset or a poisoned cache fails the job instead of executing.
+      # When bumping the version, update the hash from the release checksums.
+      - name: Install gitleaks (checksum-pinned)
+        run: |
+          if [ ! -f gitleaks.tar.gz ]; then
+            curl -sSfL -o gitleaks.tar.gz \
+              "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          fi
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xz -C /usr/local/bin -f gitleaks.tar.gz gitleaks
+          gitleaks version
+
+      # --redact keeps secret values out of the logs; -v prints each redacted
+      # finding. A non-zero exit (new leak found) fails the job.
+      - name: Scan git history for secrets
+        run: gitleaks git . -v --redact
+
+  # Builds the release image (buildx + GHA layer cache) and scans it with a
+  # version + checksum pinned Trivy whose vulnerability DB is cached weekly.
+  image-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TRIVY_VERSION: 0.72.0
+      TRIVY_SHA256: bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # Scan-only job: don't leave the repo token on disk.
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # load: true makes the built image available to the local daemon for the
+      # Trivy scan below; GHA layer cache avoids rebuilding unchanged stages.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: tiles-processor:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Keyed on version + checksum, so bumping either starts a fresh cache.
+      - name: Restore trivy download
+        uses: actions/cache@v6
+        with:
+          path: trivy.tar.gz
+          key: trivy-${{ env.TRIVY_VERSION }}-${{ env.TRIVY_SHA256 }}
+
+      # Checksum-verified on every run — including cache hits — so a swapped
+      # release asset or a poisoned cache fails the job. When bumping the
+      # version, update the hash from the release trivy_<version>_checksums.txt.
+      - name: Install trivy (checksum-pinned)
+        run: |
+          if [ ! -f trivy.tar.gz ]; then
+            curl -sSfL -o trivy.tar.gz \
+              "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          fi
+          echo "${TRIVY_SHA256}  trivy.tar.gz" | sha256sum -c -
+          tar -xz -C /usr/local/bin -f trivy.tar.gz trivy
+          trivy --version
+
+      # The vulnerability DB (~60 MB) changes daily; cache it per ISO week with
+      # a fallback to the newest previous entry, so most runs skip the download.
+      - name: Compute DB cache week
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore trivy vulnerability DB
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ steps.week.outputs.week }}
+          restore-keys: |
+            trivy-db-
+
+      # Fetch the DB once; both scans below pass --skip-db-update so they are
+      # fast and share the same snapshot.
+      - name: Download vulnerability DB
+        run: trivy image --download-db-only
+
+      - name: Scan image for vulnerabilities
+        run: |
+          trivy image --format table --exit-code 0 --severity HIGH --scanners vuln,misconfig,license --skip-db-update tiles-processor:scan
+          trivy image --format table --exit-code 1 --severity CRITICAL --scanners vuln,misconfig,license --skip-db-update --quiet tiles-processor:scan
