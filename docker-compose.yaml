@@ -7,7 +7,7 @@
 services:
   # RabbitMQ message broker for the work queue
   rabbitmq:
-    image: rabbitmq:4.2.4-management
+    image: rabbitmq:4.2.9-management
     container_name: tiles-processor-rabbitmq
     ports:
       - "${RABBITMQ_PORT}:5672"      # AMQP protocol
@@ -38,7 +38,7 @@ services:
 
   # S3-compatible object storage
   seaweedfs:
-    image: chrislusf/seaweedfs:4.39
+    image: chrislusf/seaweedfs:4.41
     container_name: tiles-processor-seaweedfs
     stop_grace_period: 60s
     entrypoint: /bin/sh
