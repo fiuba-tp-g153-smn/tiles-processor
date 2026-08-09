@@ -124,6 +124,36 @@ else
   echo "Metrics disabled: SEAWEEDFS_METRICS_ADDRESS or Pushgateway credentials not fully set."
 fi
 
+# =================================================================================================
+# Storage/maintenance tunables (all env-overridable)
+# =================================================================================================
+
+# Hard ceiling on volume slots. At 100 % the master cannot assign: every PutObject fails with
+# "InternalError" while GETs keep working. Shared with the pressure warning so they can't drift.
+SEAWEEDFS_VOLUME_MAX="${SEAWEEDFS_VOLUME_MAX:-900}"
+
+# Filer metadata-log retention. The log grows ~5.8 GB/day here, so footprint ≈ days * 5.8 GB.
+SEAWEEDFS_METALOG_RETENTION_DAYS="${SEAWEEDFS_METALOG_RETENTION_DAYS:-2}"
+
+# Maintenance cadence, and how stale an abandoned multipart upload may get before it's reaped.
+SEAWEEDFS_MAINTENANCE_INTERVAL_SECONDS="${SEAWEEDFS_MAINTENANCE_INTERVAL_SECONDS:-3600}"
+SEAWEEDFS_MULTIPART_MAX_AGE="${SEAWEEDFS_MULTIPART_MAX_AGE:-24h}"
+
+# Delay before the first pass: long enough for volumes to register with the master, short enough
+# that a container booted against a full cluster frees slots in minutes.
+SEAWEEDFS_MAINTENANCE_STARTUP_DELAY_SECONDS="${SEAWEEDFS_MAINTENANCE_STARTUP_DELAY_SECONDS:-300}"
+
+# Vacuum threshold. Do NOT lower without pausing writers: every volume over the threshold blocks up
+# to 30 s draining, so 0.01 projected ~15 h to reclaim ~1.3 GB. 0.3 skips tiles-data (0.9 % garbage)
+# and still catches freshly purged metadata-log volumes (~100 % garbage).
+SEAWEEDFS_VACUUM_GARBAGE_THRESHOLD="${SEAWEEDFS_VACUUM_GARBAGE_THRESHOLD:-0.3}"
+
+# Warn at this percentage of volume.max.
+SEAWEEDFS_VOLUME_SLOT_WARN_PERCENT="${SEAWEEDFS_VOLUME_SLOT_WARN_PERCENT:-85}"
+
+# Buckets (space-separated) using the lifecycle TTL fast path. "" = all worker-driven.
+SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS="${SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS:-${S3_TILES_DATA_BUCKET_NAME}}"
+
 # Drop benign "volume_layout.go … becomes (un)?crowded" spam from weed server logs (glog.V(0),
 # no gate; pending-delta bursts cross threshold even with volumes ~30 % full). awk+fflush
 # (busybox grep lacks --line-buffered); named FIFO (direct pipe breaks $!); admin/worker unfiltered.
@@ -145,7 +175,7 @@ weed server \
   -master.metrics.intervalSeconds=10 \
   -volume \
   -volume.index=leveldb \
-  -volume.max=900 \
+  -volume.max="${SEAWEEDFS_VOLUME_MAX}" \
   -filer \
   -s3 \
   -s3.port=8333 \
@@ -237,6 +267,45 @@ else
     echo "Bucket ${S3_BASEMAP_BUCKET_NAME} already exists, skipping."
 fi
 
+# The filer metadata change log (/topics/.system/log/...) is assigned with an empty collection
+# name, so it hides in the unnamed collection that collection.list prints as "" and the admin UI
+# calls "default". Isolating it makes it visible there and droppable in one shot via
+# `collection.delete -collection=metalog`, instead of purge -> async chunk delete -> vacuum ->
+# deleteEmpty across several passes.
+#
+# Bucket data is unaffected: fs.configure refuses a -collection under /buckets/.
+# -ttl here is silently ignored (the log's assign path never sets Ttl) — retention comes from
+# fs.log.purge in the maintenance loop below.
+echo "Isolating filer metadata log into the 'metalog' collection..."
+echo "fs.configure -locationPrefix=/topics/ -collection=metalog -apply" \
+    | weed shell -master=localhost:9333 2>&1 \
+    || echo "WARNING: could not apply the /topics/ collection rule; metadata log stays in the default collection."
+
+# S3 lifecycle TTL fast path (upstream default: off).
+#
+# Off: the s3_lifecycle worker walks the bucket daily and DELETEs each expired object — ~20 M filer
+# ops per sweep here, which is exactly what inflates the metadata log, and the space only comes back
+# after vacuum + deleteEmpty.
+# On: PutObject stamps the matching Expiration.Days rule as a volume TTL, and the volume server
+# drops the whole .dat once lastModified + ttl passes. No scan, no tombstones, slot returns at once.
+# Durations still come solely from the bucket's lifecycle rules (TILE_LIFECYCLE_RETENTION_DAYS).
+#
+# Caveats:
+#   * The TTL is stamped at write time and cannot be changed after — a rule edit only affects
+#     later writes.
+#   * New writes only; objects already on disk carry no TTL.
+#   * Real retention is ttl + volume fill-time, which is why volumeSizeLimitMB=256 matters.
+#   * Silently declines tag-filtered rules and versioned buckets (neither applies here).
+#
+# The flag is a bucket attribute: persistent, idempotent, and order-independent w.r.t. the rules.
+for _fastpath_bucket in $SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS; do
+    echo "Enabling the lifecycle TTL fast path on ${_fastpath_bucket}..."
+    echo "s3.bucket.lifecycle.fastpath -name ${_fastpath_bucket} -enable" \
+        | weed shell -master=localhost:9333 2>&1 \
+        || echo "WARNING: could not enable the lifecycle TTL fast path on ${_fastpath_bucket};" \
+                "expiration falls back to the worker's per-object scan."
+done
+
 touch /tmp/seaweedfs_ready
 echo "SeaweedFS ready."
 
@@ -276,11 +345,78 @@ weed worker \
   -metricsPort=2112 &
 WORKER_PID=$!
 
-# Shutdown order matters for data integrity: reap admin+worker first so their master-client
-# sessions don't stall weed server's 2× ~10 s graceful-stop (filer gRPC + volume heartbeat drain)
-# past docker's SIGKILL deadline; awk filter reaped last so final shutdown logs still reach docker.
+# =================================================================================================
+# SeaweedFS maintenance loop
+# =================================================================================================
+# Nothing else prunes the filer metadata change log. The master's built-in maintenance script
+# (which includes fs.log.purge) only loads from a master.toml — this deploy is pure CLI flags — and
+# is skipped outright while an admin server is connected, which it always is since we start
+# `weed admin` above.
+#
+# Left alone the log reached 70.7 GB / 296 volumes, which together with tiles-data hit
+# volume.max exactly and took all writes down. It is sized by filer OPERATION count, not bytes
+# stored, so tile churn and lifecycle expiries drive it however little data is retained.
+run_seaweedfs_maintenance() {
+    # Order matters. fs.log.purge removes filer entries but their chunks are deleted asynchronously,
+    # so each vacuum reclaims the PREVIOUS pass's garbage — this converges over runs, not in one
+    # shot. deleteEmpty is last and is the only step that returns a volume SLOT; vacuum just
+    # shrinks the .dat in place.
+    weed shell -master=localhost:9333 <<SHELL 2>&1
+lock
+fs.log.purge -daysAgo ${SEAWEEDFS_METALOG_RETENTION_DAYS}
+s3.clean.uploads -timeAgo ${SEAWEEDFS_MULTIPART_MAX_AGE}
+volume.vacuum -garbageThreshold=${SEAWEEDFS_VACUUM_GARBAGE_THRESHOLD}
+volume.deleteEmpty -quietFor=1h -apply
+unlock
+SHELL
+}
+
+# Sum volumeCount across collections so the volume.max ceiling surfaces as a warning rather than
+# as a silent write outage.
+warn_on_volume_slot_pressure() {
+    used=$(echo "collection.list" \
+        | weed shell -master=localhost:9333 2>/dev/null \
+        | sed -n 's/.*volumeCount:\([0-9][0-9]*\).*/\1/p' \
+        | awk '{ total += $1 } END { print total + 0 }')
+
+    # An unreachable master yields 0 here; nothing to report, and the next pass retries.
+    [ -n "$used" ] && [ "$used" -gt 0 ] || return 0
+
+    percent=$(( used * 100 / SEAWEEDFS_VOLUME_MAX ))
+    echo "SeaweedFS volume slots in use: ${used}/${SEAWEEDFS_VOLUME_MAX} (${percent}%)"
+    if [ "$percent" -ge "$SEAWEEDFS_VOLUME_SLOT_WARN_PERCENT" ]; then
+        echo "WARNING: ${percent}% of ${SEAWEEDFS_VOLUME_MAX} volume slots used; at 100% ALL writes" \
+             "fail with InternalError while reads keep working. Check 'collection.list': if metalog" \
+             "dominates lower SEAWEEDFS_METALOG_RETENTION_DAYS, if tiles-data does the data has" \
+             "outgrown volume.max * volumeSizeLimitMB."
+    fi
+}
+
+echo "Starting SeaweedFS maintenance loop (first pass in ${SEAWEEDFS_MAINTENANCE_STARTUP_DELAY_SECONDS}s, then every ${SEAWEEDFS_MAINTENANCE_INTERVAL_SECONDS}s; metadata-log retention ${SEAWEEDFS_METALOG_RETENTION_DAYS}d)..."
+(
+  # Settle first: a pass against a half-formed topology is noise at best. Then sweep at the end
+  # of each iteration, so a container booted against a wedged cluster frees slots after the
+  # startup delay instead of after a full interval.
+  sleep "$SEAWEEDFS_MAINTENANCE_STARTUP_DELAY_SECONDS"
+  while true; do
+      echo "Running SeaweedFS maintenance pass..."
+      run_seaweedfs_maintenance \
+          || echo "WARNING: SeaweedFS maintenance pass failed; retrying next interval."
+      warn_on_volume_slot_pressure || true
+      sleep "$SEAWEEDFS_MAINTENANCE_INTERVAL_SECONDS"
+  done
+) &
+MAINTENANCE_PID=$!
+
+# Shutdown order matters for data integrity: reap the maintenance loop first (it holds the shell
+# `lock` during a pass and would otherwise keep the master busy), then admin+worker so their
+# master-client sessions don't stall weed server's 2× ~10 s graceful-stop (filer gRPC + volume
+# heartbeat drain) past docker's SIGKILL deadline; awk filter reaped last so final shutdown logs
+# still reach docker.
 trap '
   echo "Shutting down SeaweedFS..."
+  kill -TERM "$MAINTENANCE_PID" 2>/dev/null
+  wait "$MAINTENANCE_PID" 2>/dev/null
   kill -TERM "$ADMIN_PID"  2>/dev/null
   kill -TERM "$WORKER_PID" 2>/dev/null
   wait "$ADMIN_PID"  2>/dev/null
@@ -296,4 +432,7 @@ trap '
 # Include the log filter in the final wait so a crash of the filter (which
 # would cause `weed server` to block on the FIFO) exits the script and lets
 # docker restart the container via `restart: unless-stopped`.
+#
+# MAINTENANCE_PID is deliberately NOT waited on: it is a `while true` loop that never exits, so
+# listing it would block forever and defeat the crash-restart above. The trap reaps it.
 wait $WEED_PID $ADMIN_PID $WORKER_PID $WEED_LOG_FILTER_PID
