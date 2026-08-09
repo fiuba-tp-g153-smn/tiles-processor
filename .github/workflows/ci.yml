@@ -11,7 +11,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Literal prefix, NOT github.workflow: when deploy.yml calls this via
+  # workflow_call, github.workflow resolves to the caller ("Deploy"), which
+  # would collide with the caller's own concurrency group and fail the run
+  # before any job starts.
+  group: ci-${{ github.ref }}
   # Never cancel a run on main: deploy.yml gates on this workflow via workflow_call.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
@@ -36,6 +40,47 @@ jobs:
         run: |
           pip install --disable-pip-version-check "poetry==2.3.2"
           poetry check --lock
+
+  # Secret scanning over the full git history. Part of the CI gate, so a new
+  # leak blocks deploy (deploy.yml's verify job runs this workflow). Version +
+  # checksum pinned; the tarball is cached.
+  secret-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - name: Checkout code (full history)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # Scan-only job: don't leave the repo token on disk.
+          persist-credentials: false
+
+      # Keyed on version + checksum, so bumping either starts a fresh cache.
+      - name: Restore gitleaks download
+        uses: actions/cache@v6
+        with:
+          path: gitleaks.tar.gz
+          key: gitleaks-${{ env.GITLEAKS_VERSION }}-${{ env.GITLEAKS_SHA256 }}
+
+      # Checksum-verified on every run — including cache hits — so a swapped
+      # release asset or a poisoned cache fails the job instead of executing.
+      - name: Install gitleaks (checksum-pinned)
+        run: |
+          if [ ! -f gitleaks.tar.gz ]; then
+            curl -sSfL -o gitleaks.tar.gz \
+              "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          fi
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xz -C /usr/local/bin -f gitleaks.tar.gz gitleaks
+          gitleaks version
+
+      # --redact keeps secret values out of the logs; -v prints each redacted
+      # finding. A non-zero exit (new leak found) fails the job.
+      - name: Scan git history for secrets
+        run: gitleaks git . -v --redact
 
   lint:
     runs-on: ubuntu-24.04
@@ -118,7 +163,7 @@ jobs:
   # Always runs; fails only if a needed job actually failed or was cancelled.
   # Add new CI jobs to `needs` to include them in the gate.
   ci-gate:
-    needs: [lockfile-check, lint, type-check, unit-tests]
+    needs: [lockfile-check, secret-scan, lint, type-check, unit-tests]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
