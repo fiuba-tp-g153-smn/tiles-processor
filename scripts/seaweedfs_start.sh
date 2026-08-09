@@ -125,31 +125,39 @@ else
 fi
 
 # =================================================================================================
-# Storage/maintenance tunables (all env-overridable)
+# Storage/monitor tunables (all env-overridable)
 # =================================================================================================
+# Housekeeping itself is owned by SeaweedFS's own plugin tasks — see the monitor loop below.
 
 # Hard ceiling on volume slots. At 100 % the master cannot assign: every PutObject fails with
 # "InternalError" while GETs keep working. Shared with the pressure warning so they can't drift.
 SEAWEEDFS_VOLUME_MAX="${SEAWEEDFS_VOLUME_MAX:-900}"
 
-# Filer metadata-log retention. The log grows ~5.8 GB/day here, so footprint ≈ days * 5.8 GB.
-SEAWEEDFS_METALOG_RETENTION_DAYS="${SEAWEEDFS_METALOG_RETENTION_DAYS:-2}"
-
-# Maintenance cadence, and how stale an abandoned multipart upload may get before it's reaped.
-SEAWEEDFS_MAINTENANCE_INTERVAL_SECONDS="${SEAWEEDFS_MAINTENANCE_INTERVAL_SECONDS:-3600}"
-SEAWEEDFS_MULTIPART_MAX_AGE="${SEAWEEDFS_MULTIPART_MAX_AGE:-24h}"
-
-# Delay before the first pass: long enough for volumes to register with the master, short enough
-# that a container booted against a full cluster frees slots in minutes.
-SEAWEEDFS_MAINTENANCE_STARTUP_DELAY_SECONDS="${SEAWEEDFS_MAINTENANCE_STARTUP_DELAY_SECONDS:-300}"
-
-# Vacuum threshold. Do NOT lower without pausing writers: every volume over the threshold blocks up
-# to 30 s draining, so 0.01 projected ~15 h to reclaim ~1.3 GB. 0.3 skips tiles-data (0.9 % garbage)
-# and still catches freshly purged metadata-log volumes (~100 % garbage).
-SEAWEEDFS_VACUUM_GARBAGE_THRESHOLD="${SEAWEEDFS_VACUUM_GARBAGE_THRESHOLD:-0.3}"
+# Monitor cadence, and the delay before the first check — long enough for volumes to register with
+# the master, short enough that a container booted against a full cluster reports it in minutes.
+SEAWEEDFS_MONITOR_INTERVAL_SECONDS="${SEAWEEDFS_MONITOR_INTERVAL_SECONDS:-3600}"
+SEAWEEDFS_MONITOR_STARTUP_DELAY_SECONDS="${SEAWEEDFS_MONITOR_STARTUP_DELAY_SECONDS:-300}"
 
 # Warn at this percentage of volume.max.
 SEAWEEDFS_VOLUME_SLOT_WARN_PERCENT="${SEAWEEDFS_VOLUME_SLOT_WARN_PERCENT:-85}"
+
+# Warn when a plugin job type stops recording runs. admin_script ticks every 17 min when healthy,
+# so hours of silence means the task has stalled — its known failure mode, and one it reports
+# nowhere else. On stall we force a run through the admin API, which dispatches directly and so
+# does not depend on the job-assignment path that wedges.
+SEAWEEDFS_JOB_STALE_WARN_HOURS="${SEAWEEDFS_JOB_STALE_WARN_HOURS:-6}"
+SEAWEEDFS_MONITORED_JOB_TYPES="${SEAWEEDFS_MONITORED_JOB_TYPES:-admin_script}"
+SEAWEEDFS_ADMIN_SCRIPT_FORCE_RUN_ON_STALL="${SEAWEEDFS_ADMIN_SCRIPT_FORCE_RUN_ON_STALL:-true}"
+
+# The admin_script job config, pushed on EVERY boot (see configure_admin_script_job below), so this
+# file is the source of truth instead of whatever landed in /data years ago. Retention lives here
+# because it is part of the pushed script.
+SEAWEEDFS_ADMIN_URL="${SEAWEEDFS_ADMIN_URL:-http://localhost:23646}"
+SEAWEEDFS_ADMIN_SCRIPT_INTERVAL_MINUTES="${SEAWEEDFS_ADMIN_SCRIPT_INTERVAL_MINUTES:-17}"
+
+# Filer metadata-log retention. The log grows ~5.8 GB/day here, so footprint ≈ days * 5.8 GB.
+# Upstream's default is 7d (~40 GB, ~160 volumes of volume.max) — too long for this cluster.
+SEAWEEDFS_METALOG_RETENTION_DAYS="${SEAWEEDFS_METALOG_RETENTION_DAYS:-2}"
 
 # Buckets (space-separated) using the lifecycle TTL fast path. "" = all worker-driven.
 SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS="${SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS:-${S3_TILES_DATA_BUCKET_NAME}}"
@@ -275,7 +283,7 @@ fi
 #
 # Bucket data is unaffected: fs.configure refuses a -collection under /buckets/.
 # -ttl here is silently ignored (the log's assign path never sets Ttl) — retention comes from
-# fs.log.purge in the maintenance loop below.
+# fs.log.purge in the admin_script plugin task, configured in the admin UI on :23646.
 echo "Isolating filer metadata log into the 'metalog' collection..."
 echo "fs.configure -locationPrefix=/topics/ -collection=metalog -apply" \
     | weed shell -master=localhost:9333 2>&1 \
@@ -346,30 +354,109 @@ weed worker \
 WORKER_PID=$!
 
 # =================================================================================================
-# SeaweedFS maintenance loop
+# admin_script job provisioning
 # =================================================================================================
-# Nothing else prunes the filer metadata change log. The master's built-in maintenance script
-# (which includes fs.log.purge) only loads from a master.toml — this deploy is pure CLI flags — and
-# is skipped outright while an admin server is connected, which it always is since we start
-# `weed admin` above.
+# The plugin stack seeds a job config from the worker's descriptor ONLY when none exists
+# (SaveJobTypeConfigIfNotExists), and DescriptorVersion is written but read nowhere — so nothing
+# ever migrates it. A config written years ago is used verbatim forever. That is how this cluster
+# ran for months on a pre-4.32 default carrying `ec.balance -apply` (which can never succeed on a
+# single node with 0 EC shard slots, and marked every run "error", hiding real failures) and
+# `fs.log.purge -daysAgo=7` (~40 GB of metadata log at this throughput).
 #
-# Left alone the log reached 70.7 GB / 296 volumes, which together with tiles-data hit
-# volume.max exactly and took all writes down. It is sized by filer OPERATION count, not bytes
-# stored, so tile churn and lifecycle expiries drive it however little data is retained.
-run_seaweedfs_maintenance() {
-    # Order matters. fs.log.purge removes filer entries but their chunks are deleted asynchronously,
-    # so each vacuum reclaims the PREVIOUS pass's garbage — this converges over runs, not in one
-    # shot. deleteEmpty is last and is the only step that returns a volume SLOT; vacuum just
-    # shrinks the .dat in place.
-    weed shell -master=localhost:9333 <<SHELL 2>&1
-lock
-fs.log.purge -daysAgo ${SEAWEEDFS_METALOG_RETENTION_DAYS}
-s3.clean.uploads -timeAgo ${SEAWEEDFS_MULTIPART_MAX_AGE}
-volume.vacuum -garbageThreshold=${SEAWEEDFS_VACUUM_GARBAGE_THRESHOLD}
-volume.deleteEmpty -quietFor=1h -apply
-unlock
-SHELL
+# So we push the config on every boot instead. Same contract SeaweedFS itself documents for
+# admin.toml — "applied at every startup, overriding values". admin.toml cannot be used here:
+# its pluginConfigSections covers only vacuum, volume_balance and erasure_coding, not admin_script.
+#
+# NOTE: this makes the admin UI non-authoritative for admin_script — edits made there are reverted
+# on the next restart. Change the values in this file, not in the UI.
+ADMIN_COOKIE_JAR=/tmp/seaweedfs-admin-cookies
+
+# Log in to the admin server, storing the session cookie. Two steps, because HandleLogin validates
+# a CSRF token bound to a pre-existing session: GET /login mints the token, saves it in the session
+# cookie and renders it as <input name="csrf_token">, and only then will the POST be accepted. A
+# bare POST is answered with 303 -> /login?error=Invalid CSRF token and sets no auth cookie — which
+# looks like success to `curl -f`, since 3xx is not an error. (Writes under /api need no CSRF, only
+# the cookie; the token is a login-form requirement.)
+#
+# --data-urlencode keeps credentials with URL/shell metacharacters intact. Never echo the body.
+admin_login() {
+    rm -f "$ADMIN_COOKIE_JAR"
+    attempt=0
+    while [ "$attempt" -lt 30 ]; do
+        attempt=$((attempt + 1))
+
+        csrf=$(curl -sf -c "$ADMIN_COOKIE_JAR" -b "$ADMIN_COOKIE_JAR" \
+                    "${SEAWEEDFS_ADMIN_URL}/login" \
+               | sed -n 's/.*name="csrf_token" value="\([^"]*\)".*/\1/p' | head -1)
+
+        if [ -n "$csrf" ]; then
+            curl -sf -o /dev/null \
+                -c "$ADMIN_COOKIE_JAR" -b "$ADMIN_COOKIE_JAR" \
+                --data-urlencode "username=${S3_ROOT_USER}" \
+                --data-urlencode "password=${S3_ROOT_PASSWORD}" \
+                --data-urlencode "csrf_token=${csrf}" \
+                "${SEAWEEDFS_ADMIN_URL}/login" || true
+
+            # Both success and failure redirect with 303, so confirm the session actually works
+            # rather than trusting the POST's exit status.
+            if curl -sf -o /dev/null -b "$ADMIN_COOKIE_JAR" \
+                    "${SEAWEEDFS_ADMIN_URL}/api/plugin/job-types/admin_script/config"; then
+                chmod 600 "$ADMIN_COOKIE_JAR" 2>/dev/null || true
+                return 0
+            fi
+        fi
+        sleep 2
+    done
+    echo "WARNING: could not log in to the SeaweedFS admin server at ${SEAWEEDFS_ADMIN_URL} after" \
+         "${attempt} attempts; check S3_ROOT_USER / S3_ROOT_PASSWORD."
+    return 1
 }
+
+# Push the admin_script config. protojson encodes int64 as a STRING ("17"), matching what the admin
+# writes to config.json. adminRuntime.enabled MUST be sent explicitly: the server backfills absent
+# fields from the descriptor, but `enabled` is not in that backfill list, so omitting it leaves the
+# proto3 zero value and the task ends up silently DISABLED.
+configure_admin_script_job() {
+    admin_login || return 1
+
+    script="fs.log.purge -daysAgo=${SEAWEEDFS_METALOG_RETENTION_DAYS}\nvolume.deleteEmpty -quietFor=24h -apply\nvolume.fix.replication -apply\ns3.clean.uploads -timeAgo=24h"
+
+    payload=$(printf '{"adminConfigValues":{"script":{"stringValue":"%s"},"run_interval_minutes":{"int64Value":"%s"}},"adminRuntime":{"enabled":true,"detectionIntervalMinutes":%s}}' \
+        "$script" \
+        "$SEAWEEDFS_ADMIN_SCRIPT_INTERVAL_MINUTES" \
+        "$SEAWEEDFS_ADMIN_SCRIPT_INTERVAL_MINUTES")
+
+    if curl -sf -o /dev/null -X PUT \
+            -b "$ADMIN_COOKIE_JAR" \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "${SEAWEEDFS_ADMIN_URL}/api/plugin/job-types/admin_script/config"; then
+        echo "Configured the admin_script job (purge ${SEAWEEDFS_METALOG_RETENTION_DAYS}d," \
+             "every ${SEAWEEDFS_ADMIN_SCRIPT_INTERVAL_MINUTES}m)."
+        return 0
+    fi
+
+    echo "WARNING: could not push the admin_script job config; SeaweedFS keeps whatever is already" \
+         "persisted in ${ADMIN_DATA_DIR}. If none exists, housekeeping is NOT running."
+    return 1
+}
+
+# =================================================================================================
+# SeaweedFS monitor loop
+# =================================================================================================
+# Housekeeping is NOT done here. The `admin_script` plugin task already runs fs.log.purge,
+# volume.deleteEmpty, volume.fix.replication and s3.clean.uploads on a 17-min tick, and vacuum is
+# its own plugin task (hence "DisableVacuum (by plugin worker)" in the logs). Doing that work here
+# too would only contend for the same cluster lock the admin server needs.
+#
+# What the plugin stack does NOT do is notice when it stops. admin_script stalls silently — a job
+# that never gets an executor blocks the task, and with globalExecutionConcurrency=1 nothing else
+# runs until a restart. Its own history shows 29-day and 20-day gaps with no log line and no run
+# record. During one of those the filer metadata change log reached 70.7 GB / 296 volumes, which
+# together with tiles-data hit volume.max exactly and failed every write while reads kept working.
+#
+# So this loop only observes: it takes no lock and mutates nothing. Everything below must stay
+# read-only.
 
 # Sum volumeCount across collections so the volume.max ceiling surfaces as a warning rather than
 # as a silent write outage.
@@ -387,36 +474,93 @@ warn_on_volume_slot_pressure() {
     if [ "$percent" -ge "$SEAWEEDFS_VOLUME_SLOT_WARN_PERCENT" ]; then
         echo "WARNING: ${percent}% of ${SEAWEEDFS_VOLUME_MAX} volume slots used; at 100% ALL writes" \
              "fail with InternalError while reads keep working. Check 'collection.list': if metalog" \
-             "dominates lower SEAWEEDFS_METALOG_RETENTION_DAYS, if tiles-data does the data has" \
-             "outgrown volume.max * volumeSizeLimitMB."
+             "dominates, shorten fs.log.purge -daysAgo in the admin_script config on :23646; if" \
+             "tiles-data does, the data has outgrown volume.max * volumeSizeLimitMB."
     fi
 }
 
-echo "Starting SeaweedFS maintenance loop (first pass in ${SEAWEEDFS_MAINTENANCE_STARTUP_DELAY_SECONDS}s, then every ${SEAWEEDFS_MAINTENANCE_INTERVAL_SECONDS}s; metadata-log retention ${SEAWEEDFS_METALOG_RETENTION_DAYS}d)..."
+# Force a run through the admin API. RunPluginJobTypeAPI runs detection and dispatches in-request,
+# so it does not go through the scheduler's job-assignment path — which is exactly the part that
+# wedges. This is the recovery lever, not just a nudge.
+force_job_run() {
+    job_type=$1
+    admin_login || return 1
+
+    response=$(curl -sf -X POST \
+        -b "$ADMIN_COOKIE_JAR" \
+        -H 'Content-Type: application/json' \
+        --data '{}' \
+        "${SEAWEEDFS_ADMIN_URL}/api/plugin/job-types/${job_type}/run") || {
+        echo "WARNING: forced run of ${job_type} failed; a container restart is the fallback."
+        return 1
+    }
+
+    # No jq in this image, so pull the counters out with sed.
+    field() { echo "$response" | sed -n "s/.*\"$1\":[[:space:]]*\([0-9][0-9]*\).*/\1/p"; }
+    skipped=$(field skipped_active_count)
+
+    echo "Forced run of ${job_type}: success=$(field success_count) error=$(field error_count)" \
+         "skipped_active=${skipped:-0}"
+
+    # Proposals are filtered against still-active jobs, so a non-zero count here means a previous
+    # job is stuck holding the single execution slot. Only a restart clears that.
+    if [ -n "$skipped" ] && [ "$skipped" -gt 0 ]; then
+        echo "WARNING: ${job_type} has ${skipped} job(s) still marked active, blocking dispatch." \
+             "Restart the container to clear them."
+    fi
+}
+
+# Warn when a plugin job type stops recording runs. runs.json is rewritten on every completed run,
+# so its mtime is the same signal as the last_updated_time field inside it — without needing a JSON
+# parser in busybox sh.
+check_stalled_jobs() {
+    now=$(date +%s)
+    for job_type in $SEAWEEDFS_MONITORED_JOB_TYPES; do
+        runs="$ADMIN_DATA_DIR/plugin/job_types/${job_type}/runs.json"
+
+        if [ ! -f "$runs" ]; then
+            echo "WARNING: ${job_type} has no run history at ${runs}; the plugin task is not" \
+                 "recording runs. Check its config in the admin UI on :23646."
+            continue
+        fi
+
+        age_hours=$(( (now - $(stat -c %Y "$runs")) / 3600 ))
+        [ "$age_hours" -lt "$SEAWEEDFS_JOB_STALE_WARN_HOURS" ] && continue
+
+        echo "WARNING: ${job_type} has recorded no run for ${age_hours}h. This task stalls silently" \
+             "when a job is never assigned an executor. Housekeeping (log purge, deleteEmpty," \
+             "multipart cleanup) is NOT running until it resumes."
+
+        [ "$SEAWEEDFS_ADMIN_SCRIPT_FORCE_RUN_ON_STALL" = "true" ] || continue
+        force_job_run "$job_type" || true
+    done
+}
+
+echo "Starting SeaweedFS monitor loop (first check in ${SEAWEEDFS_MONITOR_STARTUP_DELAY_SECONDS}s, then every ${SEAWEEDFS_MONITOR_INTERVAL_SECONDS}s)..."
 (
-  # Settle first: a pass against a half-formed topology is noise at best. Then sweep at the end
-  # of each iteration, so a container booted against a wedged cluster frees slots after the
-  # startup delay instead of after a full interval.
-  sleep "$SEAWEEDFS_MAINTENANCE_STARTUP_DELAY_SECONDS"
+  # Push the job config first, in this subshell rather than inline: admin_login retries for ~60 s
+  # while the admin server comes up and the worker registers its descriptor, and doing that inline
+  # would delay installing the shutdown trap below by the same amount.
+  configure_admin_script_job || true
+
+  # Settle first: a check against a half-formed topology reports numbers that mean nothing.
+  sleep "$SEAWEEDFS_MONITOR_STARTUP_DELAY_SECONDS"
   while true; do
-      echo "Running SeaweedFS maintenance pass..."
-      run_seaweedfs_maintenance \
-          || echo "WARNING: SeaweedFS maintenance pass failed; retrying next interval."
       warn_on_volume_slot_pressure || true
-      sleep "$SEAWEEDFS_MAINTENANCE_INTERVAL_SECONDS"
+      check_stalled_jobs || true
+      sleep "$SEAWEEDFS_MONITOR_INTERVAL_SECONDS"
   done
 ) &
-MAINTENANCE_PID=$!
+MONITOR_PID=$!
 
-# Shutdown order matters for data integrity: reap the maintenance loop first (it holds the shell
-# `lock` during a pass and would otherwise keep the master busy), then admin+worker so their
-# master-client sessions don't stall weed server's 2× ~10 s graceful-stop (filer gRPC + volume
-# heartbeat drain) past docker's SIGKILL deadline; awk filter reaped last so final shutdown logs
-# still reach docker.
+# Shutdown order matters for data integrity: reap the monitor loop first (it is the only thing here
+# that can be mid-RPC to the master), then admin+worker so their master-client sessions don't stall
+# weed server's 2× ~10 s graceful-stop (filer gRPC + volume heartbeat drain) past docker's SIGKILL
+# deadline; awk filter reaped last so final shutdown logs still reach docker.
 trap '
   echo "Shutting down SeaweedFS..."
-  kill -TERM "$MAINTENANCE_PID" 2>/dev/null
-  wait "$MAINTENANCE_PID" 2>/dev/null
+  kill -TERM "$MONITOR_PID" 2>/dev/null
+  wait "$MONITOR_PID" 2>/dev/null
   kill -TERM "$ADMIN_PID"  2>/dev/null
   kill -TERM "$WORKER_PID" 2>/dev/null
   wait "$ADMIN_PID"  2>/dev/null
@@ -425,7 +569,7 @@ trap '
   wait "$WEED_PID"   2>/dev/null
   kill -TERM "$WEED_LOG_FILTER_PID" 2>/dev/null
   wait "$WEED_LOG_FILTER_PID" 2>/dev/null
-  rm -f "$WEED_LOG_PIPE"
+  rm -f "$WEED_LOG_PIPE" "$ADMIN_COOKIE_JAR"
   exit 0
 ' TERM INT
 
@@ -433,6 +577,6 @@ trap '
 # would cause `weed server` to block on the FIFO) exits the script and lets
 # docker restart the container via `restart: unless-stopped`.
 #
-# MAINTENANCE_PID is deliberately NOT waited on: it is a `while true` loop that never exits, so
+# MONITOR_PID is deliberately NOT waited on: it is a `while true` loop that never exits, so
 # listing it would block forever and defeat the crash-restart above. The trap reaps it.
 wait $WEED_PID $ADMIN_PID $WORKER_PID $WEED_LOG_FILTER_PID
