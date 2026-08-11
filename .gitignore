@@ -19,3 +19,4 @@ data_s3*/
 sftpgo/
 .fuse_*
 data_rustfs/
+*.grib2.*.idx

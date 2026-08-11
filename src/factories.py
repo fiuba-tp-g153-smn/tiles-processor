@@ -11,11 +11,14 @@ from data_sources import (
     DataSourceRegistry,
     EcmwfPeriodDataSource,
     EcmwfProducerDataSource,
+    GfsProducerDataSource,
+    GfsStepDataSource,
     GlmFolderDataSource,
     Goes19AbiDataSource,
     RadarDataSource,
     WrfDataSource,
 )
+from data_sources.gfs_fetcher import GfsGribFetcher
 from data_sources.glm_folder_repository import (
     GlmFolderFileRepository,
     LocalGlmFolderFileRepository,
@@ -39,6 +42,13 @@ from data_sources.wrf_repository import (
 )
 from models.band_config import BAND_CONFIGS, get_band_config
 from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
+from models.gfs_config import (
+    GFS_250_CONFIG,
+    GFS_500_CONFIG,
+    GFS_MSLP_CONFIG,
+    GFS_PRODUCT_CONFIGS,
+    GfsProductConfig,
+)
 from models.input_source_config import InputSourceConfig
 from models.radar_config import RADAR_PRODUCT_CONFIGS
 from models.wrf_config import WRF_PRODUCT_CONFIGS
@@ -156,7 +166,37 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         )
         registry.register(EcmwfPeriodDataSource(ECMWF_MSLP_CONFIG, ecmwf_mslp_s3))
 
+    # Register GFS sources.
+    if config is not None and _any_gfs_product_enabled(config):
+        gfs_s3 = create_s3_client(config)
+        registry.register(
+            GfsProducerDataSource(
+                fetcher=GfsGribFetcher(config.GFS_ACCESS, config.get_bounds()),
+                s3_client=gfs_s3,
+                cycles_to_maintain=config.GFS_CYCLES_TO_MAINTAIN,
+                max_steps_per_tick=config.GFS_MAX_STEPS_PER_TICK,
+                probe_from_hours=config.GFS_AVAILABILITY_PROBE_FROM_HOURS,
+                probe_to_hours=config.GFS_AVAILABILITY_PROBE_TO_HOURS,
+            )
+        )
+        registry.register(GfsStepDataSource(gfs_s3))
+
     return registry
+
+
+def _any_gfs_product_enabled(config: Config) -> bool:
+    """True when at least one GFS product is switched on."""
+    return any((config.ENABLE_GFS_MSLP, config.ENABLE_GFS_500, config.ENABLE_GFS_250))
+
+
+def enabled_gfs_products(config: Config) -> list[GfsProductConfig]:
+    """GFS product configs whose feature flag is on, in a stable order."""
+    flags = {
+        GFS_MSLP_CONFIG.product_id: config.ENABLE_GFS_MSLP,
+        GFS_500_CONFIG.product_id: config.ENABLE_GFS_500,
+        GFS_250_CONFIG.product_id: config.ENABLE_GFS_250,
+    }
+    return [cfg for cfg in GFS_PRODUCT_CONFIGS.values() if flags[cfg.product_id]]
 
 
 def create_rabbitmq_client(config: Config) -> RabbitMQClient:

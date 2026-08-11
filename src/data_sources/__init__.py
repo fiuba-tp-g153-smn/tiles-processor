@@ -7,6 +7,8 @@ from data_sources.glm_folder import GlmFolderDataSource
 from data_sources.radar import RadarDataSource
 from data_sources.ecmwf_producer_source import EcmwfProducerDataSource
 from data_sources.ecmwf_period_source import EcmwfPeriodDataSource
+from data_sources.gfs_producer_source import GfsProducerDataSource
+from data_sources.gfs_step_source import GfsStepDataSource
 from data_sources.wrf import WrfDataSource
 
 __all__ = [
@@ -19,5 +21,7 @@ __all__ = [
     "RadarDataSource",
     "EcmwfProducerDataSource",
     "EcmwfPeriodDataSource",
+    "GfsProducerDataSource",
+    "GfsStepDataSource",
     "WrfDataSource",
 ]

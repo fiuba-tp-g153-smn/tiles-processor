@@ -1,5 +1,6 @@
 """Pure functions to smooth a 2-D field and extract simplified isolines as GeoJSON."""
 
+import gc
 import json
 import math
 from pathlib import Path
@@ -9,6 +10,8 @@ import xarray as xr
 from contourpy import contour_generator
 from scipy.ndimage import gaussian_filter
 from shapely.geometry import LineString, mapping
+
+from models.units import MS_TO_KNOTS
 
 
 def smooth_field(da: xr.DataArray, sigma: float) -> xr.DataArray:
@@ -94,6 +97,26 @@ def extract_isolines(
     return features
 
 
+def smooth_and_contour(
+    field: xr.DataArray,
+    sigma: float,
+    step: float,
+    simplify_tolerance: float,
+    value_property: str,
+) -> list[dict]:
+    """Smooth a field, then extract its isolines — the standard overlay recipe."""
+    smoothed = smooth_field(field, sigma=sigma)
+    features = extract_isolines(
+        smoothed,
+        step=step,
+        simplify_tolerance=simplify_tolerance,
+        value_property=value_property,
+    )
+    del smoothed
+    gc.collect()
+    return features
+
+
 def smooth_array(arr: np.ndarray, sigma: float) -> np.ndarray:
     """Gaussian-smooth a 2-D array, preserving NaN locations.
 
@@ -159,7 +182,7 @@ def extract_barbs(
     lon_2d: np.ndarray,
     lat_2d: np.ndarray,
     stride: int,
-    ms_to_kt: float = 1.94384,
+    ms_to_kt: float = MS_TO_KNOTS,
 ) -> list[dict]:
     """Subsample a wind field and emit one Point Feature per barb position.
 
@@ -183,7 +206,9 @@ def extract_barbs(
     lon_s = lon[sl]
     lat_s = lat[sl]
 
-    valid = np.isfinite(u_s) & np.isfinite(v_s) & np.isfinite(lon_s) & np.isfinite(lat_s)
+    valid = (
+        np.isfinite(u_s) & np.isfinite(v_s) & np.isfinite(lon_s) & np.isfinite(lat_s)
+    )
     speed = np.hypot(u_s, v_s)
     # Meteorological direction: 0° = wind from north, increases clockwise
     dir_deg = (np.degrees(np.arctan2(-u_s, -v_s)) + 360.0) % 360.0
@@ -223,7 +248,7 @@ _LAT_CLIP = 85.05112878
 def _lonlat_to_tile(lon: float, lat: float, zoom: int) -> tuple[int, int]:
     """Web Mercator XYZ tile index for (lon, lat) at the given zoom."""
     lat_c = max(-_LAT_CLIP, min(_LAT_CLIP, lat))
-    n = 2 ** zoom
+    n = 2**zoom
     x = int((lon + 180.0) / 360.0 * n)
     lat_r = math.radians(lat_c)
     y = int(

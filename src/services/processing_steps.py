@@ -246,6 +246,32 @@ def save_as_cog(data: xr.DataArray, output_dir: Path, image_id: str) -> Path:
     return output_path
 
 
+def save_rgba_geotiff(rgba: xr.DataArray, output_path: Path) -> Path:
+    """Write a colorized RGBA DataArray as a plain GeoTIFF, atomically.
+
+    Renders to a uniquely-named temporary file and renames on success, so a
+    crashed or killed process never leaves a half-written raster where the
+    tiling stage would pick it up.
+
+    Args:
+        rgba: 4-band RGBA DataArray produced by `build_rgba_data_array`.
+        output_path: Final destination; its parent holds the temp file too.
+
+    Returns:
+        `output_path`.
+    """
+    import rioxarray  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
+
+    tmp_path = output_path.parent / f"{uuid.uuid4()}.tif"
+    try:
+        rgba.rio.to_raster(tmp_path)
+        tmp_path.rename(output_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return output_path
+
+
 _EARTH_CIRCUMFERENCE_M = 2 * math.pi * 6378137.0
 _TILE_SIZE = 256
 
@@ -289,8 +315,12 @@ def prewarp_to_mercator_grid(
     ]
 
     try:
-        logger.info("Pre-warping %s to EPSG:3857 at zoom %d (%.2f m/px)...",
-                    geotiff_path.name, max_zoom, res)
+        logger.info(
+            "Pre-warping %s to EPSG:3857 at zoom %d (%.2f m/px)...",
+            geotiff_path.name,
+            max_zoom,
+            res,
+        )
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=600, check=False
         )

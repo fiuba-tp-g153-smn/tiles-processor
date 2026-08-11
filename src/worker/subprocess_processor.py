@@ -48,9 +48,12 @@ def create_processor_registry():
         RadarProcessor,
         EcmwfTotalPrecipitationProcessor,
         EcmwfMslpProcessor,
+        GfsMslpProcessor,
+        GfsUpperLevelProcessor,
         WrfProcessor,
     )
     from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
+    from models.gfs_config import GFS_500_CONFIG, GFS_MSLP_CONFIG
 
     registry = ProcessorRegistry()
 
@@ -70,6 +73,10 @@ def create_processor_registry():
     # Register ECMWF processors (subprocess for scientific processing)
     registry.register(ECMWF_TP_CONFIG.processor_id, EcmwfTotalPrecipitationProcessor)
     registry.register(ECMWF_MSLP_CONFIG.processor_id, EcmwfMslpProcessor)
+
+    # Register GFS processors
+    registry.register(GFS_MSLP_CONFIG.processor_id, GfsMslpProcessor)
+    registry.register(GFS_500_CONFIG.processor_id, GfsUpperLevelProcessor)
 
     # Register WRF processor
     registry.register("wrf", WrfProcessor)

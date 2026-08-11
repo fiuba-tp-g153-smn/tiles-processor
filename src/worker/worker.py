@@ -9,24 +9,28 @@ from pathlib import Path
 from typing import Optional
 
 from clients.message_queue_client import MessageQueueClient
-from data_sources.ecmwf_producer_source import (
-    ForecastNotAvailableError,
-    TransientDownloadError,
-)
 from clients.metrics_repository import MetricsRepository
 from clients.progress_tracker import ProgressTracker
 from config import Config
 from db.migrate import ensure_migrations
-from exceptions import SourceFileNotFoundError, UnprocessableInputError
+from exceptions import (
+    ForecastNotAvailableError,
+    SourceFileNotFoundError,
+    TransientDownloadError,
+    UnprocessableInputError,
+)
 from factories import (
     create_data_source_registry,
     create_rabbitmq_client,
     create_s3_client,
+    enabled_gfs_products,
 )
 from worker.ecmwf_grib_downloader import EcmwfGribDownloader
+from worker.gfs_grib_downloader import GfsGribDownloader
 from worker.inline_processor import InlineProcessor
 from worker.job_metrics_context import JobMetricsContext
 from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
+from models.gfs_config import GFS_INLINE_PROCESSOR_ID
 from models.job_metrics import JobOutcome
 from models.work_unit import WorkUnit
 from worker.work_handler import WorkHandler
@@ -419,6 +423,16 @@ def run_worker(config: Config) -> None:
         inline_processors[ECMWF_MSLP_CONFIG.inline_processor_id] = EcmwfGribDownloader(
             product_config=ECMWF_MSLP_CONFIG,
             s3_client=ecmwf_mslp_s3,
+            bounds=config.get_bounds(),
+        )
+
+    # One GFS downloader covers every enabled product: it caches the shared GRIB
+    # subset for a step and fans out a rendering unit per product.
+    gfs_products = enabled_gfs_products(config)
+    if gfs_products:
+        inline_processors[GFS_INLINE_PROCESSOR_ID] = GfsGribDownloader(
+            products=gfs_products,
+            s3_client=create_s3_client(config),
             bounds=config.get_bounds(),
         )
 

@@ -20,8 +20,11 @@ import pytest
 import numpy as np
 from config import Config
 import logging
-from data_sources.ecmwf_producer_source import TransientDownloadError
-from exceptions import SourceFileNotFoundError, UnprocessableInputError
+from exceptions import (
+    SourceFileNotFoundError,
+    TransientDownloadError,
+    UnprocessableInputError,
+)
 from worker.worker import Worker
 from worker.work_handler import WorkHandler
 from worker.job_metrics_context import JobMetricsContext

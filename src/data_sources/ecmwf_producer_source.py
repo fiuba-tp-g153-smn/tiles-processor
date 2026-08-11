@@ -11,6 +11,7 @@ import requests
 
 from clients.s3_client import S3Client
 from data_sources.base import DataSource, DiscoveryConfig, ImageInfo
+from exceptions import ForecastNotAvailableError, TransientDownloadError
 from models.ecmwf_config import (
     ECMWF_TP_CONFIG,
     FORECASTS_TO_MAINTAIN,
@@ -20,15 +21,6 @@ from models.ecmwf_config import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class ForecastNotAvailableError(Exception):
-    """Raised when a forecast candidate is not yet published on ECMWF Open Data (HTTP 404)."""
-
-
-class TransientDownloadError(Exception):
-    """Raised on transient S3 errors (e.g. 503 Slow Down) to trigger requeue instead of blocking."""
-
 
 _FORECAST_BASE_HOURS = (0, 12)  # UTC hours at which ECMWF issues forecasts
 _STEPS = list(range(STEP_HOURS, 145, STEP_HOURS))  # [3, 6, ..., 144]

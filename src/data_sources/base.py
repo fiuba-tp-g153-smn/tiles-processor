@@ -49,6 +49,19 @@ class DataSource(ABC):
     def processor_id(self) -> str:
         """The processor ID to use for images from this source."""
 
+    @property
+    def uses_existing_tilesets(self) -> bool:
+        """Whether `DiscoveryConfig.existing_tilesets` is worth computing.
+
+        Most sources deduplicate against the tiles already in S3, so the
+        producer pays one LIST per tick to fill that set. A source that
+        deduplicates some other way — or that never discovers anything —
+        returns False, and the producer skips the LIST and passes an empty set.
+
+        Defaults to True so existing sources keep their behaviour untouched.
+        """
+        return True
+
     @abstractmethod
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
         """

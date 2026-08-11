@@ -25,6 +25,7 @@ from models.wrf_config import (
     get_wrf_product_config,
     parse_wrf_filename,
 )
+from models.units import MS_TO_KNOTS as MS_TO_KT
 from processors.base_processor import ImageProcessor
 from services.contouring import (
     extract_barbs_tiled,
@@ -34,8 +35,6 @@ from services.contouring import (
 )
 
 logger = getLogger(__name__)
-
-MS_TO_KT = 1.94384
 
 # ── Colormaps (SMN WRF-ARG4K reference palettes) ─────────────────────────────
 

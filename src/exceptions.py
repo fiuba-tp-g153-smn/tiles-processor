@@ -11,6 +11,23 @@ class UnprocessableInputError(Exception):
     """
 
 
+class ForecastNotAvailableError(Exception):
+    """A forecast run is not published yet upstream (e.g. HTTP 403/404).
+
+    The worker maps this to ``SKIPPED`` and acks without retrying: the producer
+    re-emits the run on a later discovery tick, once it exists.
+    """
+
+
+class TransientDownloadError(Exception):
+    """A download failed for a reason that may resolve on its own (5xx, timeout).
+
+    The worker maps this to ``REQUEUED``: progress is released so the next
+    discovery tick re-emits the unit, giving a natural availability-gated
+    backoff instead of a tight retry loop against a throttled endpoint.
+    """
+
+
 class SourceFileNotFoundError(Exception):
     """The WorkUnit's source raw file does not exist (pruned/removed upstream).
 
