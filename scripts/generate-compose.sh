@@ -133,6 +133,7 @@ services:
         +sbwtdio none
     volumes:
       - ${RABBITMQ_VOLUME}:/var/lib/rabbitmq
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 30s
@@ -160,6 +161,7 @@ services:
     volumes:
       - ${SEAWEEDFS_DATA_VOLUME}
       - ./scripts/seaweedfs_start.sh:/start.sh:ro
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/seaweedfs_ready && wget -qO /dev/null http://localhost:9333/cluster/status"]
       interval: 10s

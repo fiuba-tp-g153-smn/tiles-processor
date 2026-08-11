@@ -28,6 +28,7 @@ services:
         +sbwtdio none
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 30s
@@ -69,6 +70,7 @@ services:
       - s3_data:/data
       - seaweedfs_filerldb2:/data/filerldb2
       - ./scripts/seaweedfs_start.sh:/start.sh:ro
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/seaweedfs_ready && wget -qO /dev/null http://seaweedfs:9333/cluster/status"]
       interval: 10s
