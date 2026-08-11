@@ -316,13 +316,29 @@ echo "fs.configure -locationPrefix=/topics/ -collection=metalog -apply" \
 #   * Silently declines tag-filtered rules and versioned buckets (neither applies here).
 #
 # The flag is a bucket attribute: persistent, idempotent, and order-independent w.r.t. the rules.
-for _fastpath_bucket in $SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS; do
-    echo "Enabling the lifecycle TTL fast path on ${_fastpath_bucket}..."
-    echo "s3.bucket.lifecycle.fastpath -name ${_fastpath_bucket} -enable" \
-        | weed shell -master=localhost:9333 2>&1 \
-        || echo "WARNING: could not enable the lifecycle TTL fast path on ${_fastpath_bucket};" \
-                "expiration falls back to the worker's per-object scan."
-done
+#
+# Called here AND from the monitor loop, because the enable fails on a bucket that does not exist
+# yet: this script only creates tiles-data, intersection-data and basemap-tiles, while
+# weather-stations-data is created later by data-service. On a fresh /data that bucket is absent at
+# this point, so the first attempt fails and a later pass has to pick it up.
+ensure_lifecycle_fastpath() {
+    for _fastpath_bucket in $SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS; do
+        state=$(echo "s3.bucket.lifecycle.fastpath -name ${_fastpath_bucket}" \
+            | weed shell -master=localhost:9333 2>/dev/null \
+            | sed -n 's/.*fast path: *//p' | tr -d " \r")
+
+        [ "$state" = "enabled" ] && continue
+
+        echo "Enabling the lifecycle TTL fast path on ${_fastpath_bucket}..."
+        echo "s3.bucket.lifecycle.fastpath -name ${_fastpath_bucket} -enable" \
+            | weed shell -master=localhost:9333 2>&1 \
+            || echo "WARNING: could not enable the lifecycle TTL fast path on ${_fastpath_bucket}" \
+                    "(missing bucket?); retrying next monitor pass. Until then its objects get NO" \
+                    "TTL and expiry falls back to the worker's per-object scan."
+    done
+}
+
+ensure_lifecycle_fastpath
 
 touch /tmp/seaweedfs_ready
 echo "SeaweedFS ready."
@@ -465,8 +481,9 @@ configure_admin_script_job() {
 # record. During one of those the filer metadata change log reached 70.7 GB / 296 volumes, which
 # together with tiles-data hit volume.max exactly and failed every write while reads kept working.
 #
-# So this loop only observes: it takes no lock and mutates nothing. Everything below must stay
-# read-only.
+# So this loop only observes and reconciles: it takes no cluster lock and does no bulk work. The one
+# write it performs is re-asserting the lifecycle fast-path flag on buckets that appear after
+# startup (weather-stations-data is created by data-service, not here). Keep it that way.
 
 # Sum volumeCount across collections so the volume.max ceiling surfaces as a warning rather than
 # as a silent write outage.
@@ -558,6 +575,7 @@ echo "Starting SeaweedFS monitor loop (first check in ${SEAWEEDFS_MONITOR_STARTU
   while true; do
       warn_on_volume_slot_pressure || true
       check_stalled_jobs || true
+      ensure_lifecycle_fastpath || true
       sleep "$SEAWEEDFS_MONITOR_INTERVAL_SECONDS"
   done
 ) &
