@@ -10,6 +10,8 @@ from processors.glm_fed_processor import GlmFedProcessor
 from processors.radar_processor import RadarProcessor
 from processors.ecmwf_tp_processor import EcmwfTotalPrecipitationProcessor
 from processors.ecmwf_mslp_processor import EcmwfMslpProcessor
+from processors.gfs_mslp_processor import GfsMslpProcessor
+from processors.gfs_upper_level_processor import GfsUpperLevelProcessor
 from processors.wrf_processor import WrfProcessor
 
 __all__ = [
@@ -23,5 +25,7 @@ __all__ = [
     "RadarProcessor",
     "EcmwfTotalPrecipitationProcessor",
     "EcmwfMslpProcessor",
+    "GfsMslpProcessor",
+    "GfsUpperLevelProcessor",
     "WrfProcessor",
 ]

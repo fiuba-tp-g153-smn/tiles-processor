@@ -10,10 +10,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import pytest
 
 from data_sources.base import DiscoveryConfig
+from exceptions import ForecastNotAvailableError, TransientDownloadError
 from data_sources.ecmwf_producer_source import (
     EcmwfProducerDataSource,
-    ForecastNotAvailableError,
-    TransientDownloadError,
     _STEPS,
 )
 from models.ecmwf_config import ECMWF_TP_CONFIG

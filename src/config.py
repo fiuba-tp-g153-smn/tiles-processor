@@ -7,6 +7,7 @@ import socket
 from pathlib import Path
 from typing import Any, Dict
 
+from models.gfs_config import GfsAccessConfig
 from models.input_source_config import (
     INPUT_MODE_LOCAL,
     INPUT_MODE_S3,
@@ -136,6 +137,34 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             )
             if s.strip()
         )
+        self.ENABLE_GFS_MSLP: bool = settings["features"].get("enable_gfs_mslp", False)
+        self.ENABLE_GFS_500: bool = settings["features"].get("enable_gfs_500", False)
+        self.ENABLE_GFS_250: bool = settings["features"].get("enable_gfs_250", False)
+        self.GFS_ACCESS: GfsAccessConfig = self._parse_gfs_access(settings)
+        self.GFS_CYCLES_TO_MAINTAIN: int = int(
+            settings.get("gfs_cycles_to_maintain", 3)
+        )
+
+        self.GFS_MAX_STEPS_PER_TICK: int = int(
+            settings.get("gfs_max_steps_per_tick", 12)
+        )
+        self.GFS_AVAILABILITY_PROBE_FROM_HOURS: int = int(
+            settings.get("gfs_availability_probe_from_hours", 3)
+        )
+        self.GFS_AVAILABILITY_PROBE_TO_HOURS: int = int(
+            settings.get("gfs_availability_probe_to_hours", 8)
+        )
+        self.GFS_SMOOTHING_SIGMA: float = float(
+            settings.get("gfs_smoothing_sigma", 1.5)
+        )
+        self.GFS_ISOLINE_SIMPLIFY_TOLERANCE: float = float(
+            settings.get("gfs_isoline_simplify_tolerance", 0.05)
+        )
+
+        self.GFS_TILE_SMOOTHING_RESOLUTION_DEG: float = float(
+            os.getenv("GFS_TILE_SMOOTHING_RESOLUTION_DEG") or "0.01"
+        )
+
         _radar_product_ids = ["DBZH", "ZDR", "RHOHV", "KDP", "VRAD"]
         self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
             pid: settings["features"].get(f"enable_radar_{pid}", False)
@@ -227,6 +256,23 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.BOUNDS_MAXY: float = settings["bounds"]["maxy"]  # North latitude
 
     @staticmethod
+    def _parse_gfs_access(settings: Dict[str, Any]) -> GfsAccessConfig:
+        """Parse GFS endpoint access from settings.json + env overrides.
+
+        Intentionally separate from `_parse_input_source`: that helper models a
+        file repository with a local/S3 folder layout, an invariant five other
+        sources rely on. GFS reads through an HTTP CGI, which shares none of it.
+
+        """
+        return GfsAccessConfig(
+            subset_endpoint=os.getenv("GFS_SUBSET_ENDPOINT") or "",
+            timeout_seconds=int(settings.get("gfs_http_timeout_seconds", 120)),
+            max_concurrent_downloads=int(
+                settings.get("gfs_max_concurrent_downloads", 2)
+            ),
+        )
+
+    @staticmethod
     def _parse_input_source(
         settings: Dict[str, Any],
         name: str,
@@ -316,6 +362,14 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             self.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE,
         )
         logger.info("ECMWF_MSLP_SMOOTHING_SIGMA: %s", self.ECMWF_MSLP_SMOOTHING_SIGMA)
+        logger.info("ENABLE_GFS_MSLP: %s", self.ENABLE_GFS_MSLP)
+        logger.info("ENABLE_GFS_500: %s", self.ENABLE_GFS_500)
+        logger.info("ENABLE_GFS_250: %s", self.ENABLE_GFS_250)
+        logger.info("GFS_SUBSET_ENDPOINT: %s", self.GFS_ACCESS.subset_endpoint)
+        logger.info(
+            "GFS_MAX_CONCURRENT_DOWNLOADS: %s", self.GFS_ACCESS.max_concurrent_downloads
+        )
+        logger.info("GFS_MAX_STEPS_PER_TICK: %s", self.GFS_MAX_STEPS_PER_TICK)
         for pid, enabled in self.ENABLED_RADAR_PRODUCTS.items():
             logger.info("ENABLE_RADAR_%s: %s", pid, enabled)
         logger.info("RADAR_INPUT_DIR: %s", self.RADAR_INPUT_DIR)

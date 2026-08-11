@@ -29,6 +29,7 @@ from factories import (
     create_s3_client,
     create_rabbitmq_client,
 )
+from models.gfs_config import GFS_PRODUCER_DATA_SOURCE_ID
 from models.work_unit import WorkUnit
 from producer.queue_router import QueueRouter
 from health_server import HealthCheckServer
@@ -174,6 +175,15 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         if source_id == "ecmwf_tp_producer":
             return self._config.ENABLE_ECMWF_PRECIPITATION
 
+        if source_id == GFS_PRODUCER_DATA_SOURCE_ID:
+            return any(
+                (
+                    self._config.ENABLE_GFS_MSLP,
+                    self._config.ENABLE_GFS_500,
+                    self._config.ENABLE_GFS_250,
+                )
+            )
+
         # Default: enabled if registered
         return True
 
@@ -207,6 +217,9 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             product_id = data_source.product_config.product_id
             band_id = f"wrf_{product_id}"
             existing_tilesets = await self._get_wrf_existing_tilesets(product_id)
+        elif not data_source.uses_existing_tilesets:
+            band_id = data_source.source_id
+            existing_tilesets = set()
         else:
             band_id = data_source.source_id
             output_prefix = f"tiles/{band_id}"

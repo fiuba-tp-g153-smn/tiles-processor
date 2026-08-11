@@ -4,7 +4,6 @@ import asyncio
 import gc
 import json
 import logging
-import uuid
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
@@ -23,6 +22,7 @@ from services.processing_steps import (
     prewarp_to_mercator_grid,
     run_gdal2tiles,
     save_as_cog,
+    save_rgba_geotiff,
     threshold_colorize,
 )
 
@@ -241,19 +241,11 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
         del r, g, b, a
         gc.collect()
 
-        output_path = output_dir / f"{image_id}.tif"
-        tmp_path = output_dir / f"{uuid.uuid4()}.tif"
         try:
-            rgba.rio.to_raster(tmp_path)
-            tmp_path.rename(output_path)
-        except Exception:
-            tmp_path.unlink(missing_ok=True)
-            raise
+            return save_rgba_geotiff(rgba, output_dir / f"{image_id}.tif")
         finally:
             del rgba
             gc.collect()
-
-        return output_path
 
     async def _upload(
         self,

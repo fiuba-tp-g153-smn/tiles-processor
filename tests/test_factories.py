@@ -33,6 +33,9 @@ class TestCreateDataSourceRegistry:
         config.ENABLE_ECMWF_PRECIPITATION = tp
         config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE = mslp
         config.ECMWF_OPENDATA_SOURCES = ("ecmwf", "azure", "aws")
+        config.ENABLE_GFS_MSLP = False
+        config.ENABLE_GFS_500 = False
+        config.ENABLE_GFS_250 = False
         config.RADAR_INPUT_DIR = "/tmp/radar"
         config.GLM_FOLDER_INPUT_DIR = "/tmp/glm"
         config.GLM_ACCUM_MINUTES = 10
