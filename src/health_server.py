@@ -13,13 +13,17 @@ class HealthRequestHandler(BaseHTTPRequestHandler):
     """
     Request handler for health checks.
 
-    Endpoints:
-        GET /health: Liveness probe. Returns 200 OK if server is running.
-        GET /ready: Readiness probe. connect checks. Returns 200 OK or 503 Service Unavailable.
+    Endpoint:
+        GET /health: returns 200 when the process is up and its registered
+            readiness check passes, else 503 (with no callback registered, a
+            bare 200 — liveness only). This is the only route; the container
+            HEALTHCHECK and startup gating (``depends_on: service_healthy``)
+            probe it. There is deliberately no separate ``/ready`` route — no
+            probe uses one anywhere in the stack.
     """
 
     def do_GET(self):  # pylint: disable=invalid-name
-        """Handle GET requests for health check endpoints."""
+        """Handle GET requests for the health check endpoint."""
         if self.path == "/health":
             self._handle_health()
         else:
