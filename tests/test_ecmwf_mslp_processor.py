@@ -172,5 +172,28 @@ async def test_failed_uploads_do_not_raise(tmp_path):
     assert mock_s3.upload_file.await_count == 2
 
 
+class TestSelectStep:
+    """A missing GRIB step becomes a clean skip, not an opaque KeyError."""
+
+    @staticmethod
+    def _var():
+        import pandas as pd
+
+        steps = pd.to_timedelta([6, 12, 18], unit="h")
+        return xr.DataArray([1.0, 2.0, 3.0], dims=["step"], coords={"step": steps})
+
+    def test_selects_present_step(self):
+        from processors.ecmwf_mslp_processor import _select_step
+
+        assert float(_select_step(self._var(), 12)) == 2.0
+
+    def test_raises_on_absent_step(self):
+        from processors.ecmwf_mslp_processor import _select_step
+        from exceptions import UnprocessableInputError
+
+        with pytest.raises(UnprocessableInputError, match="T\\+9h"):
+            _select_step(self._var(), 9)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

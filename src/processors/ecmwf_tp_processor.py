@@ -11,6 +11,7 @@ import pandas as pd
 import xarray as xr
 
 from config import Config
+from exceptions import UnprocessableInputError
 from factories import create_s3_client
 from models.ecmwf_config import ECMWF_TP_CONFIG, WINDOW_HOURS
 from models.ecmwf_tp_palettes import PRECIPITATION_COLORS, PRECIPITATION_THRESHOLDS
@@ -31,6 +32,22 @@ logger = logging.getLogger(__name__)
 _MAX_ZOOM = 7
 _ZOOM_LEVELS = f"3-{_MAX_ZOOM}"
 _GDAL_PROCESSES = 2
+
+
+def _select_step(var: xr.DataArray, hours: int) -> xr.DataArray:
+    """Select a forecast step, raising a clean domain error if it is absent.
+
+    ECMWF open-data forecasts drop to a coarser cadence after T+144 and can be
+    published short; a missing enumerated step would otherwise raise an opaque
+    ``KeyError``/``ValueError``. ``UnprocessableInputError`` makes the worker skip
+    the unit visibly (ack, no retry) instead of crashing the job.
+    """
+    try:
+        return var.sel(step=pd.Timedelta(hours=hours))
+    except (KeyError, ValueError) as exc:
+        raise UnprocessableInputError(
+            f"forecast step T+{hours}h absent in GRIB"
+        ) from exc
 
 
 class EcmwfTotalPrecipitationProcessor(ImageProcessor):
@@ -135,10 +152,10 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
         )
         if hour_start == 0:
             # step=0 not present; tp is accumulated from t=0, so tp(hour_end) IS the window total
-            precip_diff = tp_var.sel(step=pd.Timedelta(hours=hour_end)) * 1000.0
+            precip_diff = _select_step(tp_var, hour_end) * 1000.0
         else:
-            tp_s = tp_var.sel(step=pd.Timedelta(hours=hour_start))
-            tp_e = tp_var.sel(step=pd.Timedelta(hours=hour_end))
+            tp_s = _select_step(tp_var, hour_start)
+            tp_e = _select_step(tp_var, hour_end)
             precip_diff = (tp_e - tp_s) * 1000.0  # convert from meters to millimeters
 
         del tp_var, ds

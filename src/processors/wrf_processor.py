@@ -17,6 +17,7 @@ from rasterio.crs import CRS  # pylint: disable=no-name-in-module
 from rasterio.errors import NotGeoreferencedWarning
 
 from config import Config
+from exceptions import UnprocessableInputError
 from factories import create_s3_client
 from models.work_unit import WorkUnit
 from models.wrf_config import (
@@ -35,6 +36,11 @@ from services.contouring import (
 )
 
 logger = getLogger(__name__)
+
+# Max |requested - stored| pressure level treated as a match. NetCDF stores plev
+# as float32 (e.g. 850.00001), so an exact `==` misses; the nearest real level is
+# ~75 hPa away, so 1 hPa cleanly separates "rounding" from "absent".
+_LEVEL_MATCH_TOLERANCE_HPA = 1.0
 
 # ── Colormaps (SMN WRF-ARG4K reference palettes) ─────────────────────────────
 
@@ -423,8 +429,17 @@ class WrfProcessor(ImageProcessor):
             if f3d is None:
                 raise RuntimeError(f"FIELD3D required for variable '{var}'")
             plev = np.array(f3d.variables["plev"][:], dtype=float)
-            assert level_hpa is not None
-            level_idx = int(np.where(plev == level_hpa)[0][0])
+            if level_hpa is None:
+                raise UnprocessableInputError(
+                    f"FIELD3D variable '{var}' requires a pressure level"
+                )
+            level_idx = int(np.argmin(np.abs(plev - level_hpa)))
+            nearest = float(plev[level_idx])
+            if abs(nearest - level_hpa) > _LEVEL_MATCH_TOLERANCE_HPA:
+                raise UnprocessableInputError(
+                    f"pressure level {level_hpa} hPa absent for variable '{var}' "
+                    f"(nearest available: {nearest} hPa)"
+                )
             raw = f3d.variables[var][0, 0, level_idx, :, :]
         else:
             raw = f2d.variables[var][0, 0, :, :]
