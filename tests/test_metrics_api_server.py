@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 from types import SimpleNamespace
+from unittest import mock
 
 import pytest
 
@@ -110,6 +111,37 @@ def test_cors_header_present(client):
 
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_jobs_limit_zero_without_window_is_clamped(client):
+    """limit=0 with no time window must NOT map to an unbounded LIMIT -1 (DoS)."""
+    captured = {}
+
+    def fake_recent_jobs(_self, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    with mock.patch.object(MetricsRepository, "recent_jobs", fake_recent_jobs):
+        assert client.get("/api/jobs?limit=0").status_code == 200
+    assert captured["limit"] == 1000
+    assert captured["since"] is None
+    assert captured["before"] is None
+
+
+def test_jobs_limit_zero_with_window_is_unbounded(client):
+    """The timeline's windowed loader keeps its limit=0 (unbounded within window)."""
+    captured = {}
+
+    def fake_recent_jobs(_self, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    since = "2026-06-01T00:00:00+00:00"
+    with mock.patch.object(MetricsRepository, "recent_jobs", fake_recent_jobs):
+        resp = client.get("/api/jobs", params={"limit": 0, "since": since})
+        assert resp.status_code == 200
+    assert captured["limit"] == 0
+    assert captured["since"] == since
 
 
 def test_summary_groups_by_type(client):
