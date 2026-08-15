@@ -78,7 +78,7 @@ class ProgressTracker:
         up) are left alone. Call this periodically (e.g. once per producer tick),
         NOT on read paths, so lookups stay pure reads and don't take write locks.
         """
-        cutoff = datetime.now(UTC) - self._ttl
+        cutoff = (datetime.now(UTC) - self._ttl).isoformat()
         with self._connect() as conn:
             conn.execute(
                 "DELETE FROM processed_images WHERE status = 'PROCESSING' AND updated_at < ?",
@@ -97,7 +97,7 @@ class ProgressTracker:
         # `is None` (not `or`) so an explicit timedelta(0) means "no grace", since
         # timedelta(0) is falsy.
         grace = self._ttl if older_than is None else older_than
-        cutoff = datetime.now(UTC) - grace
+        cutoff = (datetime.now(UTC) - grace).isoformat()
         with self._connect() as conn:
             deleted = conn.execute(
                 "DELETE FROM processed_images WHERE status = 'IN_PROGRESS' AND updated_at < ?",
@@ -111,6 +111,7 @@ class ProgressTracker:
 
     def mark_in_progress(self, image_id: str, band_id: str) -> None:
         """Mark an image as in-progress (queued by the producer)."""
+        now = datetime.now(UTC).isoformat()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -118,7 +119,7 @@ class ProgressTracker:
                 (image_id, band_id, status, created_at, updated_at)
                 VALUES (?, ?, 'IN_PROGRESS', ?, ?)
                 """,
-                (image_id, band_id, datetime.now(UTC), datetime.now(UTC)),
+                (image_id, band_id, now, now),
             )
 
     def mark_processing(self, image_id: str, band_id: str) -> None:
@@ -135,7 +136,7 @@ class ProgressTracker:
                 SET status = 'PROCESSING', updated_at = ?
                 WHERE image_id = ? AND band_id = ?
                 """,
-                (datetime.now(UTC), image_id, band_id),
+                (datetime.now(UTC).isoformat(), image_id, band_id),
             )
         logger.debug("Marked as processing: %s:%s", band_id, image_id)
 
