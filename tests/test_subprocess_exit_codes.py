@@ -7,9 +7,11 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from exceptions import UnprocessableInputError  # noqa: E402
+from processors.base_processor import ShutdownRequested  # noqa: E402
 from worker import subprocess_processor  # noqa: E402
 from worker.exit_codes import (  # noqa: E402
     EXIT_ERROR_CODE,
+    EXIT_SHUTDOWN_CODE,
     EXIT_SKIP_CODE,
     EXIT_SUCCESS_CODE,
 )
@@ -37,6 +39,15 @@ def test_main_returns_error_code_on_generic_exception():
         subprocess_processor, "run_processing", side_effect=RuntimeError("boom")
     ):
         assert subprocess_processor.main() == EXIT_ERROR_CODE
+
+
+def test_main_returns_shutdown_code_on_shutdown_requested():
+    """Graceful shutdown is a DISTINCT code, not ERROR, so the parent nack-requeues
+    (redeliver) instead of burning a retry/DLQ slot."""
+    with patch.object(sys, "argv", _ARGV), patch.object(
+        subprocess_processor, "run_processing", side_effect=ShutdownRequested("stop")
+    ):
+        assert subprocess_processor.main() == EXIT_SHUTDOWN_CODE
 
 
 def test_main_returns_success_code_on_clean_run():

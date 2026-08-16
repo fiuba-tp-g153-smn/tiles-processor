@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 import pytest
 from models.work_unit import WorkUnit
+from processors.base_processor import ShutdownRequested
 from worker.worker import Worker
 
 NORMAL = "tiles_work_queue"
@@ -45,6 +46,7 @@ class _FakeMQ:
     def __init__(self, messages):
         self._messages = list(messages)
         self.acked = []
+        self.nacked = []
 
     def poll_one(self, _strict, _round_robin):
         return self._messages.pop(0) if self._messages else None
@@ -61,8 +63,8 @@ class _FakeMQ:
     def publish_to_dlq(self, *_a, **_k):
         pass
 
-    def nack(self, *_a, **_k):
-        pass
+    def nack(self, delivery_tag, requeue=False):
+        self.nacked.append((delivery_tag, requeue))
 
 
 class _GatedHandler:
@@ -156,3 +158,27 @@ async def test_drain_admits_next_unit_as_a_slot_frees():
     worker._running = False
     gate.set()
     await asyncio.wait_for(drain, timeout=5)
+
+
+class _ShutdownHandler:
+    """handle() raises ShutdownRequested, as if a checkpoint tripped mid-unit."""
+
+    async def handle(self, _work_unit, _collector):
+        raise ShutdownRequested("shutdown mid-unit")
+
+    def release_progress(self, _work_unit):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_process_message_nacks_on_shutdown_requested():
+    """ShutdownRequested → nack-requeue, driven by the exception type and NOT the
+    _running flag (still True here) — so shutdown disposition can't be mis-timed."""
+    mq = _FakeMQ([])
+    worker = Worker(_config(concurrency=1), mq, _ShutdownHandler())
+    worker._running = True  # deliberately still 'running'
+
+    await worker._process_message_async(_unit("img0"), 7, RADAR_LIGHT)
+
+    assert mq.nacked == [(7, True)]  # requeued for redelivery
+    assert mq.acked == []  # not acked, not retried/DLQ'd

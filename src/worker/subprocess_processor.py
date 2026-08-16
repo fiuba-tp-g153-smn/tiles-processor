@@ -26,6 +26,7 @@ from exceptions import UnprocessableInputError
 from processors.base_processor import ShutdownRequested
 from worker.exit_codes import (
     EXIT_ERROR_CODE,
+    EXIT_SHUTDOWN_CODE,
     EXIT_SKIP_CODE,
     EXIT_SUCCESS_CODE,
     SKIP_REASON_PREFIX,
@@ -190,8 +191,10 @@ def main() -> int:
         return EXIT_SUCCESS_CODE
 
     except ShutdownRequested:
+        # Distinct from a crash: the parent maps this to a nack-requeue (redeliver)
+        # rather than a retry/DLQ, independent of any shutdown-flag timing.
         logging.info("[SUBPROCESS] Shutdown requested, exiting gracefully")
-        return EXIT_ERROR_CODE
+        return EXIT_SHUTDOWN_CODE
 
     except UnprocessableInputError as e:
         # Deterministic bad input: not a crash. Log a clean WARNING (stdout) and

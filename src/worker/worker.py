@@ -19,6 +19,7 @@ from exceptions import (
     TransientDownloadError,
     UnprocessableInputError,
 )
+from processors.base_processor import ShutdownRequested
 from factories import (
     create_data_source_registry,
     create_rabbitmq_client,
@@ -283,6 +284,23 @@ class Worker:  # pylint: disable=too-few-public-methods
             logger.error("%s", e)
             collector.mark_outcome(JobOutcome.ERROR, str(e))
             self._mq_client.ack(delivery_tag)
+
+        except ShutdownRequested:
+            # Graceful shutdown interrupted this unit (inline path, or the
+            # subprocess via EXIT_SHUTDOWN_CODE). Nack-requeue for redelivery,
+            # driven by the exception type — independent of the shutdown-flag
+            # timing that _handle_processing_error's fallback relies on.
+            #
+            # At-least-once: the redelivered copy re-runs the whole pipeline, so a
+            # unit that had already uploaded some outputs before the checkpoint
+            # re-uploads them. That is safe because uploads are idempotent
+            # overwrites keyed deterministically (tiles under {prefix}/{stem}, COG
+            # at {prefix}/{image_id}.tif) — the replay overwrites the same objects,
+            # at the cost of repeating the work.
+            logger.info(
+                "Shutdown interrupted processing of %s; requeueing", work_unit.image_id
+            )
+            self._mq_client.nack(delivery_tag, requeue=True)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             self._handle_processing_error(
