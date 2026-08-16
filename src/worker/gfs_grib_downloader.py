@@ -12,6 +12,7 @@ from models.gfs_config import (
     GFS_GRIB_PREFIX,
     GFS_STEP_DATA_SOURCE_ID,
     GfsProductConfig,
+    primary_cog_key,
 )
 from models.work_unit import WorkUnit
 from worker.inline_processor import InlineProcessor
@@ -135,8 +136,7 @@ class GfsGribDownloader(InlineProcessor):
         correct, whereas skipping would silently drop a product.
         """
         keys = [
-            f"{product.cog_prefix}/{cycle_ts}/{image_id}.tif"
-            for product in self._products
+            primary_cog_key(product, cycle_ts, image_id) for product in self._products
         ]
         try:
             existing = await asyncio.gather(
