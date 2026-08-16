@@ -106,6 +106,10 @@ HIGHLIGHTED_THICKNESS_M = (5280.0, 5400.0, 5580.0, 5700.0)
 GEOPOTENTIAL_STEP_M = 60.0
 ISOTHERM_STEP_C = 5.0
 
+POINT_QUERY_THICKNESS = "thickness"
+POINT_QUERY_TEMPERATURE = "temperature"
+POINT_QUERY_GEOPOTENTIAL = "geopotential"
+
 
 @dataclass(frozen=True, slots=True)
 class GfsProductConfig:
@@ -179,3 +183,15 @@ def get_gfs_product_config_by_band(band_id: str) -> GfsProductConfig:
     if band_id not in _BY_BAND_ID:
         raise ValueError(f"Unknown GFS band_id '{band_id}'. Valid: {list(_BY_BAND_ID)}")
     return _BY_BAND_ID[band_id]
+
+
+def primary_cog_key(product: GfsProductConfig, cycle_ts: str, image_id: str) -> str:
+    """S3 key of the product's main field, and the fan-out's dedup sentinel."""
+    return f"{product.cog_prefix}/{cycle_ts}/{image_id}.tif"
+
+
+def secondary_cog_key(
+    product: GfsProductConfig, cycle_ts: str, variable: str, image_id: str
+) -> str:
+    """S3 key of a secondary point-query COG."""
+    return f"{product.cog_prefix}/{cycle_ts}/{variable}/{image_id}.tif"

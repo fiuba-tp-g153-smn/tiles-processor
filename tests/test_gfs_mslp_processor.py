@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from models.gfs_config import GFS_MSLP_CONFIG, HIGHLIGHTED_THICKNESS_M
+from models.gfs_config import (
+    GFS_MSLP_CONFIG,
+    HIGHLIGHTED_THICKNESS_M,
+    POINT_QUERY_THICKNESS,
+)
 from models.work_unit import WorkUnit
 
 FIXTURE = Path(__file__).parent / "fixtures" / "gfs_sample_f003.grib2"
@@ -71,11 +75,29 @@ class TestLoad:
 
 
 class TestOutputs:
-    def test_writes_a_cog_and_both_overlays(self, processor, tmp_path):
+    def test_writes_both_cogs_and_both_overlays(self, processor, tmp_path):
         pressure, thickness = processor._load(FIXTURE, BOUNDS)
         outputs = processor._generate_outputs(pressure, thickness, tmp_path, IMAGE_ID)
-        assert set(outputs) == {"cog", "isobars", "thickness"}
+        assert set(outputs) == {"cog", "thickness_cog", "isobars", "thickness"}
         assert all(path.exists() for path in outputs.values())
+
+    def test_each_cog_gets_its_own_file(self, processor, tmp_path):
+        """One `save_as_cog` output must never overwrite the other."""
+        pressure, thickness = processor._load(FIXTURE, BOUNDS)
+        outputs = processor._generate_outputs(pressure, thickness, tmp_path, IMAGE_ID)
+        assert outputs["cog"] != outputs["thickness_cog"]
+
+    def test_thickness_cog_holds_thickness_not_pressure(self, processor, tmp_path):
+        """Guards against passing the wrong field to the second `save_as_cog`."""
+        import rioxarray  # pylint: disable=import-outside-toplevel,unused-import
+
+        pressure, thickness = processor._load(FIXTURE, BOUNDS)
+        outputs = processor._generate_outputs(pressure, thickness, tmp_path, IMAGE_ID)
+        written = rioxarray.open_rasterio(outputs["thickness_cog"])
+        try:
+            assert 4800.0 < float(written.min()) < float(written.max()) < 6000.0
+        finally:
+            written.close()
 
     def test_isobars_are_every_three_hectopascals(self, processor, tmp_path):
         """`slpb.gs`: `set cint 3`."""
@@ -127,10 +149,10 @@ class TestOutputs:
 
 class TestPipeline:
     @pytest.mark.asyncio
-    async def test_uploads_cog_and_both_overlays(self, processor):
+    async def test_uploads_both_cogs_and_both_overlays(self, processor):
         await processor.process(str(FIXTURE), _work_unit())
         keys = _uploaded_keys(processor)
-        assert len(keys) == 3
+        assert len(keys) == 4
 
     @pytest.mark.asyncio
     async def test_cog_key_matches_what_the_downloader_checks(self, processor):
@@ -138,6 +160,35 @@ class TestPipeline:
         await processor.process(str(FIXTURE), _work_unit())
         expected = f"{GFS_MSLP_CONFIG.cog_prefix}/{CYCLE_TS}/{IMAGE_ID}.tif"
         assert expected in _uploaded_keys(processor)
+
+    @pytest.mark.asyncio
+    async def test_thickness_cog_lives_in_its_own_sub_prefix(self, processor):
+        """Flat siblings would surface as phantom steps in data-service."""
+        await processor.process(str(FIXTURE), _work_unit())
+        expected = (
+            f"{GFS_MSLP_CONFIG.cog_prefix}/{CYCLE_TS}/"
+            f"{POINT_QUERY_THICKNESS}/{IMAGE_ID}.tif"
+        )
+        assert expected in _uploaded_keys(processor)
+
+    @pytest.mark.asyncio
+    async def test_step_listing_sees_only_the_primary_cog(self, processor):
+        """Mirrors how data-service recovers steps: one `.tif` per cycle folder."""
+        await processor.process(str(FIXTURE), _work_unit())
+        cycle_prefix = f"{GFS_MSLP_CONFIG.cog_prefix}/{CYCLE_TS}/"
+        flat = [
+            key
+            for key in _uploaded_keys(processor)
+            if key.startswith(cycle_prefix) and "/" not in key[len(cycle_prefix) :]
+        ]
+        assert flat == [f"{cycle_prefix}{IMAGE_ID}.tif"]
+
+    @pytest.mark.asyncio
+    async def test_primary_cog_is_uploaded_last(self, processor):
+        """It is the fan-out's completion sentinel, so nothing may follow it."""
+        await processor.process(str(FIXTURE), _work_unit())
+        keys = _uploaded_keys(processor)
+        assert keys[-1] == f"{GFS_MSLP_CONFIG.cog_prefix}/{CYCLE_TS}/{IMAGE_ID}.tif"
 
     @pytest.mark.asyncio
     async def test_overlays_are_namespaced_by_cycle(self, processor):

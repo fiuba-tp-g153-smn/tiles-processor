@@ -11,6 +11,8 @@ from models.gfs_config import (
     GFS_250_CONFIG,
     GFS_500_CONFIG,
     ISOTHERM_STEP_C,
+    POINT_QUERY_GEOPOTENTIAL,
+    POINT_QUERY_TEMPERATURE,
 )
 from models.gfs_palettes import (
     WIND_250_COLORS,
@@ -193,7 +195,7 @@ class TestTileUpsampling:
 
         fields = processor._load(FIXTURE, GFS_250_CONFIG, BOUNDS)
         native_shape = fields["speed"].shape
-        cog_path, rgba_path, _ = processor._generate_outputs(
+        cog_path, _, rgba_path, _ = processor._generate_outputs(
             fields, GFS_250_CONFIG, tmp_path, IMAGE_ID
         )
         cog = rioxarray.open_rasterio(cog_path)
@@ -201,6 +203,74 @@ class TestTileUpsampling:
 
         rgba = rioxarray.open_rasterio(rgba_path)
         assert rgba.shape[-1] > native_shape[-1] * 10
+
+
+class TestSecondaryCogs:
+    """Point-query COGs, driven by what the level actually loaded."""
+
+    def test_500_emits_geopotential_and_temperature(self, processor, tmp_path):
+        assert set(_secondary_cogs(processor, tmp_path, GFS_500_CONFIG)) == {
+            POINT_QUERY_GEOPOTENTIAL,
+            POINT_QUERY_TEMPERATURE,
+        }
+
+    def test_250_emits_only_geopotential(self, processor, tmp_path):
+        """250 hPa never loads temperature, so it must not claim to have one."""
+        assert set(_secondary_cogs(processor, tmp_path, GFS_250_CONFIG)) == {
+            POINT_QUERY_GEOPOTENTIAL
+        }
+
+    def test_wind_components_are_not_exposed(self, processor, tmp_path):
+        """`u`/`v` exist for the barbs; their magnitude is the primary COG."""
+        secondary = _secondary_cogs(processor, tmp_path, GFS_500_CONFIG)
+        assert not {"u", "v"} & set(secondary)
+
+    def test_each_cog_gets_its_own_file(self, processor, tmp_path):
+        """One `save_as_cog` output must never overwrite another."""
+        fields = processor._load(FIXTURE, GFS_500_CONFIG, BOUNDS)
+        cog_path, secondary, _, _ = processor._generate_outputs(
+            fields, GFS_500_CONFIG, tmp_path, IMAGE_ID
+        )
+        paths = [cog_path, *secondary.values()]
+        assert len(set(paths)) == len(paths)
+        assert all(path.exists() for path in paths)
+
+    def test_geopotential_cog_holds_heights_not_wind(self, processor, tmp_path):
+        """Guards against handing the wrong field to `save_as_cog`."""
+        import rioxarray  # pylint: disable=import-outside-toplevel
+
+        secondary = _secondary_cogs(processor, tmp_path, GFS_500_CONFIG)
+        written = rioxarray.open_rasterio(secondary[POINT_QUERY_GEOPOTENTIAL])
+        try:
+            assert 4800.0 < float(written.min()) < float(written.max()) < 6200.0
+        finally:
+            written.close()
+
+    def test_temperature_cog_is_in_celsius(self, processor, tmp_path):
+        """Must match the isotherms it mirrors, which are in C."""
+        import rioxarray  # pylint: disable=import-outside-toplevel
+
+        secondary = _secondary_cogs(processor, tmp_path, GFS_500_CONFIG)
+        written = rioxarray.open_rasterio(secondary[POINT_QUERY_TEMPERATURE])
+        try:
+            assert -80.0 < float(written.mean()) < 20.0
+        finally:
+            written.close()
+
+    def test_secondary_cogs_keep_the_native_grid(self, processor, tmp_path):
+        """Point queries must return model values, not interpolated ones."""
+        import rioxarray  # pylint: disable=import-outside-toplevel
+
+        fields = processor._load(FIXTURE, GFS_250_CONFIG, BOUNDS)
+        native_shape = fields["height"].shape
+        _, secondary, _, _ = processor._generate_outputs(
+            fields, GFS_250_CONFIG, tmp_path, IMAGE_ID
+        )
+        written = rioxarray.open_rasterio(secondary[POINT_QUERY_GEOPOTENTIAL])
+        try:
+            assert written.shape[-2:] == native_shape
+        finally:
+            written.close()
 
 
 class TestOverlays:
@@ -278,13 +348,20 @@ class TestOverlays:
 
 class TestPipeline:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("product", [GFS_500_CONFIG, GFS_250_CONFIG])
-    async def test_uploads_cog_and_single_file_overlays(self, processor, product):
+    @pytest.mark.parametrize(
+        "product,file_overlays,secondary_cogs",
+        [
+            (GFS_500_CONFIG, 2, 2),  # heights + isotherms, geopotential + temperature
+            (GFS_250_CONFIG, 1, 1),  # heights, geopotential
+        ],
+    )
+    async def test_uploads_every_cog_and_single_file_overlay(
+        self, processor, product, file_overlays, secondary_cogs
+    ):
         """Barbs are excluded here: they upload as a directory, not a file."""
         await processor.process(str(FIXTURE), _work_unit(product))
         keys = [c.args[0] for c in processor._s3_client.upload_file.call_args_list]
-        file_overlays = 2 if product is GFS_500_CONFIG else 1  # heights (+isotherms)
-        assert len(keys) == 1 + file_overlays
+        assert len(keys) == 1 + file_overlays + secondary_cogs
 
     @pytest.mark.asyncio
     async def test_500_uploads_tiles_and_barbs_as_directories(self, processor):
@@ -313,6 +390,61 @@ class TestPipeline:
         await processor.process(str(FIXTURE), _work_unit(GFS_250_CONFIG))
         keys = [c.args[0] for c in processor._s3_client.upload_file.call_args_list]
         assert f"{GFS_250_CONFIG.cog_prefix}/{CYCLE_TS}/{IMAGE_ID}.tif" in keys
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "product,variable",
+        [
+            (GFS_500_CONFIG, POINT_QUERY_GEOPOTENTIAL),
+            (GFS_500_CONFIG, POINT_QUERY_TEMPERATURE),
+            (GFS_250_CONFIG, POINT_QUERY_GEOPOTENTIAL),
+        ],
+    )
+    async def test_secondary_cogs_live_in_their_own_sub_prefix(
+        self, processor, product, variable
+    ):
+        """Flat siblings would surface as phantom steps in data-service."""
+        await processor.process(str(FIXTURE), _work_unit(product))
+        keys = [c.args[0] for c in processor._s3_client.upload_file.call_args_list]
+        expected = f"{product.cog_prefix}/{CYCLE_TS}/{variable}/{IMAGE_ID}.tif"
+        assert expected in keys
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("product", [GFS_500_CONFIG, GFS_250_CONFIG])
+    async def test_step_listing_sees_only_the_primary_cog(self, processor, product):
+        """Mirrors how data-service recovers steps: one `.tif` per cycle folder."""
+        await processor.process(str(FIXTURE), _work_unit(product))
+        keys = [c.args[0] for c in processor._s3_client.upload_file.call_args_list]
+        cycle_prefix = f"{product.cog_prefix}/{CYCLE_TS}/"
+        flat = [
+            key
+            for key in keys
+            if key.startswith(cycle_prefix) and "/" not in key[len(cycle_prefix) :]
+        ]
+        assert flat == [f"{cycle_prefix}{IMAGE_ID}.tif"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("product", [GFS_500_CONFIG, GFS_250_CONFIG])
+    async def test_primary_cog_is_uploaded_last(self, processor, product):
+        """It is the fan-out's completion sentinel, so nothing may follow it."""
+        await processor.process(str(FIXTURE), _work_unit(product))
+        keys = [c.args[0] for c in processor._s3_client.upload_file.call_args_list]
+        assert keys[-1] == f"{product.cog_prefix}/{CYCLE_TS}/{IMAGE_ID}.tif"
+
+    @pytest.mark.asyncio
+    async def test_primary_cog_is_uploaded_after_the_tiles(self, processor):
+        """A sentinel written before the pyramid would mark a step done early."""
+        order: list[str] = []
+        processor._s3_client.upload_file.side_effect = (
+            lambda key, _path: order.append(key) or True
+        )
+        processor._s3_client.upload_directory.side_effect = (
+            lambda _path, prefix: order.append(prefix) or 1
+        )
+        await processor.process(str(FIXTURE), _work_unit(GFS_500_CONFIG))
+        tiles_prefix = f"{GFS_500_CONFIG.tiles_prefix}/{CYCLE_TS}/{IMAGE_ID}"
+        cog_key = f"{GFS_500_CONFIG.cog_prefix}/{CYCLE_TS}/{IMAGE_ID}.tif"
+        assert order.index(cog_key) > order.index(tiles_prefix)
 
     @pytest.mark.asyncio
     async def test_products_write_to_separate_prefixes(self, processor):
@@ -346,6 +478,15 @@ class TestPipeline:
         assert {"load", "cog", "geotiff", "geojson", "tiling", "upload"} <= set(
             processor._stage_timings
         )
+
+
+def _secondary_cogs(processor, tmp_path: Path, product) -> dict:
+    """Run the output stage for one product and return its point-query COGs."""
+    fields = processor._load(FIXTURE, product, BOUNDS)
+    _, secondary, _, _ = processor._generate_outputs(
+        fields, product, tmp_path, IMAGE_ID
+    )
+    return secondary
 
 
 def _overlays(processor, tmp_path: Path, product) -> dict:
