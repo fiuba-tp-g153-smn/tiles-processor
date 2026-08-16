@@ -65,9 +65,10 @@ class GoesProcessor(ImageProcessor):
         if not netcdf_path.exists():
             raise FileNotFoundError(f"NetCDF file not found: {netcdf_path}")
 
-        # Setup per-image work directory to isolate concurrent workers
+        # Per-attempt work dir (scoped by the handler's token) so two concurrent
+        # copies of the same image never share — and rmtree — a scratch dir.
         band_dir = self._get_band_dir(work_unit)
-        image_stem = work_unit.image_id
+        image_stem = self._work_dir_leaf(work_unit)
         work_dir = self._ensure_dir(band_dir / image_stem)
         geotiff_dir = self._ensure_dir(work_dir / "geotiff")
         tiles_dir = self._ensure_dir(work_dir / "tiles")

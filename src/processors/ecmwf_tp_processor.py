@@ -82,7 +82,9 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
         if not grib_path.exists():
             raise FileNotFoundError(f"GRIB file not found: {grib_path}")
 
-        work_dir = self._ensure_dir(self._get_band_dir(work_unit) / work_unit.image_id)
+        work_dir = self._ensure_dir(
+            self._get_band_dir(work_unit) / self._work_dir_leaf(work_unit)
+        )
         geotiff_dir = self._ensure_dir(work_dir / "geotiff")
         tiles_dir = self._ensure_dir(work_dir / "tiles")
 

@@ -227,7 +227,7 @@ class WrfProcessor(ImageProcessor):
         init_tag = parsed["init_tag"]
         fxxx = parsed["fxxx"]
 
-        work_dir = Path(self.config.TMP_DIR) / "wrf" / work_unit.image_id
+        work_dir = Path(self.config.TMP_DIR) / "wrf" / self._work_dir_leaf(work_unit)
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:

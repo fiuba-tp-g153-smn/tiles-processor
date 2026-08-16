@@ -147,7 +147,7 @@ class WorkHandler:
                     work_unit.processor_id,
                 )
                 await self._run_processing_subprocess(
-                    work_unit, str(local_path), metrics_sink
+                    work_unit, str(local_path), metrics_sink, attempt
                 )
                 if collector is not None:
                     collector.set_stage_timings(self._read_stage_timings(metrics_sink))
@@ -236,7 +236,11 @@ class WorkHandler:
             pass  # Already exited
 
     async def _run_processing_subprocess(
-        self, work_unit: WorkUnit, file_path: str, metrics_sink: Path
+        self,
+        work_unit: WorkUnit,
+        file_path: str,
+        metrics_sink: Path,
+        work_token: str | None = None,
     ) -> None:
         """
         Run image processing in a subprocess for memory isolation.
@@ -250,11 +254,16 @@ class WorkHandler:
             work_unit: The work unit to process
             file_path: Path to the downloaded file
             metrics_sink: Path where the subprocess writes per-stage timings
+            work_token: Per-attempt token forwarded to the processor so its
+                scratch dir is unique per attempt (same token as the download
+                dir's ``-{attempt}`` suffix); no two concurrent copies of the
+                same image can then rmtree each other's work dir.
 
         Raises:
             RuntimeError: If the subprocess fails or times out (includes error
                 details from the tail of its stderr).
         """
+        extra_args = [work_token] if work_token is not None else []
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
@@ -262,6 +271,7 @@ class WorkHandler:
             work_unit.to_json(),
             file_path,
             str(metrics_sink),
+            *extra_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,

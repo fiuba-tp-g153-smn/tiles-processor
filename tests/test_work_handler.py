@@ -242,6 +242,39 @@ async def test_handle_passes_collector_to_inline_processor(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_subprocess_forwards_work_token_in_argv(tmp_path):
+    """The per-attempt token is passed to the subprocess so the processor scopes
+    its scratch dir per attempt (the fix for the concurrent-clobber race)."""
+    handler = _handler()
+    proc = _FakeProcess(returncode=0)
+    spawn = AsyncMock(return_value=proc)
+
+    with patch("worker.work_handler.asyncio.create_subprocess_exec", spawn):
+        await handler._run_processing_subprocess(
+            _work_unit(), "/tmp/in.nc", tmp_path / "m.json", "tok1234"
+        )
+
+    argv = spawn.call_args.args  # positional args to create_subprocess_exec
+    assert argv[-1] == "tok1234"  # appended after json, file_path, metrics_sink
+
+
+@pytest.mark.asyncio
+async def test_subprocess_omits_token_when_absent(tmp_path):
+    """No token → no extra positional arg (metrics_sink stays last)."""
+    handler = _handler()
+    proc = _FakeProcess(returncode=0)
+    spawn = AsyncMock(return_value=proc)
+
+    with patch("worker.work_handler.asyncio.create_subprocess_exec", spawn):
+        await handler._run_processing_subprocess(
+            _work_unit(), "/tmp/in.nc", tmp_path / "m.json"
+        )
+
+    argv = spawn.call_args.args
+    assert argv[-1] == str(tmp_path / "m.json")
+
+
+@pytest.mark.asyncio
 async def test_handle_raises_source_file_not_found_when_download_missing(tmp_path):
     """A missing raw file → SourceFileNotFoundError; the work dir is still cleaned up."""
     config = MagicMock()

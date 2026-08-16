@@ -74,7 +74,9 @@ class EcmwfMslpProcessor(ImageProcessor):
         if not grib_path.exists():
             raise FileNotFoundError(f"GRIB file not found: {grib_path}")
 
-        work_dir = self._ensure_dir(self._get_band_dir(work_unit) / work_unit.image_id)
+        work_dir = self._ensure_dir(
+            self._get_band_dir(work_unit) / self._work_dir_leaf(work_unit)
+        )
         output_dir = self._ensure_dir(work_dir / "outputs")
 
         with self._time_stage("load"):

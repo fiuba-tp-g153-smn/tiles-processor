@@ -34,6 +34,7 @@ class ImageProcessor(ABC):
         self._shutdown_requested = False
         self._stage_timings: dict[str, float] = {}
         self._metrics_sink: Path | None = None
+        self._work_token: str | None = None
 
     def request_shutdown(self) -> None:
         """Signal that the processor should stop at the next checkpoint."""
@@ -47,6 +48,17 @@ class ImageProcessor(ABC):
     def bind_metrics_sink(self, path: Path) -> None:
         """Set the file where per-stage timings are flushed after processing."""
         self._metrics_sink = path
+
+    def bind_work_token(self, token: str) -> None:
+        """Bind the parent's per-attempt token so this processor's scratch dir is
+        unique per delivery attempt.
+
+        Two concurrent copies of the same image (a redelivery racing an in-flight
+        unit at WORKER_CONCURRENCY>1) would otherwise share ``band_dir/image_id``
+        and rmtree each other's geotiff/tiles mid-run. Mirrors the ``-{attempt}``
+        suffix the handler already puts on the download dir.
+        """
+        self._work_token = token
 
     @contextmanager
     def _time_stage(self, name: str) -> Iterator[None]:
@@ -98,6 +110,17 @@ class ImageProcessor(ABC):
     def _get_band_dir(self, work_unit: WorkUnit) -> Path:
         """Get base directory for this work unit's band data."""
         return self._base_dir / work_unit.band_id
+
+    def _work_dir_leaf(self, work_unit: WorkUnit) -> str:
+        """Per-attempt scratch-dir leaf name for this unit.
+
+        ``{image_id}-{token}`` when the handler bound an attempt token, else the
+        bare ``image_id`` (direct/test invocation). Every processor keys its work
+        dir on this so two concurrent copies of the same image never collide.
+        """
+        if self._work_token:
+            return f"{work_unit.image_id}-{self._work_token}"
+        return work_unit.image_id
 
     def _cleanup_file(self, file_path: Path) -> None:
         """Safe cleanup of a single file."""

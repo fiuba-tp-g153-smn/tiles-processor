@@ -44,3 +44,23 @@ def test_main_returns_success_code_on_clean_run():
         subprocess_processor, "run_processing", return_value=None
     ):
         assert subprocess_processor.main() == EXIT_SUCCESS_CODE
+
+
+def test_main_forwards_work_token_to_run_processing():
+    """A 5th argv (per-attempt token) is forwarded so the processor scopes its dir."""
+    argv = ["subprocess_processor", "{}", "/tmp/in.nc", "/tmp/m.json", "tok7"]
+    with patch.object(sys, "argv", argv), patch.object(
+        subprocess_processor, "run_processing", return_value=None
+    ) as run_processing:
+        assert subprocess_processor.main() == EXIT_SUCCESS_CODE
+    run_processing.assert_called_once_with("{}", "/tmp/in.nc", "/tmp/m.json", "tok7")
+
+
+def test_main_without_token_forwards_none():
+    """The legacy 4-arg form (no token) still passes None through."""
+    argv = ["subprocess_processor", "{}", "/tmp/in.nc", "/tmp/m.json"]
+    with patch.object(sys, "argv", argv), patch.object(
+        subprocess_processor, "run_processing", return_value=None
+    ) as run_processing:
+        assert subprocess_processor.main() == EXIT_SUCCESS_CODE
+    run_processing.assert_called_once_with("{}", "/tmp/in.nc", "/tmp/m.json", None)

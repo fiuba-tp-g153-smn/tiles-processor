@@ -109,7 +109,7 @@ class RadarProcessor(ImageProcessor):
         product_config = get_radar_product_config(product_id)
 
         # Setup work directories
-        work_dir = Path(self.config.TMP_DIR) / "radar" / work_unit.image_id
+        work_dir = Path(self.config.TMP_DIR) / "radar" / self._work_dir_leaf(work_unit)
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
