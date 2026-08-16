@@ -14,8 +14,11 @@ from models.gfs_config import (
     HIGHLIGHTED_THICKNESS_M,
     ISOBAR_STEP_HPA,
     PA_TO_HPA,
+    POINT_QUERY_THICKNESS,
     THICKNESS_LEVELS_HPA,
     THICKNESS_STEP_M,
+    primary_cog_key,
+    secondary_cog_key,
 )
 from models.gfs_step import GfsStepContext
 from models.work_unit import WorkUnit
@@ -32,8 +35,9 @@ _LOG = f"[{GFS_MSLP_CONFIG.log_prefix}]"
 class GfsMslpProcessor(ContourProcessor):
     """Renders one forecast step of the sea-level-pressure product.
 
-    Emits three artifacts from the cached GRIB:
+    Emits four artifacts from the cached GRIB:
       * a COG of the pressure field in hPa,
+      * a secondary point-query COG of the 1000/500 thickness in gpm,
       * isobars every 3 hPa,
       * 1000/500 thickness contours every 60 gpm, with the four air-mass
         markers the SMN charts single out (5280/5400/5580/5700) flagged for the
@@ -98,9 +102,12 @@ class GfsMslpProcessor(ContourProcessor):
         output_dir: Path,
         image_id: str,
     ) -> dict[str, Path]:
-        """Write the COG and both GeoJSON overlays."""
+        """Write both COGs and both GeoJSON overlays."""
         with self._time_stage("cog"):
             cog_path = save_as_cog(pressure, output_dir, image_id)
+            thickness_cog_path = save_as_cog(
+                thickness, output_dir, f"{image_id}_{POINT_QUERY_THICKNESS}"
+            )
 
         with self._time_stage("geojson"):
             isobars = self._contour(pressure, ISOBAR_STEP_HPA, "pressure_hpa")
@@ -121,21 +128,29 @@ class GfsMslpProcessor(ContourProcessor):
                 thickness_lines, output_dir / f"{image_id}_thickness.json"
             )
 
-        return {"cog": cog_path, "isobars": isobars_path, "thickness": thickness_path}
+        return {
+            "cog": cog_path,
+            "thickness_cog": thickness_cog_path,
+            "isobars": isobars_path,
+            "thickness": thickness_path,
+        }
 
     async def _upload(
         self, outputs: dict[str, Path], cycle_ts: str, work_unit: WorkUnit
     ) -> None:
-        """Upload the COG and both overlays."""
+        """Upload both COGs and both overlays."""
         image_id = work_unit.image_id
         targets = {
-            f"{GFS_MSLP_CONFIG.cog_prefix}/{cycle_ts}/{image_id}.tif": outputs["cog"],
+            secondary_cog_key(
+                GFS_MSLP_CONFIG, cycle_ts, POINT_QUERY_THICKNESS, image_id
+            ): outputs["thickness_cog"],
             f"{GFS_MSLP_CONFIG.geojson_prefix}/{cycle_ts}/{image_id}_isobars.json": (
                 outputs["isobars"]
             ),
             f"{GFS_MSLP_CONFIG.geojson_prefix}/{cycle_ts}/{image_id}_thickness.json": (
                 outputs["thickness"]
             ),
+            primary_cog_key(GFS_MSLP_CONFIG, cycle_ts, image_id): outputs["cog"],
         }
         for key, path in targets.items():
             self._check_shutdown()

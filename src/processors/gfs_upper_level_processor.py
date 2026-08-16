@@ -13,8 +13,12 @@ from factories import create_s3_client
 from models.gfs_config import (
     GEOPOTENTIAL_STEP_M,
     ISOTHERM_STEP_C,
+    POINT_QUERY_GEOPOTENTIAL,
+    POINT_QUERY_TEMPERATURE,
     GfsProductConfig,
     get_gfs_product_config_by_band,
+    primary_cog_key,
+    secondary_cog_key,
 )
 from models.gfs_palettes import wind_palette
 from models.gfs_step import GfsStepContext
@@ -40,6 +44,11 @@ _ZOOM_LEVELS = f"3-{_MAX_ZOOM}"
 _GDAL_PROCESSES = 2
 _LEVEL_WITH_THERMAL_AND_BARBS = 500
 
+_SECONDARY_COG_FIELDS = {
+    "height": POINT_QUERY_GEOPOTENTIAL,
+    "temperature": POINT_QUERY_TEMPERATURE,
+}
+
 
 class GfsUpperLevelProcessor(ContourProcessor):
     """Renders one forecast step of an isobaric-level product.
@@ -47,6 +56,8 @@ class GfsUpperLevelProcessor(ContourProcessor):
     Emits, per step:
       * a COG of wind speed in knots and colourised tiles,
       * geopotential height contours every 60 gpm,
+      * a secondary point-query COG per scalar field the level carries
+        (geopotential always, temperature at 500 hPa),
       * (500 hPa only) isotherms every 5 C and wind barbs.
     """
 
@@ -73,7 +84,7 @@ class GfsUpperLevelProcessor(ContourProcessor):
             )
         self._check_shutdown()
 
-        cog_path, rgba_path, overlays = await asyncio.to_thread(
+        cog_path, secondary_cogs, rgba_path, overlays = await asyncio.to_thread(
             self._generate_outputs, fields, product, raster_dir, work_unit.image_id
         )
         del fields
@@ -86,11 +97,19 @@ class GfsUpperLevelProcessor(ContourProcessor):
 
         with self._time_stage("upload"):
             await self._upload(
-                cog_path, tiles_output_dir, overlays, product, step.cycle_ts, work_unit
+                cog_path,
+                secondary_cogs,
+                tiles_output_dir,
+                overlays,
+                product,
+                step.cycle_ts,
+                work_unit,
             )
 
         self._cleanup_file(rgba_path)
         self._cleanup_file(cog_path)
+        for path in secondary_cogs.values():
+            self._cleanup_file(path)
         for path in overlays.values():
             if path.is_dir():
                 self._cleanup_directory(path)
@@ -138,10 +157,11 @@ class GfsUpperLevelProcessor(ContourProcessor):
         product: GfsProductConfig,
         output_dir: Path,
         image_id: str,
-    ) -> tuple[Path, Path, dict[str, Path]]:
-        """Write the COG, the colourised raster and every vector overlay."""
+    ) -> tuple[Path, dict[str, Path], Path, dict[str, Path]]:
+        """Write both kinds of COG, the colourised raster and every overlay."""
         with self._time_stage("cog"):
             cog_path = save_as_cog(fields["speed"], output_dir, image_id)
+            secondary_cogs = _save_secondary_cogs(fields, output_dir, image_id)
 
         with self._time_stage("geotiff"):
             rgba_path = self._colorize(fields["speed"], product, output_dir, image_id)
@@ -149,7 +169,7 @@ class GfsUpperLevelProcessor(ContourProcessor):
         with self._time_stage("geojson"):
             overlays = self._build_overlays(fields, product, output_dir, image_id)
 
-        return cog_path, rgba_path, overlays
+        return cog_path, secondary_cogs, rgba_path, overlays
 
     def _build_overlays(
         self,
@@ -283,17 +303,25 @@ class GfsUpperLevelProcessor(ContourProcessor):
     async def _upload(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         cog_path: Path,
+        secondary_cogs: dict[str, Path],
         tiles_output_dir: Path,
         overlays: dict[str, Path],
         product: GfsProductConfig,
         cycle_ts: str,
         work_unit: WorkUnit,
     ) -> None:
-        """Upload the COG, the tile pyramid and every overlay."""
+        """Upload both kinds of COG, the tile pyramid and every overlay."""
         image_id = work_unit.image_id
-        cog_key = f"{product.cog_prefix}/{cycle_ts}/{image_id}.tif"
+        await self._upload_secondary_cogs(secondary_cogs, product, cycle_ts, image_id)
+        await self._upload_overlays(overlays, product, cycle_ts, image_id)
 
         self._check_shutdown()
+        tiles_prefix = f"{product.tiles_prefix}/{cycle_ts}/{image_id}"
+        logger.info("[%s] Uploading tiles → %s", product.log_prefix, tiles_prefix)
+        await self._s3_client.upload_directory(tiles_output_dir, tiles_prefix)
+
+        self._check_shutdown()
+        cog_key = primary_cog_key(product, cycle_ts, image_id)
         logger.info("[%s] Uploading COG → %s", product.log_prefix, cog_key)
         if not await self._s3_client.upload_file(cog_key, cog_path):
             logger.warning(
@@ -301,7 +329,35 @@ class GfsUpperLevelProcessor(ContourProcessor):
                 product.log_prefix,
                 image_id,
             )
+        logger.info("[%s] Upload complete: %s", product.log_prefix, image_id)
 
+    async def _upload_secondary_cogs(
+        self,
+        secondary_cogs: dict[str, Path],
+        product: GfsProductConfig,
+        cycle_ts: str,
+        image_id: str,
+    ) -> None:
+        """Upload one point-query COG per variable, each in its own sub-prefix."""
+        for variable, path in secondary_cogs.items():
+            self._check_shutdown()
+            key = secondary_cog_key(product, cycle_ts, variable, image_id)
+            logger.info("[%s] Uploading %s COG → %s", product.log_prefix, variable, key)
+            if not await self._s3_client.upload_file(key, path):
+                logger.warning(
+                    "[%s] COG upload failed for %s; continuing",
+                    product.log_prefix,
+                    key,
+                )
+
+    async def _upload_overlays(
+        self,
+        overlays: dict[str, Path],
+        product: GfsProductConfig,
+        cycle_ts: str,
+        image_id: str,
+    ) -> None:
+        """Upload every vector overlay, barb directories included."""
         for name, path in overlays.items():
             self._check_shutdown()
             base = f"{product.geojson_prefix}/{cycle_ts}/{image_id}_{name}"
@@ -324,11 +380,20 @@ class GfsUpperLevelProcessor(ContourProcessor):
                     key,
                 )
 
-        self._check_shutdown()
-        tiles_prefix = f"{product.tiles_prefix}/{cycle_ts}/{image_id}"
-        logger.info("[%s] Uploading tiles → %s", product.log_prefix, tiles_prefix)
-        await self._s3_client.upload_directory(tiles_output_dir, tiles_prefix)
-        logger.info("[%s] Upload complete: %s", product.log_prefix, image_id)
+
+def _save_secondary_cogs(
+    fields: dict[str, xr.DataArray], output_dir: Path, image_id: str
+) -> dict[str, Path]:
+    """Point-query COGs for whichever scalar fields this level carries.
+
+    Keyed by the variable name the S3 key uses, so the caller never has to know
+    the `_load` field names.
+    """
+    return {
+        variable: save_as_cog(fields[key], output_dir, f"{image_id}_{variable}")
+        for key, variable in _SECONDARY_COG_FIELDS.items()
+        if key in fields
+    }
 
 
 def _wind_speed_knots(u_wind: xr.DataArray, v_wind: xr.DataArray) -> xr.DataArray:
