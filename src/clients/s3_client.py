@@ -60,6 +60,10 @@ TILE_LIFECYCLE_RETENTION_DAYS = {
     "cog/models/ecmwf": 2,
     "geojson/models/ecmwf": 2,
     "grib/models/ecmwf": 1,
+    "tiles/models/gfs": 1,
+    "cog/models/gfs": 1,
+    "geojson/models/gfs": 1,
+    "grib/models/gfs": 1,
 }
 
 

@@ -638,6 +638,15 @@ class TestBuildLifecycleRules:
         assert days_by_prefix["grib/models/ecmwf"] == 1
         assert days_by_prefix["geojson/models/ecmwf"] == 2
 
+    def test_every_gfs_prefix_expires_in_one_day(self):
+        """Each artifact GFS writes must match a rule, or it never expires."""
+        days_by_prefix = {
+            r["Filter"]["Prefix"]: r["Expiration"]["Days"]
+            for r in _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+        }
+        for prefix in ("tiles", "cog", "geojson", "grib"):
+            assert days_by_prefix[f"{prefix}/models/gfs"] == 1
+
     def test_sub_day_retention_rounds_up_to_one_and_ids_unique(self):
         rules = _build_lifecycle_rules(
             {"tiles/radar": 0, "tiles/wrf": 2, "cog/radar": -3}
