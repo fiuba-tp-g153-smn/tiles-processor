@@ -94,6 +94,8 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             self._progress_tracker.reclaim_orphan_in_progress()
 
         # Process each registered data source
+        attempted = 0
+        failed_sources: list[str] = []
         for data_source in self._data_source_registry.get_all():
             if not self._is_source_enabled(data_source):
                 logger.info("Skipping %s (disabled in config)", data_source.source_id)
@@ -101,6 +103,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
 
             logger.info("Discovering new images for %s...", data_source.source_id)
 
+            attempted += 1
             try:
                 count = await self._discover_source(current_time, data_source, bounds)
                 total_published += count
@@ -110,11 +113,26 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
                     data_source.source_id,
                 )
             except Exception as e:  # pylint: disable=broad-exception-caught
+                failed_sources.append(data_source.source_id)
                 logger.exception(
                     "Error discovering images for %s: %s",
                     data_source.source_id,
                     e,
                 )
+
+        # A per-source failure is swallowed so one broken source can't sink the
+        # tick — but without this line a source that fails every tick publishes
+        # 0 units and looks identical to a healthy-but-quiet one. Surface it so
+        # log-based monitoring can distinguish "quiet" from "broken".
+        if failed_sources:
+            logger.warning(
+                "Discovery tick: %d/%d sources FAILED (%s) — a persistently "
+                "failing source publishes 0 units yet leaves the totals looking "
+                "healthy; investigate",
+                len(failed_sources),
+                attempted,
+                ", ".join(failed_sources),
+            )
 
         logger.info("Total work units published: %d", total_published)
         return total_published
@@ -264,27 +282,42 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             data_source.source_id,
         )
 
-        # Publish work units for new images
+        # Publish work units for new images. A mid-batch failure leaves the
+        # already-published units in flight and drops the rest for this tick;
+        # they self-heal (get rediscovered) next tick. Log how many made it out
+        # before re-raising, since the caller's handler can't see this count.
         published = 0
-        for image_info in new_images:
-            # Mark as in-progress in SQLite BEFORE publishing to queue
-            self._progress_tracker.mark_in_progress(image_info.image_id, band_id)
+        try:
+            for image_info in new_images:
+                # Mark as in-progress in SQLite BEFORE publishing to queue
+                self._progress_tracker.mark_in_progress(image_info.image_id, band_id)
 
-            work_unit = WorkUnit.create(
-                image_id=image_info.image_id,
-                source_uri=image_info.source_uri,
-                data_source_id=image_info.data_source_id,
-                processor_id=image_info.processor_id,
-                output_prefix=image_info.output_prefix,
-                bounds=bounds,
-                band_id=band_id,
+                work_unit = WorkUnit.create(
+                    image_id=image_info.image_id,
+                    source_uri=image_info.source_uri,
+                    data_source_id=image_info.data_source_id,
+                    processor_id=image_info.processor_id,
+                    output_prefix=image_info.output_prefix,
+                    bounds=bounds,
+                    band_id=band_id,
+                )
+                target_queue = self._router.route(work_unit)
+                self._mq_client.publish(work_unit, queue_name=target_queue)
+                published += 1
+                logger.debug(
+                    "Published work unit for %s to %s",
+                    image_info.image_id,
+                    target_queue,
+                )
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.error(
+                "Publish for %s aborted after %d/%d work units; the remainder "
+                "are dropped this tick and will be rediscovered next tick",
+                data_source.source_id,
+                published,
+                len(new_images),
             )
-            target_queue = self._router.route(work_unit)
-            self._mq_client.publish(work_unit, queue_name=target_queue)
-            published += 1
-            logger.debug(
-                "Published work unit for %s to %s", image_info.image_id, target_queue
-            )
+            raise
 
         return published
 
