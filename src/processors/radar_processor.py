@@ -269,9 +269,13 @@ class RadarProcessor(ImageProcessor):
 
     def _get_field_name(self, radar, product_id: str) -> str:
         """
-        Get PyART field name for the product.
+        Resolve the PyART field name for the requested product.
 
-        Maps product IDs to actual field names in the radar object.
+        Maps the product ID to the actual moment in the scan. Raises
+        UnprocessableInputError when the scan does not carry that moment (e.g. a
+        single-pol volume asked for ZDR): falling back to an arbitrary field would
+        render the wrong physical variable under this product's palette and upload
+        it under this product's prefix, so the unit is skipped instead.
         """
         # Common field name mappings
         field_mappings = {
@@ -288,24 +292,20 @@ class RadarProcessor(ImageProcessor):
 
         available_fields = list(radar.fields.keys())
 
-        # Try to find matching field
-        if product_id in field_mappings:
-            for candidate in field_mappings[product_id]:
-                if candidate in available_fields:
-                    logger.info("[RADAR] Mapped %s → %s", product_id, candidate)
-                    return candidate
+        # Return the mapped moment for this product if the scan carries it.
+        for candidate in field_mappings.get(product_id, ()):
+            if candidate in available_fields:
+                logger.info("[RADAR] Mapped %s → %s", product_id, candidate)
+                return candidate
 
-        # Fallback: use first available field
-        if available_fields:
-            field_name = available_fields[0]
-            logger.warning(
-                "[RADAR] No mapping for %s, using first field: %s",
-                product_id,
-                field_name,
-            )
-            return field_name
-
-        raise ValueError(f"No fields found in radar data for {product_id}")
+        # The scan does not carry this product's moment (e.g. a single-pol volume
+        # asked for ZDR). Do NOT fall back to an arbitrary field: that would render
+        # the wrong physical variable under this product's palette and upload it
+        # under this product's prefix. Skip the unit instead (ack, no retry).
+        raise UnprocessableInputError(
+            f"radar scan has no field for product {product_id!r} "
+            f"(available: {available_fields or 'none'})"
+        )
 
     def _extract_polar_data(
         self, radar, sweep_idx: int, field_name: str, product_id: str

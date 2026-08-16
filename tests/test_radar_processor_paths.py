@@ -22,6 +22,37 @@ def _radar_processor(tmp_path) -> RadarProcessor:
         return RadarProcessor(config)
 
 
+def test_get_field_name_returns_mapped_moment(tmp_path):
+    """A present, mapped moment resolves to its PyART field name."""
+    processor = _radar_processor(tmp_path)
+    radar = MagicMock()
+    radar.fields = {"reflectivity": None, "differential_reflectivity": None}
+
+    assert processor._get_field_name(radar, "ZDR") == "differential_reflectivity"
+    assert processor._get_field_name(radar, "DBZH") == "reflectivity"
+
+
+def test_get_field_name_skips_when_product_moment_absent(tmp_path):
+    """A scan lacking the requested moment is SKIPPED, not rendered under the
+    wrong palette/prefix (BUG-13)."""
+    processor = _radar_processor(tmp_path)
+    radar = MagicMock()
+    radar.fields = {"reflectivity": None}  # single-pol scan: no ZDR
+
+    with pytest.raises(UnprocessableInputError, match="ZDR"):
+        processor._get_field_name(radar, "ZDR")
+
+
+def test_get_field_name_skips_when_no_fields(tmp_path):
+    """An empty scan is a deterministic skip, not a generic (retryable) error."""
+    processor = _radar_processor(tmp_path)
+    radar = MagicMock()
+    radar.fields = {}
+
+    with pytest.raises(UnprocessableInputError):
+        processor._get_field_name(radar, "DBZH")
+
+
 def test_read_radar_skips_incompatible_sweep_geometry(tmp_path):
     """pyart's 'changes between sweeps' ValueError → UnprocessableInputError (skip)."""
     processor = _radar_processor(tmp_path)
