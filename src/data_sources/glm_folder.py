@@ -182,17 +182,33 @@ class GlmFolderDataSource(DataSource):
             window_end = anchor + accum
             if window_end > cutoff:
                 continue
-            if len(set(files)) != self._accum_minutes:
+            by_minute = self._one_file_per_minute(files)
+            if len(by_minute) != self._accum_minutes:
                 logger.debug(
-                    "[%s] Skipping incomplete window %s: %d/%d files",
+                    "[%s] Skipping incomplete window %s: %d/%d distinct minutes",
                     self.source_id,
                     anchor.isoformat(),
-                    len(set(files)),
+                    len(by_minute),
                     self._accum_minutes,
                 )
                 continue
-            ready.append((anchor, sorted(set(files))))
+            ready.append((anchor, sorted(by_minute.values())))
         return ready
+
+    def _one_file_per_minute(self, files: list[str]) -> dict[datetime, str]:
+        """Map each covered start-minute to a single file (newest wins).
+
+        Completeness is defined by distinct 1-minute coverage, not raw file
+        count: a reprocessed/duplicate minute must not mask a genuinely missing
+        one, and only one file per minute reaches aggregation (no double-count).
+        """
+        by_minute: dict[datetime, str] = {}
+        for uri in sorted(files):
+            minute = parse_glm_folder_filename(Path(uri).name).start_dt.replace(
+                second=0, microsecond=0
+            )
+            by_minute[minute] = uri
+        return by_minute
 
 
 def _window_image_id(window_start: datetime) -> str:

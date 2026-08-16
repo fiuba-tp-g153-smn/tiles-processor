@@ -6,14 +6,39 @@ touching :class:`GlmFolderDataSource`.
 """
 
 import asyncio
+import os
 import shutil
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from clients.s3_client import S3Client
 from data_sources.s3_repository_utils import filter_keys_by_glob, strip_s3_scheme
 
 GLM_FOLDER_FILENAME_GLOB = "CG_GLM-L2-GLMF-*.nc"
+
+
+async def _download_atomically(
+    dest_dir: Path, populate: Callable[[Path], Awaitable[None]]
+) -> Path:
+    """Populate a temp sibling dir via ``populate`` then atomically move it in.
+
+    The multi-file download is all-or-nothing: on any error the partial temp
+    dir is removed and the error re-raised, so ``dest_dir`` is never left
+    half-populated for the aggregation step to silently consume.
+    """
+    dest_dir.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dir = dest_dir.parent / f".{dest_dir.name}.partial"
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    tmp_dir.mkdir(parents=True)
+    try:
+        await populate(tmp_dir)
+    except BaseException:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+    shutil.rmtree(dest_dir, ignore_errors=True)
+    os.replace(tmp_dir, dest_dir)
+    return dest_dir
 
 
 class GlmFolderFileRepository(ABC):
@@ -60,17 +85,17 @@ class LocalGlmFolderFileRepository(GlmFolderFileRepository):
         return [str(f.absolute()) for f in sorted(files)]
 
     async def download_to_dir(self, source_uris: list[str], dest_dir: Path) -> Path:
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        async def _populate(tmp_dir: Path) -> None:
+            def _copy_all() -> None:
+                for uri in source_uris:
+                    source_path = Path(uri)
+                    if not source_path.exists():
+                        raise FileNotFoundError(f"GLM file not found: {uri}")
+                    shutil.copy2(source_path, tmp_dir / source_path.name)
 
-        def _copy_all() -> None:
-            for uri in source_uris:
-                source_path = Path(uri)
-                if not source_path.exists():
-                    raise FileNotFoundError(f"GLM file not found: {uri}")
-                shutil.copy2(source_path, dest_dir / source_path.name)
+            await asyncio.to_thread(_copy_all)
 
-        await asyncio.to_thread(_copy_all)
-        return dest_dir
+        return await _download_atomically(dest_dir, _populate)
 
 
 class S3GlmFolderFileRepository(GlmFolderFileRepository):
@@ -91,14 +116,17 @@ class S3GlmFolderFileRepository(GlmFolderFileRepository):
         return filter_keys_by_glob(keys, GLM_FOLDER_FILENAME_GLOB)
 
     async def download_to_dir(self, source_uris: list[str], dest_dir: Path) -> Path:
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        # The S3Client's internal semaphore bounds download concurrency.
-        await asyncio.gather(
-            *(
-                self._s3_client.download_to_file(
-                    strip_s3_scheme(uri), dest_dir / Path(uri).name
+        async def _populate(tmp_dir: Path) -> None:
+            # The S3Client's internal semaphore bounds download concurrency.
+            # gather() (return_exceptions=False) surfaces the first failure and
+            # cancels the rest; _download_atomically then discards the temp dir.
+            await asyncio.gather(
+                *(
+                    self._s3_client.download_to_file(
+                        strip_s3_scheme(uri), tmp_dir / Path(uri).name
+                    )
+                    for uri in source_uris
                 )
-                for uri in source_uris
             )
-        )
-        return dest_dir
+
+        return await _download_atomically(dest_dir, _populate)
