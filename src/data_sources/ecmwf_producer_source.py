@@ -22,7 +22,6 @@ from models.ecmwf_config import (
 
 logger = logging.getLogger(__name__)
 
-_FORECAST_BASE_HOURS = (0, 12)  # UTC hours at which ECMWF issues forecasts
 _STEPS = list(range(STEP_HOURS, 145, STEP_HOURS))  # [3, 6, ..., 144]
 
 _DEFAULT_OPENDATA_SOURCES = ("ecmwf", "azure", "aws")

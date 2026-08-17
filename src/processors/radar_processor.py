@@ -81,10 +81,6 @@ class RadarProcessor(ImageProcessor):
     GDAL_PROCESSES = 2
     SWEEPS = (0, 1, 2)  # Elevation indices to process
 
-    # Geographic extent (adjust based on radar range)
-    # These will be calculated dynamically based on actual radar range
-    MAX_RANGE_KM = 240  # Maximum radar range in km
-
     def __init__(self, config: Config):
         super().__init__(config)
         self._s3_client = create_s3_client(config)

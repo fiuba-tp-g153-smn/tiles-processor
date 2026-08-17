@@ -207,7 +207,6 @@ class WrfProcessor(ImageProcessor):
 
     ZOOM_LEVELS = "4-6"
     GDAL_PROCESSES = 2
-    BARB_SIMPLIFY_TOLERANCE = 0.0  # not applied to points
     CONTOUR_SIMPLIFY_TOLERANCE = 0.05
 
     def __init__(self, config: Config):
