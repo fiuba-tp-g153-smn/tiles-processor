@@ -22,9 +22,10 @@ def temp_settings_file(tmp_path):
     """Create a temporary settings.json file."""
     settings = {
         "timezone": "UTC",
-        "scheduler": {"band_13_cron": "*/10 * * * *", "band_9_cron": "0 * * * *"},
-        "features": {"enable_band_13": True, "enable_band_9": True},
         "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
+        "sources": {
+            "goes19": {"products": {"band_13": True, "band_9": True}},
+        },
     }
     settings_path = tmp_path / "settings.json"
     settings_path.write_text(json.dumps(settings))

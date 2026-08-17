@@ -23,7 +23,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
     following the convention used by Django, Flask, and other Python frameworks.
     """
 
-    def __init__(  # pylint: disable=too-many-statements
+    def __init__(  # pylint: disable=too-many-statements,too-many-locals
         self, settings_path: Path | None = None
     ):
         if settings_path is None:
@@ -105,129 +105,68 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # the host name, preserving the prior behavior for old deploys/dev runs.
         self.WORKER_ID: str = os.getenv("WORKER_ID") or socket.gethostname()
 
-        # Settings from JSON
+        # ---- Settings from settings.json (grouped by concern) ----
         self.TIMEZONE: str = settings["timezone"]
-        self.TILE_RETENTION_DAYS: int = settings.get("tile_retention_days", 1)
 
-        # Feature Toggles (from JSON)
-        self.ENABLE_BAND_13: bool = settings["features"].get("enable_band_13", True)
-        self.ENABLE_BAND_9: bool = settings["features"].get("enable_band_9", True)
-        self.ENABLE_BAND_2: bool = settings["features"].get("enable_band_2", False)
-        self.ENABLE_GLM_FED: bool = settings["features"].get("enable_glm_fed", False)
-        self.ENABLE_GLM_TOE: bool = settings["features"].get("enable_glm_toe", False)
-        self.ENABLE_GLM_MFA: bool = settings["features"].get("enable_glm_mfa", False)
-        self.ENABLE_ECMWF_PRECIPITATION: bool = settings["features"].get(
-            "enable_ecmwf_precipitation", False
-        )
-        self.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE: bool = settings["features"].get(
-            "enable_ecmwf_mean_sea_level_pressure", False
-        )
-        self.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE: float = float(
-            settings.get("ecmwf_mslp_isobar_simplify_tolerance", 0.1)
-        )
-        self.ECMWF_MSLP_SMOOTHING_SIGMA: float = float(
-            settings.get("ecmwf_mslp_smoothing_sigma", 1.5)
-        )
-        self.ECMWF_TP_SMOOTHING_RESOLUTION_DEG: float = float(
-            os.getenv("ECMWF_TP_SMOOTHING_RESOLUTION_DEG") or "0.01"
-        )
-        self.ECMWF_OPENDATA_SOURCES: tuple[str, ...] = tuple(
-            s.strip()
-            for s in (os.getenv("ECMWF_OPENDATA_SOURCES") or "ecmwf,azure,aws").split(
-                ","
-            )
-            if s.strip()
-        )
-        self.ENABLE_GFS_MSLP: bool = settings["features"].get("enable_gfs_mslp", False)
-        self.ENABLE_GFS_500: bool = settings["features"].get("enable_gfs_500", False)
-        self.ENABLE_GFS_250: bool = settings["features"].get("enable_gfs_250", False)
-        self.GFS_ACCESS: GfsAccessConfig = self._parse_gfs_access(settings)
-        self.GFS_CYCLES_TO_MAINTAIN: int = int(
-            settings.get("gfs_cycles_to_maintain", 3)
-        )
-
-        self.GFS_MAX_STEPS_PER_TICK: int = int(
-            settings.get("gfs_max_steps_per_tick", 12)
-        )
-        self.GFS_AVAILABILITY_PROBE_FROM_HOURS: int = int(
-            settings.get("gfs_availability_probe_from_hours", 3)
-        )
-        self.GFS_AVAILABILITY_PROBE_TO_HOURS: int = int(
-            settings.get("gfs_availability_probe_to_hours", 8)
-        )
-        self.GFS_SMOOTHING_SIGMA: float = float(
-            settings.get("gfs_smoothing_sigma", 1.5)
-        )
-        self.GFS_ISOLINE_SIMPLIFY_TOLERANCE: float = float(
-            settings.get("gfs_isoline_simplify_tolerance", 0.05)
-        )
-
-        self.GFS_TILE_SMOOTHING_RESOLUTION_DEG: float = float(
-            os.getenv("GFS_TILE_SMOOTHING_RESOLUTION_DEG") or "0.01"
-        )
-
-        _radar_product_ids = ["DBZH", "ZDR", "RHOHV", "KDP", "VRAD"]
-        self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
-            pid: settings["features"].get(f"enable_radar_{pid}", False)
-            for pid in _radar_product_ids
-        }
-
-        # Per-radar-station enablement (SINARAME RMA network). Combines with the
-        # per-product flags above as an AND: a (radar, product) pair is processed
-        # iff the product is enabled AND the station filter allows the radar.
-        # Accepts "all" (default when absent), "none", {"whitelist": [...]}, or
-        # {"blacklist": [...]}; see RadarStationFilter for the semantics.
-        self.RADAR_STATION_FILTER: RadarStationFilter = (
-            RadarStationFilter.from_settings(settings.get("radar_stations"))
-        )
+        _tiles = settings.get("tiles", {})
+        self.TILE_RETENTION_DAYS: int = int(_tiles.get("retention_days", 1))
 
         # Metrics + metrics API (the /status backend service)
-        self.ENABLE_METRICS: bool = settings["features"].get("enable_metrics", True)
-        self.METRICS_DB_PATH: str = settings.get(
-            "metrics_db_path", str(Path(self.TMP_DIR) / "metrics.db")
+        _metrics = settings.get("metrics", {})
+        self.ENABLE_METRICS: bool = _metrics.get("enabled", True)
+        self.METRICS_DB_PATH: str = _metrics.get(
+            "db_path", str(Path(self.TMP_DIR) / "metrics.db")
         )
         # Hard cap on job_metrics rows (producer prunes to the newest N). ~0.6 KB/row,
         # so 1,000,000 ≈ ~600 MB. Bounds metrics.db growth.
-        self.METRICS_MAX_ROWS: int = int(settings.get("metrics_max_rows", 1_000_000))
+        self.METRICS_MAX_ROWS: int = int(_metrics.get("max_rows", 1_000_000))
         self.METRICS_API_PORT: int = int(os.getenv("METRICS_API_PORT", "6020"))
         # API key required by the metrics API's write endpoints (e.g. /api/import).
         # Empty disables writes (they fail closed with 503). Reads stay open.
         self.METRICS_API_KEY: str = os.getenv("METRICS_API_KEY", "")
 
-        # Per-source input configuration (local folder or S3 bucket with the
-        # same layout). Mode/bucket/endpoint/prefix come from settings.json;
-        # credentials from {NAME}_S3_ACCESS_KEY/_SECRET_KEY env vars.
-        self.RADAR_INPUT: InputSourceConfig = self._parse_input_source(
-            settings, "radar", default_dir=str(Path(self.DATA_DIR) / "radar_h5")
-        )
-        self.GLM_FOLDER_INPUT: InputSourceConfig = self._parse_input_source(
-            settings, "glm_folder", default_dir=str(Path(self.DATA_DIR) / "glm_h5")
-        )
-        self.WRF_INPUT: InputSourceConfig = self._parse_input_source(
-            settings, "wrf", default_dir=str(Path(self.DATA_DIR) / "wrf_nc")
-        )
-        self.GOES19_INPUT: InputSourceConfig = self._parse_input_source(
-            settings,
-            "goes19",
-            default_dir=str(Path(self.DATA_DIR) / "goes19"),
-            default_mode=INPUT_MODE_S3,
-            default_bucket="noaa-goes19",
+        # Each data source's full config lives under "sources.<name>": its input
+        # repository, product toggles, and any per-source tuning, co-located.
+        _sources: Dict[str, Any] = settings.get("sources", {})
+        _goes19 = _sources.get("goes19", {})
+        _glm = _sources.get("glm", {})
+        _radar = _sources.get("radar", {})
+        _wrf = _sources.get("wrf", {})
+        _ecmwf = _sources.get("ecmwf", {})
+        _gfs = _sources.get("gfs", {})
+
+        # --- GOES-19 ABI ---
+        _goes19_products = _goes19.get("products", {})
+        self.ENABLE_BAND_13: bool = _goes19_products.get("band_13", True)
+        self.ENABLE_BAND_9: bool = _goes19_products.get("band_9", True)
+        self.ENABLE_BAND_2: bool = _goes19_products.get("band_2", False)
+
+        # --- GLM (pre-gridded CG_GLM-L2-GLMF folder) ---
+        _glm_products = _glm.get("products", {})
+        self.ENABLE_GLM_FED: bool = _glm_products.get("fed", False)
+        self.ENABLE_GLM_TOE: bool = _glm_products.get("toe", False)
+        self.ENABLE_GLM_MFA: bool = _glm_products.get("mfa", False)
+        self.GLM_ACCUM_MINUTES: int = int(_glm.get("accum_minutes", 10))
+        self.GLM_PRODUCE_EVERY_MINUTES: int = int(_glm.get("produce_every_minutes", 10))
+
+        # --- Radar (SINARAME) ---
+        _radar_product_ids = ["DBZH", "ZDR", "RHOHV", "KDP", "VRAD"]
+        _radar_products = _radar.get("products", {})
+        self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
+            pid: _radar_products.get(pid, False) for pid in _radar_product_ids
+        }
+        # Per-radar-station enablement, AND-combined with the product flags above:
+        # a (radar, product) pair is processed iff the product is enabled AND the
+        # station filter allows the radar. Accepts "all" (default), "none",
+        # {"whitelist": [...]}, or {"blacklist": [...]}; see RadarStationFilter.
+        self.RADAR_STATION_FILTER: RadarStationFilter = (
+            RadarStationFilter.from_settings(_radar.get("stations"))
         )
 
-        # Radar Configuration
-        # Path to directory containing .H5 radar files
-        self.RADAR_INPUT_DIR: str = self.RADAR_INPUT.input_dir
-
-        # GLM Folder Configuration (pre-gridded CG_GLM-L2-GLMF netCDFs)
-        self.GLM_FOLDER_INPUT_DIR: str = self.GLM_FOLDER_INPUT.input_dir
-        self.GLM_ACCUM_MINUTES: int = int(settings.get("glm_accum_minutes", 10))
-        self.GLM_PRODUCE_EVERY_MINUTES: int = int(
-            settings.get("glm_produce_every_minutes", 10)
-        )
-
-        # WRF Configuration
+        # --- WRF (WRF-ARG4K FIELD2D) ---
+        _wrf_products = _wrf.get("products", {})
         self.ENABLED_WRF_PRODUCTS: dict[str, bool] = {
-            pid: settings["features"].get(f"enable_wrf_{pid}", False)
+            pid: _wrf_products.get(pid, False)
             for pid in [
                 "Colmax",
                 "Rafagas",
@@ -241,15 +180,88 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
                 "Granizo",
             ]
         }
+
+        # --- ECMWF ---
+        _ecmwf_products = _ecmwf.get("products", {})
+        self.ENABLE_ECMWF_PRECIPITATION: bool = _ecmwf_products.get(
+            "precipitation", False
+        )
+        self.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE: bool = _ecmwf_products.get(
+            "mean_sea_level_pressure", False
+        )
+        _ecmwf_mslp = _ecmwf.get("mslp", {})
+        self.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE: float = float(
+            _ecmwf_mslp.get("isobar_simplify_tolerance", 0.1)
+        )
+        self.ECMWF_MSLP_SMOOTHING_SIGMA: float = float(
+            _ecmwf_mslp.get("smoothing_sigma", 1.5)
+        )
+        self.ECMWF_TP_SMOOTHING_RESOLUTION_DEG: float = float(
+            os.getenv("ECMWF_TP_SMOOTHING_RESOLUTION_DEG") or "0.01"
+        )
+        self.ECMWF_OPENDATA_SOURCES: tuple[str, ...] = tuple(
+            s.strip()
+            for s in (os.getenv("ECMWF_OPENDATA_SOURCES") or "ecmwf,azure,aws").split(
+                ","
+            )
+            if s.strip()
+        )
+
+        # --- GFS ---
+        _gfs_products = _gfs.get("products", {})
+        self.ENABLE_GFS_MSLP: bool = _gfs_products.get("mslp", False)
+        self.ENABLE_GFS_500: bool = _gfs_products.get("500", False)
+        self.ENABLE_GFS_250: bool = _gfs_products.get("250", False)
+        self.GFS_ACCESS: GfsAccessConfig = self._parse_gfs_access(_gfs)
+        self.GFS_CYCLES_TO_MAINTAIN: int = int(_gfs.get("cycles_to_maintain", 3))
+        self.GFS_MAX_STEPS_PER_TICK: int = int(_gfs.get("max_steps_per_tick", 12))
+        _gfs_probe = _gfs.get("availability_probe_hours", {})
+        self.GFS_AVAILABILITY_PROBE_FROM_HOURS: int = int(_gfs_probe.get("from", 3))
+        self.GFS_AVAILABILITY_PROBE_TO_HOURS: int = int(_gfs_probe.get("to", 8))
+        self.GFS_SMOOTHING_SIGMA: float = float(_gfs.get("smoothing_sigma", 1.5))
+        self.GFS_ISOLINE_SIMPLIFY_TOLERANCE: float = float(
+            _gfs.get("isoline_simplify_tolerance", 0.05)
+        )
+        self.GFS_TILE_SMOOTHING_RESOLUTION_DEG: float = float(
+            os.getenv("GFS_TILE_SMOOTHING_RESOLUTION_DEG") or "0.01"
+        )
+
+        # --- Per-source input repositories (local folder or S3, same layout).
+        # Mode/dir/bucket/endpoint/prefix come from sources.<name>.input;
+        # credentials from {ENV_PREFIX}_S3_ACCESS_KEY/_SECRET_KEY env vars. ---
+        self.RADAR_INPUT: InputSourceConfig = self._parse_input_source(
+            _radar, "radar", default_dir=str(Path(self.DATA_DIR) / "radar_h5")
+        )
+        self.GLM_FOLDER_INPUT: InputSourceConfig = self._parse_input_source(
+            _glm,
+            "glm",
+            env_prefix="GLM_FOLDER",
+            default_dir=str(Path(self.DATA_DIR) / "glm_h5"),
+        )
+        self.WRF_INPUT: InputSourceConfig = self._parse_input_source(
+            _wrf, "wrf", default_dir=str(Path(self.DATA_DIR) / "wrf_nc")
+        )
+        self.GOES19_INPUT: InputSourceConfig = self._parse_input_source(
+            _goes19,
+            "goes19",
+            default_dir=str(Path(self.DATA_DIR) / "goes19"),
+            default_mode=INPUT_MODE_S3,
+            default_bucket="noaa-goes19",
+        )
+        # Legacy *_INPUT_DIR aliases retained for callers that read them directly.
+        self.RADAR_INPUT_DIR: str = self.RADAR_INPUT.input_dir
+        self.GLM_FOLDER_INPUT_DIR: str = self.GLM_FOLDER_INPUT.input_dir
         self.WRF_INPUT_DIR: str = self.WRF_INPUT.input_dir
 
-        # Light-queue routing (settings.json). Units matching these go to the
-        # light queue so a larger pool of cheap workers can drain them in
-        # parallel with the heavy GOES/GLM/ECMWF queue.
-        _light_queue = settings.get("light_queue", {})
-        self.LIGHT_QUEUE_ALL_RADAR: bool = bool(_light_queue.get("radar", False))
-        self.LIGHT_QUEUE_WRF_PRODUCTS: frozenset[str] = frozenset(
-            _light_queue.get("wrf", [])
+        # Light-queue routing: matching units go to the light queue so a larger
+        # pool of cheap workers drains them in parallel with the heavy
+        # GOES/GLM/ECMWF queue. Radar routes all-or-nothing ("all"/"none"); WRF
+        # accepts "all"/"none"/an explicit product list.
+        self.LIGHT_QUEUE_ALL_RADAR: bool = self._parse_radar_light_queue(
+            _radar.get("light_queue")
+        )
+        self.LIGHT_QUEUE_WRF_PRODUCTS: frozenset[str] = self._parse_light_queue(
+            _wrf.get("light_queue"), self.ENABLED_WRF_PRODUCTS.keys()
         )
 
         # Job Configuration
@@ -267,58 +279,99 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self._validate_bounds()
 
     @staticmethod
-    def _parse_gfs_access(settings: Dict[str, Any]) -> GfsAccessConfig:
-        """Parse GFS endpoint access from settings.json + env overrides.
+    def _parse_gfs_access(gfs_cfg: Dict[str, Any]) -> GfsAccessConfig:
+        """Parse GFS endpoint access from sources.gfs + env overrides.
 
         Intentionally separate from `_parse_input_source`: that helper models a
-        file repository with a local/S3 folder layout, an invariant five other
+        file repository with a local/S3 folder layout, an invariant the other
         sources rely on. GFS reads through an HTTP CGI, which shares none of it.
-
+        The endpoint is env-only (per-environment, never baked into the image);
+        only the tuning knobs come from settings.json.
         """
         return GfsAccessConfig(
             subset_endpoint=os.getenv("GFS_SUBSET_ENDPOINT") or "",
-            timeout_seconds=int(settings.get("gfs_http_timeout_seconds", 120)),
-            max_concurrent_downloads=int(
-                settings.get("gfs_max_concurrent_downloads", 2)
-            ),
+            timeout_seconds=int(gfs_cfg.get("http_timeout_seconds", 120)),
+            max_concurrent_downloads=int(gfs_cfg.get("max_concurrent_downloads", 2)),
         )
 
     @staticmethod
-    def _parse_input_source(
-        settings: Dict[str, Any],
-        name: str,
+    def _parse_input_source(  # pylint: disable=too-many-arguments
+        source_cfg: Dict[str, Any],
+        json_key: str,
         *,
         default_dir: str,
+        env_prefix: str | None = None,
         default_mode: str = INPUT_MODE_LOCAL,
         default_bucket: str | None = None,
     ) -> InputSourceConfig:
-        """Parse one source's input config from settings.json + env credentials."""
-        mode = settings.get(f"{name}_input_mode", default_mode)
+        """Parse one source's input config from ``sources.<json_key>.input``.
+
+        ``json_key`` names the source in error messages (its JSON path);
+        ``env_prefix`` (defaulting to its upper-case) names the credential env
+        vars, so a source whose JSON key differs from its historical env prefix
+        keeps both stable.
+        """
+        env_prefix = env_prefix or json_key.upper()
+        inp = source_cfg.get("input", {})
+        mode = inp.get("mode", default_mode)
         if mode not in (INPUT_MODE_LOCAL, INPUT_MODE_S3):
-            raise ValueError(f"{name}_input_mode must be 'local' or 's3', got '{mode}'")
-        bucket = settings.get(f"{name}_s3_bucket", default_bucket)
+            raise ValueError(
+                f"sources.{json_key}.input.mode must be 'local' or 's3', got '{mode}'"
+            )
+        bucket = inp.get("s3_bucket", default_bucket)
         if mode == INPUT_MODE_S3 and not bucket:
             raise ValueError(
-                f"{name}_input_mode is 's3' but {name}_s3_bucket is not set"
+                f"sources.{json_key}.input has mode 's3' but no s3_bucket set"
             )
         # `or None` normalizes compose-supplied empty strings to unset.
-        access_key = os.getenv(f"{name.upper()}_S3_ACCESS_KEY") or None
-        secret_key = os.getenv(f"{name.upper()}_S3_SECRET_KEY") or None
+        access_key = os.getenv(f"{env_prefix}_S3_ACCESS_KEY") or None
+        secret_key = os.getenv(f"{env_prefix}_S3_SECRET_KEY") or None
         if bool(access_key) != bool(secret_key):
             # S3Client silently falls back to anonymous on a half-set pair.
             raise ValueError(
-                f"{name.upper()}_S3_ACCESS_KEY and {name.upper()}_S3_SECRET_KEY "
+                f"{env_prefix}_S3_ACCESS_KEY and {env_prefix}_S3_SECRET_KEY "
                 "must be set together (or neither, for anonymous access)"
             )
         return InputSourceConfig(
             mode=mode,
-            input_dir=settings.get(f"{name}_input_dir", default_dir),
+            input_dir=inp.get("dir", default_dir),
             s3_bucket=bucket,
-            s3_endpoint=settings.get(f"{name}_s3_endpoint") or None,
-            s3_prefix=settings.get(f"{name}_s3_prefix", ""),
-            s3_secure=bool(settings.get(f"{name}_s3_secure", False)),
+            s3_endpoint=inp.get("s3_endpoint") or None,
+            s3_prefix=inp.get("s3_prefix", ""),
+            s3_secure=bool(inp.get("s3_secure", False)),
             s3_access_key=access_key,
             s3_secret_key=secret_key,
+        )
+
+    @staticmethod
+    def _parse_light_queue(raw: Any, all_ids) -> frozenset[str]:
+        """Resolve a light_queue selector into the product IDs it routes.
+
+        Accepts "all" (every product), "none"/absent (empty), or an explicit
+        list of product IDs.
+        """
+        if raw is None or raw == "none":
+            return frozenset()
+        if raw == "all":
+            return frozenset(all_ids)
+        if isinstance(raw, list) and all(isinstance(s, str) for s in raw):
+            return frozenset(raw)
+        raise ValueError(
+            'light_queue must be "all", "none", or a list of product IDs, '
+            f"got {raw!r}"
+        )
+
+    @staticmethod
+    def _parse_radar_light_queue(raw: Any) -> bool:
+        """Radar routes all-or-nothing (worker pools split by queue, not by radar
+        product), so its light_queue accepts only "all"/"none"/absent."""
+        if raw is None or raw == "none":
+            return False
+        if raw == "all":
+            return True
+        raise ValueError(
+            'sources.radar.light_queue must be "all" or "none" (radar routes '
+            f"all-or-nothing), got {raw!r}"
         )
 
     @staticmethod

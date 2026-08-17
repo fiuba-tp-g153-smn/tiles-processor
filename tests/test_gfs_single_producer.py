@@ -23,17 +23,22 @@ ENDPOINT = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
 
 
 def _config(tmp_path, monkeypatch, **flags) -> Config:
-    """Config with only the GFS feature flags under test switched on."""
+    """Config with only the GFS product flags under test switched on.
+
+    Flags are still passed as ``enable_gfs_<product>=True`` (as the callers read
+    naturally); they are translated to ``sources.gfs.products``.
+    """
     monkeypatch.setenv("GFS_SUBSET_ENDPOINT", ENDPOINT)
+    gfs_products = {key.removeprefix("enable_gfs_"): val for key, val in flags.items()}
     settings = {
         "timezone": "UTC",
-        "features": {
-            "enable_band_13": False,
-            "enable_band_9": False,
-            "enable_band_2": False,
-            **flags,
-        },
         "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
+        "sources": {
+            "goes19": {
+                "products": {"band_13": False, "band_9": False, "band_2": False}
+            },
+            "gfs": {"products": gfs_products},
+        },
     }
     path = tmp_path / "settings.json"
     path.write_text(json.dumps(settings), encoding="utf-8")
@@ -110,8 +115,11 @@ class TestEndpointWiring:
         monkeypatch.delenv("GFS_SUBSET_ENDPOINT", raising=False)
         settings = {
             "timezone": "UTC",
-            "features": {"enable_band_13": False, "enable_gfs_mslp": True},
             "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
+            "sources": {
+                "goes19": {"products": {"band_13": False}},
+                "gfs": {"products": {"mslp": True}},
+            },
         }
         path = tmp_path / "settings.json"
         path.write_text(json.dumps(settings), encoding="utf-8")

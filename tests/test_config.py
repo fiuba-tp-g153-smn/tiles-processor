@@ -19,13 +19,10 @@ class TestConfig:
         """Create a temporary settings.json file."""
         settings = {
             "timezone": "UTC",
-            "scheduler": {
-                "band_13_cron": "*/10 * * * *",
-                "band_9_cron": "0 * * * *",
-            },
-            "features": {
-                "enable_band_13": True,
-                "enable_band_9": False,
+            "sources": {
+                "goes19": {
+                    "products": {"band_13": True, "band_9": False},
+                },
             },
             "bounds": {
                 "minx": -90.0,
@@ -173,16 +170,21 @@ class TestConfig:
             assert config.WRF_INPUT_DIR == config.WRF_INPUT.input_dir
 
     def test_input_source_s3_mode_from_settings(self, tmp_path, env_vars):
-        """S3 mode settings are parsed per source from settings.json."""
+        """S3 mode settings are parsed per source from sources.<name>.input."""
         settings = {
             "timezone": "UTC",
-            "features": {},
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "radar_input_mode": "s3",
-            "radar_s3_bucket": "radar-input",
-            "radar_s3_endpoint": "seaweedfs:8333",
-            "radar_s3_prefix": "radar_h5/",
-            "radar_s3_secure": True,
+            "sources": {
+                "radar": {
+                    "input": {
+                        "mode": "s3",
+                        "s3_bucket": "radar-input",
+                        "s3_endpoint": "seaweedfs:8333",
+                        "s3_prefix": "radar_h5/",
+                        "s3_secure": True,
+                    }
+                }
+            },
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
@@ -198,13 +200,13 @@ class TestConfig:
             assert config.GLM_FOLDER_INPUT.mode == "local"
 
     def test_input_source_credentials_from_env(self, tmp_path, env_vars):
-        """Per-source S3 credentials come from {NAME}_S3_* env vars."""
+        """Per-source S3 credentials come from {ENV_PREFIX}_S3_* env vars."""
         settings = {
             "timezone": "UTC",
-            "features": {},
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "wrf_input_mode": "s3",
-            "wrf_s3_bucket": "wrf-input",
+            "sources": {
+                "wrf": {"input": {"mode": "s3", "s3_bucket": "wrf-input"}},
+            },
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
@@ -217,39 +219,37 @@ class TestConfig:
             assert config.WRF_INPUT.s3_secret_key == "sk"
 
     def test_input_source_rejects_invalid_mode(self, tmp_path, env_vars):
-        """An unknown input mode fails fast."""
+        """An unknown input mode fails fast, naming the JSON path."""
         settings = {
             "timezone": "UTC",
-            "features": {},
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "radar_input_mode": "ftp",
+            "sources": {"radar": {"input": {"mode": "ftp"}}},
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
 
         with mock.patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises(ValueError, match="radar_input_mode"):
+            with pytest.raises(ValueError, match="sources.radar.input.mode"):
                 Config(settings_path=settings_path)
 
     def test_input_source_s3_mode_requires_bucket(self, tmp_path, env_vars):
         """Mode s3 without a bucket fails fast."""
         settings = {
             "timezone": "UTC",
-            "features": {},
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "glm_folder_input_mode": "s3",
+            "sources": {"glm": {"input": {"mode": "s3"}}},
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
 
         with mock.patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises(ValueError, match="glm_folder_s3_bucket"):
+            with pytest.raises(ValueError, match="s3_bucket"):
                 Config(settings_path=settings_path)
 
     @staticmethod
     def _settings_with_bounds(tmp_path, bounds):
         """Write a minimal settings.json with the given bounds and return its path."""
-        settings = {"timezone": "UTC", "features": {}, "bounds": bounds}
+        settings = {"timezone": "UTC", "bounds": bounds}
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
         return settings_path
@@ -323,12 +323,16 @@ class TestConfig:
         """All three MSLP settings are read from settings.json when present."""
         settings = {
             "timezone": "UTC",
-            "ecmwf_mslp_isobar_simplify_tolerance": 0.5,
-            "ecmwf_mslp_smoothing_sigma": 2.5,
-            "features": {
-                "enable_ecmwf_mean_sea_level_pressure": True,
-            },
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {
+                "ecmwf": {
+                    "products": {"mean_sea_level_pressure": True},
+                    "mslp": {
+                        "isobar_simplify_tolerance": 0.5,
+                        "smoothing_sigma": 2.5,
+                    },
+                }
+            },
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
@@ -341,14 +345,13 @@ class TestConfig:
 
     @staticmethod
     def _settings_with_radar_stations(tmp_path, radar_stations):
-        """Write a minimal settings.json carrying the given radar_stations block."""
+        """Write a minimal settings.json carrying sources.radar.stations."""
         settings = {
             "timezone": "UTC",
-            "features": {},
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
         }
         if radar_stations is not None:
-            settings["radar_stations"] = radar_stations
+            settings["sources"] = {"radar": {"stations": radar_stations}}
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
         return settings_path

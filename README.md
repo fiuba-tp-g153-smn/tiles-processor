@@ -278,52 +278,76 @@ MinIO Console: `http://localhost:9001`
 
 ## Settings Configuration (`settings.json`)
 
+Top-level keys are the globals (`timezone`, `bounds`) and infra blocks
+(`tiles`, `metrics`); everything else is grouped per data source under
+`sources.<name>`, so a source's input, product toggles, and tuning live
+together.
+
 ```json
 {
   "timezone": "America/Argentina/Buenos_Aires",
-  "tile_retention_days": 30,
-  "radar_input_dir": "/app/data/radar_h5",
-  "features": {
-    "enable_band_13": true,
-    "enable_band_9": true,
-    "enable_band_2": true,
-    "enable_glm_fed": true,
-    "enable_glm_toe": true,
-    "enable_glm_mfa": true,
-    "enable_radar_DBZH": true,
-    "enable_radar_ZDR": true,
-    "enable_radar_RHOHV": true,
-    "enable_radar_KDP": true,
-    "enable_radar_VRAD": true
-  },
-  "radar_stations": "all",
-  "bounds": {
-    "minx": -110.0,
-    "miny": -60.0,
-    "maxx": -30.0,
-    "maxy": -15.0
+  "bounds": { "minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0 },
+  "tiles": { "retention_days": 30 },
+  "metrics": { "enabled": true, "max_rows": 1000000 },
+  "sources": {
+    "goes19": {
+      "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
+      "products": { "band_13": true, "band_9": true, "band_2": true }
+    },
+    "glm": {
+      "input": { "mode": "local", "dir": "/app/data/glm_h5" },
+      "accum_minutes": 10,
+      "produce_every_minutes": 10,
+      "products": { "fed": true, "toe": true, "mfa": true }
+    },
+    "radar": {
+      "input": { "mode": "local", "dir": "/app/data/radar_h5" },
+      "stations": "all",
+      "products": { "DBZH": true, "ZDR": true, "RHOHV": true, "KDP": true, "VRAD": true },
+      "light_queue": "all"
+    },
+    "wrf": {
+      "input": { "mode": "local", "dir": "/app/data/wrf_nc" },
+      "products": { "Colmax": true, "Granizo": true },
+      "light_queue": "all"
+    },
+    "ecmwf": {
+      "products": { "precipitation": true, "mean_sea_level_pressure": true },
+      "mslp": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 }
+    },
+    "gfs": {
+      "products": { "mslp": true, "500": true, "250": true },
+      "cycles_to_maintain": 3,
+      "max_steps_per_tick": 12,
+      "availability_probe_hours": { "from": 3, "to": 8 }
+    }
   }
 }
 ```
 
-- **`tile_retention_days`**: S3 TTL applied via SeaweedFS filer on every tile upload.
-- **`features`**: Enable/disable individual products without restarting containers.
 - **`bounds`**: Geographic clip region in EPSG:4326. Applied to all outputs.
-- **`radar_input_dir`**: Directory scanned for `.H5` radar files.
-- **`radar_stations`**: Which radar stations (RMA1, RMA2, …) to process, combined
-  with the `enable_radar_*` product flags as an **AND** (a station×product pair
-  runs only if both allow it). Four shapes, defaulting to `"all"` when absent:
+- **`tiles.retention_days`**: S3 TTL applied via SeaweedFS filer on every tile upload.
+- **`metrics`**: `enabled` toggles the /status backend; `max_rows` caps `metrics.db`.
+- **`sources.<name>.input`**: `mode` (`local`/`s3`), `dir` for local, or
+  `s3_bucket`/`s3_endpoint`/`s3_prefix`/`s3_secure` for S3. Credentials come from
+  `<NAME>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars (unset = anonymous).
+- **`sources.<name>.products`**: Enable/disable individual products without a rebuild.
+- **`sources.radar.stations`**: Which radar stations (RMA1, RMA2, …) to process,
+  combined with `radar.products` as an **AND** (a station×product pair runs only
+  if both allow it). Four shapes, defaulting to `"all"`:
 
   ```jsonc
-  "radar_stations": "all"                              // every station (default)
-  "radar_stations": "none"                             // no radar processing
-  "radar_stations": { "whitelist": ["RMA1", "RMA2"] }  // only these stations
-  "radar_stations": { "blacklist": ["RMA3", "RMA7"] }  // every station except these
+  "stations": "all"                              // every station (default)
+  "stations": "none"                             // no radar processing
+  "stations": { "whitelist": ["RMA1", "RMA2"] }  // only these stations
+  "stations": { "blacklist": ["RMA3", "RMA7"] }  // every station except these
   ```
 
-  Station IDs are matched against the first token of each radar filename
-  (`RMA1_0315_01_DBZH_…H5`). A blacklist covers new stations automatically; an
-  ambiguous value (e.g. both keys, or an unknown string) fails fast at startup.
+  Station IDs match the first token of each radar filename (`RMA1_0315_01_DBZH_…H5`).
+  A blacklist covers new stations automatically; an ambiguous value fails fast at startup.
+- **`sources.<radar|wrf>.light_queue`**: Route these units to the lightweight
+  worker queue. `"all"` / `"none"`, plus WRF accepts an explicit product list
+  (e.g. `["Colmax", "Granizo"]`); radar is all-or-nothing.
 
 ## Generating Secure Credentials
 

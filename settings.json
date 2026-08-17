@@ -1,76 +1,76 @@
 {
   "timezone": "America/Argentina/Buenos_Aires",
-  "tile_retention_days": 30,
-  "metrics_max_rows": 1000000,
-  "radar_input_mode": "local",
-  "radar_input_dir": "/app/data/radar_h5",
-  "glm_folder_input_mode": "local",
-  "glm_folder_input_dir": "/app/data/glm_h5",
-  "glm_accum_minutes": 10,
-  "glm_produce_every_minutes": 10,
-  "ecmwf_mslp_isobar_simplify_tolerance": 0.05,
-  "wrf_input_mode": "local",
-  "wrf_input_dir": "/app/data/wrf_nc",
-  "goes19_input_mode": "s3",
-  "goes19_s3_bucket": "noaa-goes19",
-  "gfs_cycles_to_maintain": 3,
-  "gfs_max_steps_per_tick": 12,
-  "gfs_availability_probe_from_hours": 3,
-  "gfs_availability_probe_to_hours": 8,
-  "gfs_smoothing_sigma": 1.5,
-  "gfs_isoline_simplify_tolerance": 0.05,
-  "gfs_http_timeout_seconds": 120,
-  "gfs_max_concurrent_downloads": 2,
-  "ecmwf_mslp_smoothing_sigma": 1.5,
-  "features": {
-    "enable_metrics": true,
-    "enable_band_13": true,
-    "enable_band_9": true,
-    "enable_band_2": true,
-    "enable_glm_fed": true,
-    "enable_glm_toe": true,
-    "enable_glm_mfa": true,
-    "enable_radar_DBZH": true,
-    "enable_radar_ZDR": true,
-    "enable_radar_RHOHV": true,
-    "enable_radar_KDP": true,
-    "enable_radar_VRAD": true,
-    "enable_ecmwf_precipitation": true,
-    "enable_ecmwf_mean_sea_level_pressure": true,
-    "enable_gfs_mslp": true,
-    "enable_gfs_500": true,
-    "enable_gfs_250": true,
-    "enable_wrf_Colmax": true,
-    "enable_wrf_Rafagas": true,
-    "enable_wrf_Campo900hPa": true,
-    "enable_wrf_Precipitacion1h": true,
-    "enable_wrf_MUCAPE": true,
-    "enable_wrf_AguaPrecipitable": true,
-    "enable_wrf_JetCapasBajas": true,
-    "enable_wrf_CortanteNivelesBajos": true,
-    "enable_wrf_CAPE_BRN": true,
-    "enable_wrf_Granizo": true
-  },
-  "radar_stations": "all",
-  "light_queue": {
-    "radar": true,
-    "wrf": [
-      "Colmax",
-      "Rafagas",
-      "Campo900hPa",
-      "Precipitacion1h",
-      "MUCAPE",
-      "AguaPrecipitable",
-      "JetCapasBajas",
-      "CortanteNivelesBajos",
-      "CAPE_BRN",
-      "Granizo"
-    ]
-  },
   "bounds": {
     "minx": -110.0,
     "miny": -60.0,
     "maxx": -30.0,
     "maxy": -15.0
+  },
+  "tiles": {
+    "retention_days": 30
+  },
+  "metrics": {
+    "enabled": true,
+    "max_rows": 1000000
+  },
+  "sources": {
+    "goes19": {
+      "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
+      "products": { "band_13": true, "band_9": true, "band_2": true }
+    },
+    "glm": {
+      "input": { "mode": "local", "dir": "/app/data/glm_h5" },
+      "accum_minutes": 10,
+      "produce_every_minutes": 10,
+      "products": { "fed": true, "toe": true, "mfa": true }
+    },
+    "radar": {
+      "input": { "mode": "local", "dir": "/app/data/radar_h5" },
+      "stations": "all",
+      "products": {
+        "DBZH": true,
+        "ZDR": true,
+        "RHOHV": true,
+        "KDP": true,
+        "VRAD": true
+      },
+      "light_queue": "all"
+    },
+    "wrf": {
+      "input": { "mode": "local", "dir": "/app/data/wrf_nc" },
+      "products": {
+        "Colmax": true,
+        "Rafagas": true,
+        "Campo900hPa": true,
+        "Precipitacion1h": true,
+        "MUCAPE": true,
+        "AguaPrecipitable": true,
+        "JetCapasBajas": true,
+        "CortanteNivelesBajos": true,
+        "CAPE_BRN": true,
+        "Granizo": true
+      },
+      "light_queue": "all"
+    },
+    "ecmwf": {
+      "products": {
+        "precipitation": true,
+        "mean_sea_level_pressure": true
+      },
+      "mslp": {
+        "isobar_simplify_tolerance": 0.05,
+        "smoothing_sigma": 1.5
+      }
+    },
+    "gfs": {
+      "products": { "mslp": true, "500": true, "250": true },
+      "cycles_to_maintain": 3,
+      "max_steps_per_tick": 12,
+      "availability_probe_hours": { "from": 3, "to": 8 },
+      "smoothing_sigma": 1.5,
+      "isoline_simplify_tolerance": 0.05,
+      "http_timeout_seconds": 120,
+      "max_concurrent_downloads": 2
+    }
   }
 }

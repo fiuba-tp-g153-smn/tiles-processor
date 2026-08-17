@@ -25,14 +25,14 @@ PUBLIC_ENDPOINT = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
 INTERNAL_ENDPOINT = "http://gfs-mirror.internal/cgi-enabled/g2subset.pl"
 
 
-def _write_settings(tmp_path, **overrides):
-    """Minimal settings.json with optional GFS overrides."""
+def _write_settings(tmp_path, *, gfs=None):
+    """Minimal settings.json with an optional sources.gfs override block."""
     settings = {
         "timezone": "UTC",
-        "features": {},
         "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
     }
-    settings.update(overrides)
+    if gfs is not None:
+        settings["sources"] = {"gfs": gfs}
     path = tmp_path / "settings.json"
     path.write_text(json.dumps(settings), encoding="utf-8")
     return path
@@ -109,7 +109,7 @@ class TestGfsAccessParsing:
         """Deliberate: it is a per-environment value, and settings.json is baked
         into the image. A stray key there must not silently take effect."""
         monkeypatch.delenv("GFS_SUBSET_ENDPOINT", raising=False)
-        path = _write_settings(tmp_path, gfs_subset_endpoint=PUBLIC_ENDPOINT)
+        path = _write_settings(tmp_path, gfs={"subset_endpoint": PUBLIC_ENDPOINT})
         assert not Config(path).GFS_ACCESS.is_configured
 
     def test_an_empty_env_var_counts_as_unset(self, tmp_path, monkeypatch):
@@ -125,12 +125,12 @@ class TestGfsAccessParsing:
 
     def test_concurrency_from_settings(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GFS_SUBSET_ENDPOINT", PUBLIC_ENDPOINT)
-        path = _write_settings(tmp_path, gfs_max_concurrent_downloads=8)
+        path = _write_settings(tmp_path, gfs={"max_concurrent_downloads": 8})
         assert Config(path).GFS_ACCESS.max_concurrent_downloads == 8
 
     def test_steps_per_tick_from_settings(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GFS_SUBSET_ENDPOINT", PUBLIC_ENDPOINT)
-        path = _write_settings(tmp_path, gfs_max_steps_per_tick=4)
+        path = _write_settings(tmp_path, gfs={"max_steps_per_tick": 4})
         assert Config(path).GFS_MAX_STEPS_PER_TICK == 4
 
     @pytest.mark.parametrize(
@@ -156,7 +156,8 @@ class TestGfsAccessParsing:
         monkeypatch.setenv(env_var, "999")
         config = Config(
             _write_settings(
-                tmp_path, gfs_max_concurrent_downloads=8, gfs_max_steps_per_tick=4
+                tmp_path,
+                gfs={"max_concurrent_downloads": 8, "max_steps_per_tick": 4},
             )
         )
         assert config.GFS_ACCESS.max_concurrent_downloads == 8
@@ -185,7 +186,7 @@ class TestGfsAccessParsing:
         monkeypatch.setenv("GFS_SUBSET_ENDPOINT", PUBLIC_ENDPOINT)
         monkeypatch.delenv("GFS_TILE_SMOOTHING_RESOLUTION_DEG", raising=False)
         config = Config(
-            _write_settings(tmp_path, gfs_tile_smoothing_resolution_deg=0.5)
+            _write_settings(tmp_path, gfs={"tile_smoothing_resolution_deg": 0.5})
         )
         assert config.GFS_TILE_SMOOTHING_RESOLUTION_DEG == 0.01
 
@@ -224,7 +225,8 @@ class TestGfsSettingsFromRepoFile:
         """A key here would read as tunable and do nothing — worse than absent."""
         repo_settings = Path(__file__).resolve().parent.parent / "settings.json"
         settings = json.loads(repo_settings.read_text(encoding="utf-8"))
-        assert "gfs_tile_smoothing_resolution_deg" not in settings
+        gfs = settings.get("sources", {}).get("gfs", {})
+        assert "tile_smoothing_resolution_deg" not in gfs
 
     def test_repo_settings_do_not_pin_an_endpoint(self, monkeypatch):
         """settings.json is baked into the image; the endpoint is per-environment."""
