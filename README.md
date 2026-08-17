@@ -278,60 +278,70 @@ MinIO Console: `http://localhost:9001`
 
 ## Settings Configuration (`settings.json`)
 
-Top-level keys are the globals (`timezone`, `bounds`) and infra blocks
-(`tiles`, `metrics`); everything else is grouped per data source under
-`sources.<name>`, so a source's input, product toggles, and tuning live
-together.
+Top-level keys are the globals (`timezone`, `bounds`) and the `metrics` block;
+everything else is grouped per data source under `sources.<name>`, so a source's
+input, product toggles, retention, and tuning live together.
 
 ```json
 {
   "timezone": "America/Argentina/Buenos_Aires",
   "bounds": { "minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0 },
-  "tiles": { "retention_days": 30 },
   "metrics": { "enabled": true, "max_rows": 1000000 },
   "sources": {
     "goes19": {
       "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
-      "products": { "band_13": true, "band_9": true, "band_2": true }
+      "products": { "band_13": true, "band_9": true, "band_2": true },
+      "retention_days": 1
     },
     "glm": {
       "input": { "mode": "local", "dir": "/app/data/glm_h5" },
       "accum_minutes": 10,
       "produce_every_minutes": 10,
-      "products": { "fed": true, "toe": true, "mfa": true }
+      "products": { "fed": true, "toe": true, "mfa": true },
+      "retention_days": 1
     },
     "radar": {
       "input": { "mode": "local", "dir": "/app/data/radar_h5" },
       "stations": "all",
       "products": { "DBZH": true, "ZDR": true, "RHOHV": true, "KDP": true, "VRAD": true },
-      "light_queue": "all"
+      "light_queue": "all",
+      "retention_days": 1
     },
     "wrf": {
       "input": { "mode": "local", "dir": "/app/data/wrf_nc" },
       "products": { "Colmax": true, "Granizo": true },
-      "light_queue": "all"
+      "light_queue": "all",
+      "retention_days": 2
     },
     "ecmwf": {
       "products": { "precipitation": true, "mean_sea_level_pressure": true },
-      "mslp": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 }
+      "mslp": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 },
+      "retention_days": { "default": 2, "grib": 1 }
     },
     "gfs": {
       "products": { "mslp": true, "500": true, "250": true },
       "cycles_to_maintain": 3,
       "max_steps_per_tick": 12,
-      "availability_probe_hours": { "from": 3, "to": 8 }
+      "availability_probe_hours": { "from": 3, "to": 8 },
+      "retention_days": 1
     }
   }
 }
 ```
 
 - **`bounds`**: Geographic clip region in EPSG:4326. Applied to all outputs.
-- **`tiles.retention_days`**: S3 TTL applied via SeaweedFS filer on every tile upload.
 - **`metrics`**: `enabled` toggles the /status backend; `max_rows` caps `metrics.db`.
 - **`sources.<name>.input`**: `mode` (`local`/`s3`), `dir` for local, or
   `s3_bucket`/`s3_endpoint`/`s3_prefix`/`s3_secure` for S3. Credentials come from
   `<NAME>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars (unset = anonymous).
 - **`sources.<name>.products`**: Enable/disable individual products without a rebuild.
+- **`sources.<name>.retention_days`**: How long the source's outputs live before
+  S3 expiry. One S3 **bucket lifecycle** rule per output prefix is applied once at
+  worker boot (evaluated ~daily; portable across AWS/MinIO/SeaweedFS, no
+  catch-all). Either an int (uniform for that source) or an object overriding a
+  specific output kind, e.g. `{ "default": 2, "grib": 1 }`. The output-prefix
+  wiring lives in code (`models/lifecycle_config.py`); only the day counts are
+  configured here.
 - **`sources.radar.stations`**: Which radar stations (RMA1, RMA2, …) to process,
   combined with `radar.products` as an **AND** (a station×product pair runs only
   if both allow it). Four shapes, defaulting to `"all"`:

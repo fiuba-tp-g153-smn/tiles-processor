@@ -46,27 +46,6 @@ _MAX_ATTEMPTS = 3
 # expressing expiry as standard per-prefix bucket lifecycle rules instead of
 # SeaweedFS-only per-object TTLs. S3 Filter.Prefix is a literal startswith, so
 # "tiles/band_" covers band_2/9/13 and "tiles/glm_" covers fed/toe/mfa.
-TILE_LIFECYCLE_RETENTION_DAYS = {
-    "tiles/band_": 1,
-    "cog/band_": 1,
-    "tiles/glm_": 1,
-    "cog/glm_": 1,
-    "tiles/radar": 1,
-    "cog/radar": 1,
-    "tiles/wrf": 2,
-    "cog/wrf": 2,
-    "geojson/wrf": 2,
-    "tiles/models/ecmwf": 2,
-    "cog/models/ecmwf": 2,
-    "geojson/models/ecmwf": 2,
-    "grib/models/ecmwf": 1,
-    "tiles/models/gfs": 1,
-    "cog/models/gfs": 1,
-    "geojson/models/gfs": 1,
-    "grib/models/gfs": 1,
-}
-
-
 def _build_lifecycle_rules(retention_map: dict[str, int]) -> list[dict]:
     """Build one non-overlapping S3 lifecycle rule per explicit prefix.
 
@@ -795,17 +774,19 @@ class S3Client:
             logger.error("Failed to ensure bucket exists: %s", e)
             return False
 
-    async def configure_lifecycle_policy(self, retention_days: int) -> bool:
+    async def configure_lifecycle_policy(self, retention_map: dict[str, int]) -> bool:
         """
         Configure S3 lifecycle policy to automatically expire old objects.
 
-        Emits one per-prefix expiration rule (see TILE_LIFECYCLE_RETENTION_DAYS)
-        so each product family expires on its own schedule via portable S3 bucket
-        lifecycle rules — no application-level reaper or SeaweedFS-specific TTL.
+        Emits one expiration rule per prefix in ``retention_map`` (resolved from
+        each source's ``retention_days`` in settings.json), so each product
+        family expires on its own schedule via portable S3 bucket lifecycle
+        rules — no application-level reaper, no SeaweedFS-specific TTL, and no
+        empty-prefix catch-all (overlap semantics differ across S3 backends).
 
         Args:
-            retention_days: Default retention, logged for reference only.
-                Per-prefix retention comes from TILE_LIFECYCLE_RETENTION_DAYS.
+            retention_map: ``{S3 key-prefix: retention days}``. Every uploader
+                writes under one of these prefixes.
 
         Returns:
             True if lifecycle policy was configured successfully
@@ -815,7 +796,7 @@ class S3Client:
             so objects may not be deleted exactly at the expiration time.
         """
         try:
-            rules = _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+            rules = _build_lifecycle_rules(retention_map)
             async with self._client_session() as s3_client:
                 await s3_client.put_bucket_lifecycle_configuration(
                     Bucket=self._bucket_name,
@@ -823,11 +804,9 @@ class S3Client:
                 )
 
                 logger.info(
-                    "Configured %d per-prefix lifecycle rules for bucket '%s' "
-                    "(default retention %d days)",
+                    "Configured %d per-prefix lifecycle rules for bucket '%s'",
                     len(rules),
                     self._bucket_name,
-                    retention_days,
                 )
                 return True
 

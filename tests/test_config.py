@@ -390,6 +390,27 @@ class TestConfig:
             assert rf.mode == "blacklist"
             assert not rf.allows("RMA3") and rf.allows("RMA1")
 
+    def test_tile_lifecycle_retention_resolves_from_sources(self, tmp_path, env_vars):
+        """Per-source retention_days resolves into a concrete {prefix: days} map."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {
+                "radar": {"retention_days": 3},
+                "ecmwf": {"retention_days": {"default": 2, "grib": 1}},
+            },
+        }
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            retention = Config(settings_path=settings_path).TILE_LIFECYCLE_RETENTION
+            assert retention["tiles/radar"] == 3
+            assert retention["cog/radar"] == 3
+            assert retention["grib/models/ecmwf"] == 1
+            assert retention["tiles/models/ecmwf"] == 2
+            # A source with no retention_days falls back to the default (1 day).
+            assert retention["tiles/models/gfs"] == 1
+
     def test_radar_stations_invalid_shape_fails_fast(self, tmp_path, env_vars):
         """An object with both whitelist and blacklist is rejected at startup."""
         path = self._settings_with_radar_stations(

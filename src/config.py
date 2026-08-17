@@ -13,6 +13,7 @@ from models.input_source_config import (
     INPUT_MODE_S3,
     InputSourceConfig,
 )
+from models.lifecycle_config import resolve_retention_map
 from models.radar_config import RadarStationFilter
 
 
@@ -107,9 +108,6 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
 
         # ---- Settings from settings.json (grouped by concern) ----
         self.TIMEZONE: str = settings["timezone"]
-
-        _tiles = settings.get("tiles", {})
-        self.TILE_RETENTION_DAYS: int = int(_tiles.get("retention_days", 1))
 
         # Metrics + metrics API (the /status backend service)
         _metrics = settings.get("metrics", {})
@@ -263,6 +261,11 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.LIGHT_QUEUE_WRF_PRODUCTS: frozenset[str] = self._parse_light_queue(
             _wrf.get("light_queue"), self.ENABLED_WRF_PRODUCTS.keys()
         )
+
+        # Tile-bucket S3 lifecycle: {prefix: days}, resolved from each source's
+        # retention_days. One non-overlapping rule per prefix is applied at
+        # worker boot (see S3Client.configure_lifecycle_policy).
+        self.TILE_LIFECYCLE_RETENTION: dict[str, int] = resolve_retention_map(_sources)
 
         # Job Configuration
         self.JOB_TTL_MINUTES: int = int(self._get_required_env("JOB_TTL_MINUTES"))
@@ -531,4 +534,11 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("METRICS_MAX_ROWS: %s", self.METRICS_MAX_ROWS)
         logger.info("METRICS_API_PORT: %s", self.METRICS_API_PORT)
         logger.info("METRICS_API_KEY: %s", "set" if self.METRICS_API_KEY else "unset")
+        logger.info(
+            "TILE_LIFECYCLE_RETENTION: %s",
+            ", ".join(
+                f"{prefix}={days}d"
+                for prefix, days in sorted(self.TILE_LIFECYCLE_RETENTION.items())
+            ),
+        )
         logger.info("=====================")

@@ -409,7 +409,7 @@ def run_worker(config: Config) -> None:
         # Ensure bucket exists and configure lifecycle
         loop.run_until_complete(s3_client.ensure_bucket_exists())
         loop.run_until_complete(
-            s3_client.configure_lifecycle_policy(config.TILE_RETENTION_DAYS)
+            s3_client.configure_lifecycle_policy(config.TILE_LIFECYCLE_RETENTION)
         )
         logger.info("S3 per-prefix lifecycle configured for tile expiration")
     finally:

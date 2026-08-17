@@ -12,7 +12,6 @@ from botocore import UNSIGNED
 from botocore.exceptions import ClientError
 from clients.s3_client import (
     S3Client,
-    TILE_LIFECYCLE_RETENTION_DAYS,
     _CONNECT_TIMEOUT_S,
     _MAX_ATTEMPTS,
     _READ_TIMEOUT_S,
@@ -651,35 +650,40 @@ class TestS3ClientUploadDirectory:
         assert len(debug_failures) == 5
 
 
+_SAMPLE_RETENTION = {
+    "tiles/radar": 1,
+    "cog/radar": 1,
+    "tiles/wrf": 2,
+    "grib/models/ecmwf": 1,
+    "geojson/models/ecmwf": 2,
+}
+
+
 class TestBuildLifecycleRules:
-    """Tests for the pure per-prefix lifecycle-rule builder."""
+    """Tests for the pure per-prefix lifecycle-rule builder.
+
+    The builder takes a resolved ``{prefix: days}`` map (produced by
+    ``models.lifecycle_config.resolve_retention_map`` from settings.json), so it
+    is exercised here with a representative sample rather than any real map.
+    """
 
     def test_one_rule_per_prefix_and_no_empty_catchall(self):
-        rules = _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+        rules = _build_lifecycle_rules(_SAMPLE_RETENTION)
 
-        assert len(rules) == len(TILE_LIFECYCLE_RETENTION_DAYS)
+        assert len(rules) == len(_SAMPLE_RETENTION)
         prefixes = [r["Filter"]["Prefix"] for r in rules]
         assert "" not in prefixes  # R1: no empty-prefix catch-all
-        assert set(prefixes) == set(TILE_LIFECYCLE_RETENTION_DAYS)
+        assert set(prefixes) == set(_SAMPLE_RETENTION)
 
-    def test_expected_prefix_to_days_mapping(self):
+    def test_days_pass_through_per_prefix(self):
         days_by_prefix = {
             r["Filter"]["Prefix"]: r["Expiration"]["Days"]
-            for r in _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+            for r in _build_lifecycle_rules(_SAMPLE_RETENTION)
         }
         assert days_by_prefix["tiles/radar"] == 1
         assert days_by_prefix["tiles/wrf"] == 2
         assert days_by_prefix["grib/models/ecmwf"] == 1
         assert days_by_prefix["geojson/models/ecmwf"] == 2
-
-    def test_every_gfs_prefix_expires_in_one_day(self):
-        """Each artifact GFS writes must match a rule, or it never expires."""
-        days_by_prefix = {
-            r["Filter"]["Prefix"]: r["Expiration"]["Days"]
-            for r in _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
-        }
-        for prefix in ("tiles", "cog", "geojson", "grib"):
-            assert days_by_prefix[f"{prefix}/models/gfs"] == 1
 
     def test_sub_day_retention_rounds_up_to_one_and_ids_unique(self):
         rules = _build_lifecycle_rules(
@@ -690,8 +694,8 @@ class TestBuildLifecycleRules:
         ids = [r["ID"] for r in rules]
         assert len(ids) == len(set(ids))
 
-    def test_real_map_has_unique_ids_and_is_sorted(self):
-        rules = _build_lifecycle_rules(TILE_LIFECYCLE_RETENTION_DAYS)
+    def test_ids_unique_and_prefixes_sorted(self):
+        rules = _build_lifecycle_rules(_SAMPLE_RETENTION)
         ids = [r["ID"] for r in rules]
         prefixes = [r["Filter"]["Prefix"] for r in rules]
         assert len(ids) == len(set(ids))
