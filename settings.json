@@ -51,6 +51,7 @@
     "enable_wrf_CAPE_BRN": true,
     "enable_wrf_Granizo": true
   },
+  "radar_stations": "all",
   "light_queue": {
     "radar": true,
     "wrf": [

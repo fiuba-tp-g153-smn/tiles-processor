@@ -18,6 +18,7 @@ from data_sources.radar_repository import (
 from factories import create_data_source_registry
 from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
 from models.input_source_config import InputSourceConfig
+from models.radar_config import RadarStationFilter
 
 
 class TestCreateDataSourceRegistry:
@@ -30,6 +31,7 @@ class TestCreateDataSourceRegistry:
         config.ENABLE_GLM_TOE = False
         config.ENABLE_GLM_MFA = False
         config.ENABLED_RADAR_PRODUCTS = {}
+        config.RADAR_STATION_FILTER = RadarStationFilter("all")
         config.ENABLE_ECMWF_PRECIPITATION = tp
         config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE = mslp
         config.ECMWF_OPENDATA_SOURCES = ("ecmwf", "azure", "aws")

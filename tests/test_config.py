@@ -338,3 +338,60 @@ class TestConfig:
             assert config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE is True
             assert config.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE == 0.5
             assert config.ECMWF_MSLP_SMOOTHING_SIGMA == 2.5
+
+    @staticmethod
+    def _settings_with_radar_stations(tmp_path, radar_stations):
+        """Write a minimal settings.json carrying the given radar_stations block."""
+        settings = {
+            "timezone": "UTC",
+            "features": {},
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+        }
+        if radar_stations is not None:
+            settings["radar_stations"] = radar_stations
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(json.dumps(settings))
+        return settings_path
+
+    def test_radar_stations_absent_defaults_to_all(self, temp_settings_file, env_vars):
+        """No radar_stations key -> an "all" filter (every station enabled)."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            assert config.RADAR_STATION_FILTER.mode == "all"
+            assert config.RADAR_STATION_FILTER.allows("RMA7") is True
+
+    def test_radar_stations_string_none_disables_all(self, tmp_path, env_vars):
+        """The "none" shorthand disables every station."""
+        path = self._settings_with_radar_stations(tmp_path, "none")
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=path)
+            assert config.RADAR_STATION_FILTER.mode == "none"
+            assert config.RADAR_STATION_FILTER.allows("RMA1") is False
+
+    def test_radar_stations_whitelist(self, tmp_path, env_vars):
+        """A whitelist enables only the listed stations."""
+        path = self._settings_with_radar_stations(
+            tmp_path, {"whitelist": ["RMA1", "RMA3"]}
+        )
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            rf = Config(settings_path=path).RADAR_STATION_FILTER
+            assert rf.mode == "whitelist"
+            assert rf.stations == frozenset({"RMA1", "RMA3"})
+            assert rf.allows("RMA1") and not rf.allows("RMA2")
+
+    def test_radar_stations_blacklist(self, tmp_path, env_vars):
+        """A blacklist enables every station except the listed ones."""
+        path = self._settings_with_radar_stations(tmp_path, {"blacklist": ["RMA3"]})
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            rf = Config(settings_path=path).RADAR_STATION_FILTER
+            assert rf.mode == "blacklist"
+            assert not rf.allows("RMA3") and rf.allows("RMA1")
+
+    def test_radar_stations_invalid_shape_fails_fast(self, tmp_path, env_vars):
+        """An object with both whitelist and blacklist is rejected at startup."""
+        path = self._settings_with_radar_stations(
+            tmp_path, {"whitelist": ["RMA1"], "blacklist": ["RMA2"]}
+        )
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(ValueError, match="radar_stations"):
+                Config(settings_path=path)

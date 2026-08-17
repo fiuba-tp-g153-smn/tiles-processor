@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from data_sources.base import DiscoveryConfig
 from data_sources.radar import RadarDataSource
-from models.radar_config import RADAR_PRODUCT_CONFIGS
+from models.radar_config import RADAR_PRODUCT_CONFIGS, RadarStationFilter
 
 DBZH_CONFIG = RADAR_PRODUCT_CONFIGS["DBZH"]
 
@@ -112,6 +112,62 @@ async def test_discover_images_caps_per_radar_location():
     # Verify most-recent files were kept (descending sort → highest timestamps)
     rma1_ids = sorted([img.image_id for img in rma1_results], reverse=True)
     assert rma1_ids == sorted(rma1_ids, reverse=True)
+
+
+@pytest.mark.asyncio
+async def test_station_filter_whitelist_keeps_only_listed():
+    # DBZH present for RMA1 and RMA2, but the whitelist only allows RMA1.
+    files = [
+        "/data/RMA1_0315_01_DBZH_20260114T170000Z.H5",
+        "/data/RMA2_0315_01_DBZH_20260114T170500Z.H5",
+    ]
+    source = RadarDataSource(
+        DBZH_CONFIG,
+        make_repo(files),
+        station_filter=RadarStationFilter("whitelist", frozenset({"RMA1"})),
+    )
+    images = await source.discover_images(make_discovery_config())
+    assert [img.image_id for img in images] == ["RMA1_DBZH_20260114T170000Z"]
+
+
+@pytest.mark.asyncio
+async def test_station_filter_blacklist_drops_listed():
+    # The blacklist excludes RMA2; every other station still passes.
+    files = [
+        "/data/RMA1_0315_01_DBZH_20260114T170000Z.H5",
+        "/data/RMA2_0315_01_DBZH_20260114T170500Z.H5",
+    ]
+    source = RadarDataSource(
+        DBZH_CONFIG,
+        make_repo(files),
+        station_filter=RadarStationFilter("blacklist", frozenset({"RMA2"})),
+    )
+    images = await source.discover_images(make_discovery_config())
+    assert [img.image_id for img in images] == ["RMA1_DBZH_20260114T170000Z"]
+
+
+@pytest.mark.asyncio
+async def test_station_filter_none_mode_discovers_nothing():
+    # A "none" filter yields no work even though files for this product exist.
+    files = ["/data/RMA1_0315_01_DBZH_20260114T170000Z.H5"]
+    source = RadarDataSource(
+        DBZH_CONFIG, make_repo(files), station_filter=RadarStationFilter("none")
+    )
+    images = await source.discover_images(make_discovery_config())
+    assert images == []
+
+
+@pytest.mark.asyncio
+async def test_no_station_filter_discovers_all_stations():
+    # The default (None) means every station is enabled — the behavior before
+    # per-radar gating existed, and equivalent to a RadarStationFilter("all").
+    files = [
+        "/data/RMA1_0315_01_DBZH_20260114T170000Z.H5",
+        "/data/RMA2_0315_01_DBZH_20260114T170500Z.H5",
+    ]
+    source = RadarDataSource(DBZH_CONFIG, make_repo(files), station_filter=None)
+    images = await source.discover_images(make_discovery_config())
+    assert len(images) == 2
 
 
 @pytest.mark.asyncio

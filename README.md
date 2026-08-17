@@ -296,6 +296,7 @@ MinIO Console: `http://localhost:9001`
     "enable_radar_KDP": true,
     "enable_radar_VRAD": true
   },
+  "radar_stations": "all",
   "bounds": {
     "minx": -110.0,
     "miny": -60.0,
@@ -309,6 +310,20 @@ MinIO Console: `http://localhost:9001`
 - **`features`**: Enable/disable individual products without restarting containers.
 - **`bounds`**: Geographic clip region in EPSG:4326. Applied to all outputs.
 - **`radar_input_dir`**: Directory scanned for `.H5` radar files.
+- **`radar_stations`**: Which radar stations (RMA1, RMA2, …) to process, combined
+  with the `enable_radar_*` product flags as an **AND** (a station×product pair
+  runs only if both allow it). Four shapes, defaulting to `"all"` when absent:
+
+  ```jsonc
+  "radar_stations": "all"                              // every station (default)
+  "radar_stations": "none"                             // no radar processing
+  "radar_stations": { "whitelist": ["RMA1", "RMA2"] }  // only these stations
+  "radar_stations": { "blacklist": ["RMA3", "RMA7"] }  // every station except these
+  ```
+
+  Station IDs are matched against the first token of each radar filename
+  (`RMA1_0315_01_DBZH_…H5`). A blacklist covers new stations automatically; an
+  ambiguous value (e.g. both keys, or an unknown string) fails fast at startup.
 
 ## Generating Secure Credentials
 

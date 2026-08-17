@@ -8,6 +8,7 @@ from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
 from data_sources.radar_repository import RadarFileRepository
 from models.radar_config import (
     RadarProductConfig,
+    RadarStationFilter,
     parse_radar_filename,
 )
 
@@ -33,7 +34,10 @@ class RadarDataSource(DataSource):
     TARGET_IMAGES = 12
 
     def __init__(
-        self, product_config: RadarProductConfig, repository: RadarFileRepository
+        self,
+        product_config: RadarProductConfig,
+        repository: RadarFileRepository,
+        station_filter: RadarStationFilter | None = None,
     ):
         """
         Initialize Radar data source for a specific product.
@@ -41,9 +45,15 @@ class RadarDataSource(DataSource):
         Args:
             product_config: Configuration for the radar product
             repository: Repository for listing and downloading H5 files
+            station_filter: Decides which radar stations to discover; ``None``
+                means every station (equivalent to a "all" filter). Combines
+                with the product-level feature flag as an AND — this source only
+                runs when its product is enabled, and within it only stations the
+                filter allows pass.
         """
         self._product_config = product_config
         self._repository = repository
+        self._station_filter = station_filter
 
     @property
     def source_id(self) -> str:
@@ -83,6 +93,7 @@ class RadarDataSource(DataSource):
             return []
 
         new_images = []
+        skipped_disabled_radar = 0
 
         for source_uri in source_uris:
             filepath = Path(source_uri)
@@ -94,6 +105,15 @@ class RadarDataSource(DataSource):
 
             # Filter by product (DBZH, VRAD, RHOHV, etc.)
             if parsed["variable"] != self._product_config.product_id:
+                continue
+
+            # Filter by radar station: an operator can whitelist/blacklist
+            # individual radars in settings.json (radar_stations). ``None`` =
+            # every station enabled.
+            if self._station_filter is not None and not self._station_filter.allows(
+                parsed["radar_id"]
+            ):
+                skipped_disabled_radar += 1
                 continue
 
             # Filtrar por subvolumen: cada producto define qué subvolumen usar
@@ -138,6 +158,13 @@ class RadarDataSource(DataSource):
         for images in by_radar.values():
             images.sort(key=lambda img: img.image_id, reverse=True)
             target_images.extend(images[: self.TARGET_IMAGES])
+
+        if skipped_disabled_radar:
+            logger.info(
+                "[%s] Skipped %d files from radars disabled in config",
+                self.source_id,
+                skipped_disabled_radar,
+            )
 
         logger.info(
             "[%s] Found %d new files, publishing %d (limit %d, from %d total H5 files)",

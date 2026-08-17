@@ -13,6 +13,7 @@ from models.input_source_config import (
     INPUT_MODE_S3,
     InputSourceConfig,
 )
+from models.radar_config import RadarStationFilter
 
 
 class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
@@ -170,6 +171,15 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             pid: settings["features"].get(f"enable_radar_{pid}", False)
             for pid in _radar_product_ids
         }
+
+        # Per-radar-station enablement (SINARAME RMA network). Combines with the
+        # per-product flags above as an AND: a (radar, product) pair is processed
+        # iff the product is enabled AND the station filter allows the radar.
+        # Accepts "all" (default when absent), "none", {"whitelist": [...]}, or
+        # {"blacklist": [...]}; see RadarStationFilter for the semantics.
+        self.RADAR_STATION_FILTER: RadarStationFilter = (
+            RadarStationFilter.from_settings(settings.get("radar_stations"))
+        )
 
         # Metrics + metrics API (the /status backend service)
         self.ENABLE_METRICS: bool = settings["features"].get("enable_metrics", True)
@@ -406,6 +416,12 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("GFS_MAX_STEPS_PER_TICK: %s", self.GFS_MAX_STEPS_PER_TICK)
         for pid, enabled in self.ENABLED_RADAR_PRODUCTS.items():
             logger.info("ENABLE_RADAR_%s: %s", pid, enabled)
+        _radar_filter = self.RADAR_STATION_FILTER
+        logger.info(
+            "RADAR_STATION_FILTER: mode=%s stations=%s",
+            _radar_filter.mode,
+            ", ".join(sorted(_radar_filter.stations)) or "-",
+        )
         logger.info("RADAR_INPUT_DIR: %s", self.RADAR_INPUT_DIR)
         logger.info("GLM_FOLDER_INPUT_DIR: %s", self.GLM_FOLDER_INPUT_DIR)
         for name, src in (

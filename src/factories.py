@@ -138,7 +138,9 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     if config is not None:
         repository = _create_radar_repository(config)
         for _product_id, product_config in RADAR_PRODUCT_CONFIGS.items():
-            registry.register(RadarDataSource(product_config, repository))
+            registry.register(
+                RadarDataSource(product_config, repository, config.RADAR_STATION_FILTER)
+            )
 
     # Register WRF data sources for each enabled product
     if config is not None:

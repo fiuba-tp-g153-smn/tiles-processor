@@ -6,6 +6,75 @@ filename parsing utilities. Color palettes are now in radar_palettes.py.
 """
 
 from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True, slots=True)
+class RadarStationFilter:
+    """Decides which radar stations (RMA1, RMA2, …) are processed.
+
+    Radar IDs are discovered at runtime (parsed from filenames), never fixed in
+    config, so the choice is modeled as a per-station predicate rather than a
+    materialized set — this lets a blacklist work without enumerating every
+    station up front, and a brand-new radar is covered automatically.
+
+    Accepted ``radar_stations`` shapes in settings.json (see ``from_settings``):
+        "all"                          -> every station (also the default)
+        "none"                         -> no station
+        {"whitelist": ["RMA1", ...]}   -> only the listed stations
+        {"blacklist": ["RMA3", ...]}   -> every station except the listed ones
+    """
+
+    mode: str
+    stations: frozenset[str] = frozenset()
+
+    def allows(self, radar_id: str) -> bool:
+        """Return True if ``radar_id`` should be processed under this filter."""
+        if self.mode == "all":
+            return True
+        if self.mode == "none":
+            return False
+        if self.mode == "whitelist":
+            return radar_id in self.stations
+        return radar_id not in self.stations  # blacklist
+
+    @classmethod
+    def from_settings(cls, raw: Any) -> "RadarStationFilter":
+        """Build a filter from the raw ``radar_stations`` settings value.
+
+        ``None`` (key absent) defaults to "all" — the historical behavior of
+        processing every discovered radar. Ambiguous/malformed values fail fast
+        with a message that names the offending shape.
+        """
+        if raw is None or raw == "all":
+            return cls("all")
+        if raw == "none":
+            return cls("none")
+        if isinstance(raw, dict):
+            return cls._from_dict(raw)
+        raise ValueError(
+            'radar_stations must be "all", "none", or an object with exactly '
+            f'one of "whitelist"/"blacklist", got {raw!r}'
+        )
+
+    @classmethod
+    def _from_dict(cls, raw: dict) -> "RadarStationFilter":
+        has_white = "whitelist" in raw
+        has_black = "blacklist" in raw
+        if has_white == has_black:
+            raise ValueError(
+                'radar_stations object needs exactly one of "whitelist"/'
+                f'"blacklist" (got keys {sorted(raw)})'
+            )
+        mode = "whitelist" if has_white else "blacklist"
+        stations = raw[mode]
+        if not isinstance(stations, list) or not all(
+            isinstance(s, str) for s in stations
+        ):
+            raise ValueError(
+                f'radar_stations "{mode}" must be a list of station-ID strings'
+            )
+        return cls(mode, frozenset(stations))
 
 
 @dataclass(frozen=True, slots=True)

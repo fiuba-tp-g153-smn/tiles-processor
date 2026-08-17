@@ -20,3 +20,4 @@ sftpgo/
 .fuse_*
 data_rustfs/
 *.grib2.*.idx
+CODE_REVIEW.md
