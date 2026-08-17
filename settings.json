@@ -10,6 +10,9 @@
     "enabled": true,
     "max_rows": 1000000
   },
+  "scheduler": {
+    "discovery_cron": "*/5 * * * *"
+  },
   "sources": {
     "goes19": {
       "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },

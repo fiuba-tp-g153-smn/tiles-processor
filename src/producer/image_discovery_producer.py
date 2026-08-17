@@ -52,9 +52,6 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
     8. Marks images as in-progress in SQLite before publishing
     """
 
-    # Default schedule: every 5 minutes
-    DEFAULT_CRON = "*/5 * * * *"
-
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         config: Config,
@@ -466,8 +463,8 @@ def run_producer(config: Config) -> None:
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("Error in discovery job: %s", e)
 
-    # Add job with cron trigger (every 5 minutes by default)
-    cron_schedule = ImageDiscoveryProducer.DEFAULT_CRON
+    # Add job with cron trigger (whole-pipeline discovery tick, from settings.json)
+    cron_schedule = config.DISCOVERY_CRON
     scheduler.add_job(
         job_wrapper,
         CronTrigger.from_crontab(cron_schedule),

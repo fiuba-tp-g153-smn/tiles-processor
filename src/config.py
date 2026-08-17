@@ -110,6 +110,12 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # ---- Settings from settings.json (grouped by concern) ----
         self.TIMEZONE: str = settings["timezone"]
 
+        # Scheduler cadence: the whole-pipeline discovery tick.
+        _scheduler = settings.get("scheduler", {})
+        self.DISCOVERY_CRON: str = self._validate_cron(
+            _scheduler.get("discovery_cron", "*/5 * * * *"), "scheduler.discovery_cron"
+        )
+
         # Metrics + metrics API (the /status backend service)
         _metrics = settings.get("metrics", {})
         self.ENABLE_METRICS: bool = _metrics.get("enabled", True)
@@ -386,6 +392,13 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
 
     @staticmethod
+    def _validate_cron(value: Any, name: str) -> str:
+        """Validate a 5-field cron string; deeper parsing happens in APScheduler."""
+        if not isinstance(value, str) or len(value.split()) != 5:
+            raise ValueError(f"{name} must be a 5-field cron string, got {value!r}")
+        return value
+
+    @staticmethod
     def _opt_int(raw: Any, name: str, *, minimum: int = 1) -> int | None:
         """Validate an optional integer setting; ``None`` (unset) passes through.
 
@@ -499,6 +512,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("=== Configuration ===")
         logger.info("LOG_LEVEL: %s", self.LOG_LEVEL)
         logger.info("TIMEZONE: %s", self.TIMEZONE)
+        logger.info("DISCOVERY_CRON: %s", self.DISCOVERY_CRON)
         logger.info("ENABLE_BAND_13: %s", self.ENABLE_BAND_13)
         logger.info("ENABLE_BAND_9: %s", self.ENABLE_BAND_9)
         logger.info("ENABLE_BAND_2: %s", self.ENABLE_BAND_2)

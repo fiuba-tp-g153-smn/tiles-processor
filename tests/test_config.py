@@ -390,6 +390,38 @@ class TestConfig:
             assert rf.mode == "blacklist"
             assert not rf.allows("RMA3") and rf.allows("RMA1")
 
+    def test_discovery_cron_defaults_when_absent(self, temp_settings_file, env_vars):
+        """No scheduler block -> the every-5-minutes default."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            assert (
+                Config(settings_path=temp_settings_file).DISCOVERY_CRON == "*/5 * * * *"
+            )
+
+    def test_discovery_cron_override(self, tmp_path, env_vars):
+        """A scheduler.discovery_cron overrides the default."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "scheduler": {"discovery_cron": "*/10 * * * *"},
+        }
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            assert Config(settings_path=path).DISCOVERY_CRON == "*/10 * * * *"
+
+    def test_discovery_cron_rejects_malformed(self, tmp_path, env_vars):
+        """A cron that is not 5 fields fails fast."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "scheduler": {"discovery_cron": "*/5 * *"},
+        }
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(ValueError, match="scheduler.discovery_cron"):
+                Config(settings_path=path)
+
     def test_discovery_knobs_parse_from_sources(self, tmp_path, env_vars):
         """Per-source discovery/cadence knobs are read into config attributes."""
         settings = {

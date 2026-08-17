@@ -287,6 +287,7 @@ input, product toggles, retention, and tuning live together.
   "timezone": "America/Argentina/Buenos_Aires",
   "bounds": { "minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0 },
   "metrics": { "enabled": true, "max_rows": 1000000 },
+  "scheduler": { "discovery_cron": "*/5 * * * *" },
   "sources": {
     "goes19": {
       "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
@@ -338,6 +339,8 @@ input, product toggles, retention, and tuning live together.
 
 - **`bounds`**: Geographic clip region in EPSG:4326. Applied to all outputs.
 - **`metrics`**: `enabled` toggles the /status backend; `max_rows` caps `metrics.db`.
+- **`scheduler.discovery_cron`**: 5-field cron for the whole-pipeline discovery
+  tick (default `"*/5 * * * *"` — every 5 minutes). A non-5-field value fails fast.
 - **`sources.<name>.input`**: `mode` (`local`/`s3`), `dir` for local, or
   `s3_bucket`/`s3_endpoint`/`s3_prefix`/`s3_secure` for S3. Credentials come from
   `<NAME>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars (unset = anonymous).
