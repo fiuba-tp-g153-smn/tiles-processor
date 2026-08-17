@@ -11,6 +11,7 @@ import pandas as pd
 import xarray as xr
 
 from config import Config
+from exceptions import UnprocessableInputError
 from factories import create_s3_client
 from models.ecmwf_config import ECMWF_MSLP_CONFIG
 from models.work_unit import WorkUnit
@@ -22,6 +23,21 @@ logger = logging.getLogger(__name__)
 
 _PA_TO_HPA = 100.0
 _ISOBAR_STEP_HPA = 5.0
+
+
+def _select_step(var: xr.DataArray, hours: int) -> xr.DataArray:
+    """Select a forecast step, raising a clean domain error if it is absent.
+
+    A missing step would otherwise raise an opaque ``KeyError``/``ValueError``;
+    ``UnprocessableInputError`` makes the worker skip the unit visibly (ack, no
+    retry) instead of crashing the job.
+    """
+    try:
+        return var.sel(step=pd.Timedelta(hours=hours))
+    except (KeyError, ValueError) as exc:
+        raise UnprocessableInputError(
+            f"forecast step T+{hours}h absent in GRIB"
+        ) from exc
 
 
 class EcmwfMslpProcessor(ImageProcessor):
@@ -58,7 +74,9 @@ class EcmwfMslpProcessor(ImageProcessor):
         if not grib_path.exists():
             raise FileNotFoundError(f"GRIB file not found: {grib_path}")
 
-        work_dir = self._ensure_dir(self._get_band_dir(work_unit) / work_unit.image_id)
+        work_dir = self._ensure_dir(
+            self._get_band_dir(work_unit) / self._work_dir_leaf(work_unit)
+        )
         output_dir = self._ensure_dir(work_dir / "outputs")
 
         with self._time_stage("load"):
@@ -104,7 +122,7 @@ class EcmwfMslpProcessor(ImageProcessor):
             "[ECMWF-MSLP] Step 2: Selecting step T+%dh and converting Pa→hPa",
             hour_end,
         )
-        msl_step = msl_var.sel(step=pd.Timedelta(hours=hour_end))
+        msl_step = _select_step(msl_var, hour_end)
         msl_hpa = msl_step / _PA_TO_HPA
 
         del msl_var, msl_step, ds

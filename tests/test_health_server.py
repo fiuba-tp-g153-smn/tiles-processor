@@ -111,3 +111,16 @@ class TestHealthServer:
 
         finally:
             server.stop()
+
+    def test_ready_path_is_not_served(self, port):
+        """There is deliberately no /ready route (nothing in the stack probes it)."""
+        server = HealthCheckServer(port=port, check_readiness=lambda: (True, "ok"))
+        server.start()
+
+        time.sleep(0.1)
+
+        try:
+            assert requests.get(f"http://localhost:{port}/ready").status_code == 404
+
+        finally:
+            server.stop()

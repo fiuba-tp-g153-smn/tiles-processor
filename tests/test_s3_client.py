@@ -353,6 +353,40 @@ class TestS3ClientDownloadFolder:
 
             assert result == {}
 
+    @pytest.mark.asyncio
+    async def test_download_folder_records_failed_file_as_none_and_warns(self, caplog):
+        """A hard download failure surfaces as a ``None`` entry (not silently
+        dropped) and is logged at WARNING, so the caller can see the gap."""
+        from contextlib import asynccontextmanager
+
+        client = S3Client(bucket_name="test-bucket")
+
+        @asynccontextmanager
+        async def _fake_session():
+            yield AsyncMock()
+
+        async def _fake_download(_s3, fp, **_kwargs):
+            return (fp, None if fp.endswith("bad.nc") else b"content")
+
+        with patch.object(
+            client,
+            "_get_folder_file_paths",
+            new_callable=AsyncMock,
+            return_value=["folder/good.nc", "folder/bad.nc"],
+        ), patch.object(client, "_client_session", _fake_session), patch.object(
+            client, "_download_file_internal", side_effect=_fake_download
+        ):
+            with caplog.at_level(logging.WARNING):
+                result = await client.download_folder("folder/", file_pattern=".nc")
+
+        assert result["folder/good.nc"] == b"content"
+        assert "folder/bad.nc" in result  # not silently dropped
+        assert result["folder/bad.nc"] is None  # surfaced as unavailable
+        assert any(
+            "bad.nc" in record.message and "Download failed" in record.message
+            for record in caplog.records
+        )
+
 
 class MockAsyncPaginator:
     """Helper class to mock async paginator."""

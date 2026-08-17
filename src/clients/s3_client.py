@@ -435,6 +435,12 @@ class S3Client:
             file_filter: Optional function to filter file paths before downloading
             local_cache_dir: Optional directory to check/store cached files
             skip_if: Optional function to skip download if true (returns None for content)
+
+        Returns:
+            One entry per matched key. A key mapped to ``None`` was either
+            skipped by ``skip_if`` or failed to download (each hard failure is
+            logged at WARNING); a key mapped to ``bytes`` downloaded/cached
+            successfully. Callers must not assume every entry has content.
         """
         file_paths = await self._get_folder_file_paths(folder_path, file_pattern)
 
@@ -495,12 +501,18 @@ class S3Client:
             )
 
             for file_path, downloaded in results:
-                if downloaded is not None:
-                    files[file_path] = downloaded
+                if downloaded is None:
+                    logger.warning(
+                        "Download failed for %s; recording it as unavailable "
+                        "(None) so the caller sees the gap",
+                        file_path,
+                    )
+                files[file_path] = downloaded
 
+        available = sum(1 for content in files.values() if content is not None)
         logger.info(
             "Download/Cache load completed: %d/%d files available",
-            len(files),
+            available,
             len(file_paths),
         )
         return files

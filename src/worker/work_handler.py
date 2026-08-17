@@ -21,7 +21,8 @@ from config import Config
 from data_sources import DataSourceRegistry
 from exceptions import SourceFileNotFoundError, UnprocessableInputError
 from models.work_unit import WorkUnit
-from worker.exit_codes import EXIT_SKIP_CODE, SKIP_REASON_PREFIX
+from processors.base_processor import ShutdownRequested
+from worker.exit_codes import EXIT_SHUTDOWN_CODE, EXIT_SKIP_CODE, SKIP_REASON_PREFIX
 from worker.inline_processor import InlineProcessor
 from worker.job_metrics_context import JobMetricsContext
 
@@ -61,6 +62,10 @@ class WorkHandler:
         # Live processing subprocesses (one per in-flight unit under
         # WORKER_CONCURRENCY). abort() signals all of them on shutdown.
         self._processes: set[Process] = set()
+        # Set once abort() runs, so a subprocess spawned by an in-flight unit
+        # *after* the shutdown signal (a unit still downloading when it arrived)
+        # is signaled at spawn time instead of escaping the drain.
+        self._aborting = False
 
     async def handle(
         self, work_unit: WorkUnit, collector: JobMetricsContext | None = None
@@ -147,7 +152,7 @@ class WorkHandler:
                     work_unit.processor_id,
                 )
                 await self._run_processing_subprocess(
-                    work_unit, str(local_path), metrics_sink
+                    work_unit, str(local_path), metrics_sink, attempt
                 )
                 if collector is not None:
                     collector.set_stage_timings(self._read_stage_timings(metrics_sink))
@@ -202,22 +207,27 @@ class WorkHandler:
 
         Called from the worker's signal handler (a synchronous context), so it
         signals the process groups directly rather than awaiting. A background
-        thread escalates to SIGKILL any group still alive after a grace period.
+        thread escalates to SIGKILL any group still alive after a grace period,
+        re-reading the live set so a subprocess spawned *after* this call — a unit
+        still downloading when the signal arrived — is caught too (it is also
+        SIGTERM'd at spawn time via the ``_aborting`` flag in
+        ``_run_processing_subprocess``).
         """
+        self._aborting = True
         procs = [p for p in self._processes if p.returncode is None]
-        if not procs:
-            return
-
-        logger.info(
-            "[HANDLER] Terminating %d subprocess group(s) for graceful shutdown...",
-            len(procs),
-        )
-        for proc in procs:
-            self._signal_group(proc, _signal.SIGTERM)
+        if procs:
+            logger.info(
+                "[HANDLER] Terminating %d subprocess group(s) for graceful shutdown...",
+                len(procs),
+            )
+            for proc in procs:
+                self._signal_group(proc, _signal.SIGTERM)
 
         def _force_kill():
             time.sleep(8)
-            for proc in procs:
+            # Re-read the live set rather than a one-shot snapshot, so a
+            # subprocess added after abort() is escalated here if it lingers.
+            for proc in list(self._processes):
                 if proc.returncode is None:
                     logger.warning(
                         "[HANDLER] Subprocess %s did not exit after SIGTERM; SIGKILL",
@@ -236,7 +246,11 @@ class WorkHandler:
             pass  # Already exited
 
     async def _run_processing_subprocess(
-        self, work_unit: WorkUnit, file_path: str, metrics_sink: Path
+        self,
+        work_unit: WorkUnit,
+        file_path: str,
+        metrics_sink: Path,
+        work_token: str | None = None,
     ) -> None:
         """
         Run image processing in a subprocess for memory isolation.
@@ -250,11 +264,16 @@ class WorkHandler:
             work_unit: The work unit to process
             file_path: Path to the downloaded file
             metrics_sink: Path where the subprocess writes per-stage timings
+            work_token: Per-attempt token forwarded to the processor so its
+                scratch dir is unique per attempt (same token as the download
+                dir's ``-{attempt}`` suffix); no two concurrent copies of the
+                same image can then rmtree each other's work dir.
 
         Raises:
             RuntimeError: If the subprocess fails or times out (includes error
                 details from the tail of its stderr).
         """
+        extra_args = [work_token] if work_token is not None else []
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
@@ -262,11 +281,17 @@ class WorkHandler:
             work_unit.to_json(),
             file_path,
             str(metrics_sink),
+            *extra_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
         self._processes.add(proc)
+        if self._aborting:
+            # Shutdown began while this unit was still downloading; signal the
+            # just-spawned group so it stops at its first checkpoint instead of
+            # running to completion (or the 30-min timeout) and hanging the drain.
+            self._signal_group(proc, _signal.SIGTERM)
 
         stderr_buffer: deque[str] = deque(maxlen=50)
         readers = asyncio.gather(
@@ -290,6 +315,14 @@ class WorkHandler:
                 # Deterministic unprocessable input — re-raise across the process
                 # boundary so the worker records SKIPPED (ack, no retry/DLQ).
                 raise UnprocessableInputError(self._extract_skip_reason(stderr_buffer))
+
+            if return_code == EXIT_SHUTDOWN_CODE:
+                # Graceful shutdown interrupted the subprocess at a checkpoint.
+                # Re-raise across the boundary so the worker nack-requeues the unit
+                # for redelivery (not retry/DLQ) — see worker._process_message_async.
+                raise ShutdownRequested(
+                    f"shutdown interrupted processing of {work_unit.image_id}"
+                )
 
             if return_code != 0:
                 error_details = (

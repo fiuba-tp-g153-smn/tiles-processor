@@ -1,5 +1,6 @@
 """Tests for ImageDiscoveryProducer duplicate prevention."""
 
+import logging
 import sys
 import os
 from datetime import datetime, UTC, timedelta
@@ -293,3 +294,81 @@ class TestOrphanReclaim:
 
         # Not reclaimed: a non-empty queue means it might just be backlogged.
         assert {r["image_id"] for r in tracker.list_in_progress()} == {"orphan"}
+
+
+class _RaisingDataSource(FakeDataSource):
+    """A source whose discovery always fails, simulating a persistently broken product."""
+
+    async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
+        raise RuntimeError("source is broken")
+
+
+class TestSourceFailureVisibility:
+    """BUG-06: a failing source must not silently vanish into the totals."""
+
+    def _make_producer(self, mock_config, progress_tracker, mq_client, registry):
+        producer = ImageDiscoveryProducer.__new__(ImageDiscoveryProducer)
+        producer._config = mock_config
+        producer._mq_client = mq_client
+        producer._progress_tracker = progress_tracker
+        producer._data_source_registry = registry
+        producer._router = _make_router()
+        producer._s3_client = AsyncMock()
+        producer._s3_client.list_prefixes = AsyncMock(return_value=[])
+        return producer
+
+    @pytest.mark.asyncio
+    async def test_failing_source_is_logged_and_does_not_block_healthy_sources(
+        self, mock_config, progress_tracker, caplog
+    ):
+        """One broken source is swallowed (healthy sources still publish) but is
+        surfaced by name in a WARNING, so 'broken' is distinguishable from 'quiet'."""
+        registry = DataSourceRegistry()
+        healthy = BAND_CONFIGS["band_9"]
+        registry.register(FakeDataSource(healthy, _make_images(healthy, 2)))
+        registry.register(_RaisingDataSource(BAND_CONFIGS["band_13"], []))
+
+        mq_client = MagicMock()
+        producer = self._make_producer(
+            mock_config, progress_tracker, mq_client, registry
+        )
+
+        with caplog.at_level(logging.WARNING):
+            count = await producer.discover_and_publish()
+
+        # The healthy source still published despite the broken one.
+        assert count == 2
+        assert mq_client.publish.call_count == 2
+        # The broken source is named in a WARNING (quiet != broken).
+        assert any(
+            "sources FAILED" in record.getMessage()
+            and "goes19_abi_band_13" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_partial_publish_failure_logs_count_before_aborting(
+        self, mock_config, progress_tracker, caplog
+    ):
+        """A mid-batch publish failure logs how many units made it out before the
+        rest were dropped for the tick (self-heal next tick)."""
+        band_config = BAND_CONFIGS["band_9"]
+        registry = DataSourceRegistry()
+        registry.register(FakeDataSource(band_config, _make_images(band_config, 3)))
+
+        mq_client = MagicMock()
+        mq_client.publish.side_effect = [None, RuntimeError("broker down"), None]
+        producer = self._make_producer(
+            mock_config, progress_tracker, mq_client, registry
+        )
+
+        with caplog.at_level(logging.ERROR):
+            count = await producer.discover_and_publish()
+
+        # Publishing stopped at the failing 2nd unit; the source's count is lost.
+        assert mq_client.publish.call_count == 2
+        assert count == 0
+        assert any(
+            "aborted after 1/3 work units" in record.getMessage()
+            for record in caplog.records
+        )

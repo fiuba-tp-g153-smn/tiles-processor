@@ -11,7 +11,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import pytest
 from exceptions import SourceFileNotFoundError, UnprocessableInputError
 from models.work_unit import WorkUnit
-from worker.exit_codes import EXIT_SKIP_CODE, SKIP_REASON_PREFIX
+from processors.base_processor import ShutdownRequested
+from worker.exit_codes import EXIT_SHUTDOWN_CODE, EXIT_SKIP_CODE, SKIP_REASON_PREFIX
 from worker.work_handler import WorkHandler
 
 
@@ -242,6 +243,39 @@ async def test_handle_passes_collector_to_inline_processor(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_subprocess_forwards_work_token_in_argv(tmp_path):
+    """The per-attempt token is passed to the subprocess so the processor scopes
+    its scratch dir per attempt (the fix for the concurrent-clobber race)."""
+    handler = _handler()
+    proc = _FakeProcess(returncode=0)
+    spawn = AsyncMock(return_value=proc)
+
+    with patch("worker.work_handler.asyncio.create_subprocess_exec", spawn):
+        await handler._run_processing_subprocess(
+            _work_unit(), "/tmp/in.nc", tmp_path / "m.json", "tok1234"
+        )
+
+    argv = spawn.call_args.args  # positional args to create_subprocess_exec
+    assert argv[-1] == "tok1234"  # appended after json, file_path, metrics_sink
+
+
+@pytest.mark.asyncio
+async def test_subprocess_omits_token_when_absent(tmp_path):
+    """No token → no extra positional arg (metrics_sink stays last)."""
+    handler = _handler()
+    proc = _FakeProcess(returncode=0)
+    spawn = AsyncMock(return_value=proc)
+
+    with patch("worker.work_handler.asyncio.create_subprocess_exec", spawn):
+        await handler._run_processing_subprocess(
+            _work_unit(), "/tmp/in.nc", tmp_path / "m.json"
+        )
+
+    argv = spawn.call_args.args
+    assert argv[-1] == str(tmp_path / "m.json")
+
+
+@pytest.mark.asyncio
 async def test_handle_raises_source_file_not_found_when_download_missing(tmp_path):
     """A missing raw file → SourceFileNotFoundError; the work dir is still cleaned up."""
     config = MagicMock()
@@ -266,12 +300,51 @@ async def test_handle_raises_source_file_not_found_when_download_missing(tmp_pat
     assert cleaned, "finally-block work-dir cleanup must still run"
 
 
-def test_abort_is_a_noop_when_no_live_processes():
+def test_abort_with_no_live_processes_arms_escalation_for_late_spawns():
+    """No live subprocess → nothing to SIGTERM, but _aborting is set and the
+    escalation thread still starts so a subprocess spawned after abort is caught."""
     handler = _handler()
     with patch("worker.work_handler.os.killpg") as mock_killpg, patch(
         "worker.work_handler.Thread"
     ) as mock_thread:
         handler.abort()
 
-    mock_killpg.assert_not_called()
-    mock_thread.assert_not_called()
+    assert handler._aborting is True
+    mock_killpg.assert_not_called()  # no live proc to signal now
+    mock_thread.assert_called_once()  # escalation armed for a late spawn
+
+
+@pytest.mark.asyncio
+async def test_subprocess_shutdown_exit_raises_shutdown_requested(tmp_path):
+    """EXIT_SHUTDOWN_CODE crosses the process boundary as ShutdownRequested so the
+    worker nack-requeues (not retry/DLQ), independent of the shutdown flag."""
+    handler = _handler()
+    proc = _FakeProcess(returncode=EXIT_SHUTDOWN_CODE)
+
+    with _patch_spawn(proc):
+        with pytest.raises(ShutdownRequested):
+            await handler._run_processing_subprocess(
+                _work_unit(), "/tmp/in.nc", tmp_path / "m.json"
+            )
+
+    assert handler._processes == set()  # still discarded after
+
+
+@pytest.mark.asyncio
+async def test_abort_then_spawn_signals_the_late_subprocess(tmp_path):
+    """A subprocess spawned after abort() (unit still downloading when the signal
+    arrived) is SIGTERM'd at spawn time instead of escaping the drain (BUG-20)."""
+    handler = _handler()
+    signalled: list = []
+    handler._signal_group = lambda proc, sig: signalled.append((proc, sig))
+
+    handler.abort()  # sets _aborting; there are no live procs yet
+    proc = _FakeProcess(returncode=EXIT_SHUTDOWN_CODE)
+
+    with _patch_spawn(proc):
+        with pytest.raises(ShutdownRequested):
+            await handler._run_processing_subprocess(
+                _work_unit(), "/tmp/in.nc", tmp_path / "m.json"
+            )
+
+    assert (proc, signal.SIGTERM) in signalled  # just-spawned group was signalled

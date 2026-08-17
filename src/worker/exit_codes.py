@@ -10,6 +10,10 @@ EXIT_ERROR_CODE = 1
 # Input is deterministically unprocessable: the parent maps this to a SKIPPED
 # outcome (ack, no retry, no DLQ) instead of treating it as a failure.
 EXIT_SKIP_CODE = 2
+# Graceful shutdown (SIGTERM) interrupted processing at a checkpoint. Distinct
+# from a crash (ERROR) so the parent nack-requeues the unit for redelivery
+# instead of burning a retry/DLQ slot — independent of any shutdown-flag timing.
+EXIT_SHUTDOWN_CODE = 3
 
 # Normal subprocess logs go to stdout; stderr is reserved for real errors. The
 # subprocess prints the human-readable skip reason to stderr on a line with this

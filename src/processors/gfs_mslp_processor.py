@@ -56,7 +56,7 @@ class GfsMslpProcessor(ContourProcessor):
             "%s Processing %s (T+%dh)", _LOG, work_unit.image_id, step.step_hours
         )
         output_dir = self._ensure_dir(
-            self._get_band_dir(work_unit) / work_unit.image_id / "outputs"
+            self._get_band_dir(work_unit) / self._work_dir_leaf(work_unit) / "outputs"
         )
 
         with self._time_stage("load"):

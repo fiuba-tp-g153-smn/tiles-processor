@@ -246,6 +246,60 @@ class TestConfig:
             with pytest.raises(ValueError, match="glm_folder_s3_bucket"):
                 Config(settings_path=settings_path)
 
+    @staticmethod
+    def _settings_with_bounds(tmp_path, bounds):
+        """Write a minimal settings.json with the given bounds and return its path."""
+        settings = {"timezone": "UTC", "features": {}, "bounds": bounds}
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(json.dumps(settings))
+        return settings_path
+
+    def test_rejects_inverted_longitude_bounds(self, tmp_path, env_vars):
+        """minx >= maxx fails fast, naming the field."""
+        path = self._settings_with_bounds(
+            tmp_path, {"minx": -30, "miny": -60, "maxx": -90, "maxy": -15}
+        )
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(ValueError, match="BOUNDS_MINX"):
+                Config(settings_path=path)
+
+    def test_rejects_inverted_latitude_bounds(self, tmp_path, env_vars):
+        """miny >= maxy fails fast, naming the field."""
+        path = self._settings_with_bounds(
+            tmp_path, {"minx": -90, "miny": -15, "maxx": -30, "maxy": -60}
+        )
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(ValueError, match="BOUNDS_MINY"):
+                Config(settings_path=path)
+
+    def test_rejects_out_of_range_latitude(self, tmp_path, env_vars):
+        """A latitude outside [-90, 90] fails fast."""
+        path = self._settings_with_bounds(
+            tmp_path, {"minx": -90, "miny": -60, "maxx": -30, "maxy": 200}
+        )
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(ValueError, match="BOUNDS_MAXY"):
+                Config(settings_path=path)
+
+    def test_rejects_out_of_range_longitude(self, tmp_path, env_vars):
+        """A longitude outside [-180, 180] fails fast."""
+        path = self._settings_with_bounds(
+            tmp_path, {"minx": -500, "miny": -60, "maxx": -30, "maxy": -15}
+        )
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(ValueError, match="BOUNDS_MINX"):
+                Config(settings_path=path)
+
+    def test_accepts_valid_bounds(self, tmp_path, env_vars):
+        """A well-formed box constructs cleanly."""
+        path = self._settings_with_bounds(
+            tmp_path, {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15}
+        )
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=path)
+            assert config.BOUNDS_MINX == -90.0
+            assert config.BOUNDS_MAXY == -15.0
+
     def test_input_source_rejects_half_set_credentials(
         self, temp_settings_file, env_vars
     ):

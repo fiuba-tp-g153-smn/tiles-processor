@@ -250,10 +250,11 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
 
         # Bounding box (from JSON)
         # Coordinates are in EPSG:4326 (longitude/latitude)
-        self.BOUNDS_MINX: float = settings["bounds"]["minx"]  # West longitude
-        self.BOUNDS_MINY: float = settings["bounds"]["miny"]  # South latitude
-        self.BOUNDS_MAXX: float = settings["bounds"]["maxx"]  # East longitude
-        self.BOUNDS_MAXY: float = settings["bounds"]["maxy"]  # North latitude
+        self.BOUNDS_MINX: float = float(settings["bounds"]["minx"])  # West longitude
+        self.BOUNDS_MINY: float = float(settings["bounds"]["miny"])  # South latitude
+        self.BOUNDS_MAXX: float = float(settings["bounds"]["maxx"])  # East longitude
+        self.BOUNDS_MAXY: float = float(settings["bounds"]["maxy"])  # North latitude
+        self._validate_bounds()
 
     @staticmethod
     def _parse_gfs_access(settings: Dict[str, Any]) -> GfsAccessConfig:
@@ -330,6 +331,39 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             )
         with open(settings_path, "r", encoding="utf-8") as f:
             return json.load(f)
+
+    def _validate_bounds(self) -> None:
+        """Fail fast on a swapped/typo'd bounding box before it reaches every clip.
+
+        An inverted or out-of-range box silently yields empty/garbage clips for
+        every product (noticed only downstream as blank tiles), so reject it at
+        construction, naming the offending field — mirroring the WORKER_TYPE /
+        WORKER_CONCURRENCY checks above.
+        """
+        for name, lng in (
+            ("BOUNDS_MINX", self.BOUNDS_MINX),
+            ("BOUNDS_MAXX", self.BOUNDS_MAXX),
+        ):
+            if not -180.0 <= lng <= 180.0:
+                raise ValueError(
+                    f"{name} must be a longitude in [-180, 180], got {lng}"
+                )
+        for name, lat in (
+            ("BOUNDS_MINY", self.BOUNDS_MINY),
+            ("BOUNDS_MAXY", self.BOUNDS_MAXY),
+        ):
+            if not -90.0 <= lat <= 90.0:
+                raise ValueError(f"{name} must be a latitude in [-90, 90], got {lat}")
+        if self.BOUNDS_MINX >= self.BOUNDS_MAXX:
+            raise ValueError(
+                f"BOUNDS_MINX ({self.BOUNDS_MINX}) must be < "
+                f"BOUNDS_MAXX ({self.BOUNDS_MAXX})"
+            )
+        if self.BOUNDS_MINY >= self.BOUNDS_MAXY:
+            raise ValueError(
+                f"BOUNDS_MINY ({self.BOUNDS_MINY}) must be < "
+                f"BOUNDS_MAXY ({self.BOUNDS_MAXY})"
+            )
 
     def get_bounds(self) -> Dict[str, float]:
         """Get the bounding box configuration for clipping."""

@@ -26,6 +26,7 @@ from exceptions import UnprocessableInputError
 from processors.base_processor import ShutdownRequested
 from worker.exit_codes import (
     EXIT_ERROR_CODE,
+    EXIT_SHUTDOWN_CODE,
     EXIT_SKIP_CODE,
     EXIT_SUCCESS_CODE,
     SKIP_REASON_PREFIX,
@@ -100,7 +101,10 @@ async def _process_and_cleanup(processor, file_path: str, work_unit) -> None:
 
 
 def run_processing(
-    work_unit_json: str, file_path: str, metrics_sink: str | None = None
+    work_unit_json: str,
+    file_path: str,
+    metrics_sink: str | None = None,
+    work_token: str | None = None,
 ) -> None:
     """
     Run the heavy image processing in this subprocess.
@@ -110,6 +114,9 @@ def run_processing(
         file_path: Path to the downloaded file to process
         metrics_sink: Optional path where per-stage timings are written as JSON
             (read back by the parent worker to record performance metrics).
+        work_token: Optional per-attempt token from the handler; scopes the
+            processor's scratch dir so two concurrent copies of the same image
+            never share (and rmtree) a work dir.
     """
     # Import heavy modules here - they'll be unloaded when process exits
     # pylint: disable=import-outside-toplevel
@@ -142,6 +149,8 @@ def run_processing(
     processor = processor_class(config)
     if metrics_sink:
         processor.bind_metrics_sink(Path(metrics_sink))
+    if work_token:
+        processor.bind_work_token(work_token)
     logger.info(
         "[SUBPROCESS] Using %s for %s",
         processor_class.__name__,
@@ -164,25 +173,28 @@ def run_processing(
 
 def main() -> int:
     """Entry point for subprocess execution."""
-    if len(sys.argv) not in (3, 4):
+    if len(sys.argv) not in (3, 4, 5):
         print(
             "Usage: python -m worker.subprocess_processor "
-            "<work_unit_json> <file_path> [metrics_sink]",
+            "<work_unit_json> <file_path> [metrics_sink] [work_token]",
             file=sys.stderr,
         )
         return EXIT_ERROR_CODE
 
     work_unit_json = sys.argv[1]
     file_path = sys.argv[2]
-    metrics_sink = sys.argv[3] if len(sys.argv) == 4 else None
+    metrics_sink = sys.argv[3] if len(sys.argv) >= 4 else None
+    work_token = sys.argv[4] if len(sys.argv) == 5 else None
 
     try:
-        run_processing(work_unit_json, file_path, metrics_sink)
+        run_processing(work_unit_json, file_path, metrics_sink, work_token)
         return EXIT_SUCCESS_CODE
 
     except ShutdownRequested:
+        # Distinct from a crash: the parent maps this to a nack-requeue (redeliver)
+        # rather than a retry/DLQ, independent of any shutdown-flag timing.
         logging.info("[SUBPROCESS] Shutdown requested, exiting gracefully")
-        return EXIT_ERROR_CODE
+        return EXIT_SHUTDOWN_CODE
 
     except UnprocessableInputError as e:
         # Deterministic bad input: not a crash. Log a clean WARNING (stdout) and

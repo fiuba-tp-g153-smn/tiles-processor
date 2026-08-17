@@ -54,7 +54,7 @@ class GlmFedProcessor(ImageProcessor):
     def _setup_work_dirs(self, work_unit: WorkUnit) -> dict[str, Path]:
         """Per-product subdirs to keep FED/TOE/MFA outputs from colliding."""
         band_dir = self._get_band_dir(work_unit)
-        work_dir = self._ensure_dir(band_dir / work_unit.image_id)
+        work_dir = self._ensure_dir(band_dir / self._work_dir_leaf(work_unit))
         return {
             "work_dir": work_dir,
             "fed_geotiff": self._ensure_dir(work_dir / "fed" / "geotiff"),

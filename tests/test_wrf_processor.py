@@ -2,6 +2,7 @@ import os
 import shutil
 import sys
 import warnings
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
@@ -10,6 +11,7 @@ import pytest
 import rasterio
 from rasterio.errors import NotGeoreferencedWarning
 
+from exceptions import UnprocessableInputError
 from processors.wrf_processor import WrfProcessor
 
 
@@ -26,9 +28,7 @@ requires_gdal_cli = pytest.mark.skipif(
 
 def _curvilinear_grid(n: int = 8):
     """Small 2D lat/lon mesh standing in for the WRF Lambert grid."""
-    lon, lat = np.meshgrid(
-        np.linspace(-65.0, -60.0, n), np.linspace(-35.0, -30.0, n)
-    )
+    lon, lat = np.meshgrid(np.linspace(-65.0, -60.0, n), np.linspace(-35.0, -30.0, n))
     return lat, lon
 
 
@@ -49,9 +49,7 @@ class TestGcpWritersSuppressWarning:
             WrfProcessor._save_float_geotiff_gcp([data], lat, lon, out)
 
         assert out.exists()
-        assert not any(
-            isinstance(w.message, NotGeoreferencedWarning) for w in caught
-        )
+        assert not any(isinstance(w.message, NotGeoreferencedWarning) for w in caught)
 
     def test_save_rgba_geotiff_emits_no_warning(self, tmp_path):
         lat, lon = _curvilinear_grid()
@@ -63,9 +61,7 @@ class TestGcpWritersSuppressWarning:
             WrfProcessor._save_rgba_geotiff(rgba, lat, lon, out)
 
         assert out.exists()
-        assert not any(
-            isinstance(w.message, NotGeoreferencedWarning) for w in caught
-        )
+        assert not any(isinstance(w.message, NotGeoreferencedWarning) for w in caught)
 
     def test_suppressor_swallows_the_warning(self):
         """The helper itself silences exactly NotGeoreferencedWarning."""
@@ -165,3 +161,38 @@ class TestMultibandWarpEquivalence:
             assert np.array_equal(sep_arr, split_arr, equal_nan=True)
             assert sep_crs == split_crs
             assert sep_t.almost_equals(split_t)
+
+
+def _fake_f3d(levels, var_name="U"):
+    """Minimal FIELD3D stand-in: level k of the variable holds the value k."""
+    data = np.zeros((1, 1, len(levels), 2, 2))
+    for k in range(len(levels)):
+        data[0, 0, k, :, :] = k
+    return SimpleNamespace(
+        variables={"plev": np.array(levels, dtype=float), var_name: data}
+    )
+
+
+class TestReadVarLevelSelection:
+    """_read_var picks the nearest pressure level within tolerance, else skips."""
+
+    def test_selects_nearest_level_within_tolerance(self):
+        # 850.0001 (float32 rounding of a stored 850 hPa level) still resolves to
+        # the 850 hPa index (1) instead of missing on an exact `==`.
+        f3d = _fake_f3d([1000.0, 850.0, 500.0])
+        out = WrfProcessor._read_var(
+            None, f3d, var="U", level_hpa=850.0001, use_field3d=True
+        )
+        assert np.allclose(out, 1.0)
+
+    def test_raises_when_level_absent(self):
+        f3d = _fake_f3d([1000.0, 850.0, 500.0])
+        with pytest.raises(UnprocessableInputError, match="900"):
+            WrfProcessor._read_var(
+                None, f3d, var="U", level_hpa=900.0, use_field3d=True
+            )
+
+    def test_raises_when_level_missing(self):
+        f3d = _fake_f3d([1000.0, 850.0, 500.0])
+        with pytest.raises(UnprocessableInputError):
+            WrfProcessor._read_var(None, f3d, var="U", level_hpa=None, use_field3d=True)

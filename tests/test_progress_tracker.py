@@ -46,6 +46,22 @@ def test_get_in_progress_images_filters_by_band(tmp_path):
     assert tracker.get_in_progress_images("band_9") == {"b"}
 
 
+def test_timestamps_stored_as_iso8601_strings(tmp_path):
+    """Timestamps are bound as ISO8601 strings (not deprecated datetime adapters)."""
+    from datetime import datetime
+
+    tracker = ProgressTracker(tmp_path / "p.db")
+    tracker.mark_in_progress("img1", "band_13")
+
+    row = tracker.list_in_progress()[0]
+    for field in ("created_at", "updated_at"):
+        value = row[field]
+        assert isinstance(value, str)
+        assert "T" in value, "expected ISO8601 'T' separator, not the space format"
+        # Round-trips cleanly through fromisoformat (tz-aware, +00:00 offset).
+        datetime.fromisoformat(value)
+
+
 def test_cleanup_reclaims_stale_processing(tmp_path):
     # ttl=0 => any PROCESSING row is immediately past its deadline.
     tracker = ProgressTracker(tmp_path / "p.db", ttl=timedelta(seconds=0))

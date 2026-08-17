@@ -45,10 +45,8 @@ logger = logging.getLogger(__name__)
 # Write endpoints authenticate with this header (matches the stack convention).
 _API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# Origins allowed to call the metrics API cross-origin (the visualizer). The
-# read endpoints have no credentials, so "*" is safe; /api/import is an
-# unauthenticated write (matches the otherwise-open posture — restrict network
-# exposure or add an API key if reachable beyond the backoffice).
+# The visualizer calls this API cross-origin, so any origin is allowed. The read
+# endpoints carry no credentials and /api/import is API-key gated.
 _CORS_ORIGINS = ["*"]
 
 # Swagger tag groups (rendered at /docs).
@@ -280,7 +278,10 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
             50,
             ge=0,
             le=1000,
-            description="Max rows to return; 0 = sin límite (todas las del rango).",
+            description=(
+                "Max rows to return; 0 = sin límite, pero SOLO con una ventana "
+                "temporal (since/before/hours). Sin ventana, 0 se limita a 1000."
+            ),
             examples=[50],
         ),
         offset: int = Query(
@@ -307,12 +308,20 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
             examples=["2026-06-08T00:00:00+00:00"],
         ),
     ) -> list[dict]:
+        effective_since = since or _since_from_hours(hours)
+        # The `limit<=0 -> LIMIT -1` (unbounded) escape hatch is meant for the
+        # timeline's windowed loader, which always passes a since/before bound.
+        # An unwindowed limit<=0 on this unauthenticated endpoint would scan up
+        # to METRICS_MAX_ROWS rows (~600 MB) — a memory/CPU DoS — so fall back to
+        # the page cap when no time window narrows the scan.
+        if limit <= 0 and not (effective_since or before):
+            limit = 1000
         return repo.recent_jobs(
             limit=limit,
             offset=offset,
             job_type=job_type,
             outcome=outcome,
-            since=since or _since_from_hours(hours),
+            since=effective_since,
             before=before,
         )
 

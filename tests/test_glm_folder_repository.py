@@ -1,6 +1,6 @@
 """Tests for LocalGlmFolderFileRepository and S3GlmFolderFileRepository."""
 
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -136,16 +136,59 @@ async def test_s3_download_to_dir_preserves_basenames(tmp_path):
 
     assert result == dest
     assert dest.exists()
-    s3_client.download_to_file.assert_has_awaits(
-        [
-            call(
-                "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
-                dest / "CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
-            ),
-            call(
-                "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
-                dest / "CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
-            ),
-        ],
-        any_order=True,
+    # Downloads land in a temp dir that is atomically moved into place, so
+    # assert on the (stripped-uri, basename) pairs rather than the transient
+    # parent directory.
+    awaited = {
+        (args[0], args[1].name)
+        for args, _ in s3_client.download_to_file.await_args_list
+    }
+    assert awaited == {
+        (
+            "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+            "CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+        ),
+        (
+            "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
+            "CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_download_to_dir_is_atomic_on_partial_failure(tmp_path):
+    """A mid-copy failure leaves no half-populated dest dir (all-or-nothing)."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    good = _make_file(
+        src_dir,
+        "CG_GLM-L2-GLMF-M3_G19_s20260611400000_e20260611401000_c20260611402030.nc",
+        b"ok",
     )
+    missing = (
+        src_dir
+        / "CG_GLM-L2-GLMF-M3_G19_s20260611401000_e20260611402000_c20260611403020.nc"
+    )
+
+    repo = LocalGlmFolderFileRepository(src_dir)
+    dest = tmp_path / "dest"
+    with pytest.raises(FileNotFoundError):
+        await repo.download_to_dir([str(good), str(missing)], dest)
+
+    assert not dest.exists()  # no partial window left behind
+
+
+@pytest.mark.asyncio
+async def test_s3_download_to_dir_is_atomic_on_partial_failure(tmp_path):
+    """If one S3 download raises, the dest dir is not created half-populated."""
+    s3_client = AsyncMock()
+    s3_client.download_to_file.side_effect = RuntimeError("network blip")
+    repo = S3GlmFolderFileRepository(s3_client)
+    dest = tmp_path / "window"
+
+    with pytest.raises(RuntimeError):
+        await repo.download_to_dir(
+            ["glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc"], dest
+        )
+
+    assert not dest.exists()

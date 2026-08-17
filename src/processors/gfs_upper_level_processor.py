@@ -119,7 +119,7 @@ class GfsUpperLevelProcessor(ContourProcessor):
 
     def _prepare_dirs(self, work_unit: WorkUnit) -> tuple[Path, Path]:
         """Scratch directories for the raster stage and the tile pyramid."""
-        work_dir = self._get_band_dir(work_unit) / work_unit.image_id
+        work_dir = self._get_band_dir(work_unit) / self._work_dir_leaf(work_unit)
         return (
             self._ensure_dir(work_dir / "raster"),
             self._ensure_dir(work_dir / "tiles"),

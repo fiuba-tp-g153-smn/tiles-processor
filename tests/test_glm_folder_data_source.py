@@ -11,7 +11,6 @@ from data_sources.glm_folder import GlmFolderDataSource
 from data_sources.glm_folder_repository import GlmFolderFileRepository
 from models.band_config import BandConfig
 
-
 GLM_FED_CONFIG = BandConfig(
     band_id="glm_fed",
     file_pattern="CG_GLM-L2-GLMF",
@@ -124,6 +123,57 @@ async def test_skips_incomplete_window():
     )
 
     assert images == []
+
+
+@pytest.mark.asyncio
+async def test_skips_window_when_a_duplicate_minute_masks_a_gap():
+    """A reissued minute must not count toward completeness for a missing one.
+
+    9 distinct minutes + a duplicate of minute 3 = 10 files but only 9 minutes
+    covered → the window is incomplete and must be skipped, not emitted.
+    """
+    window_start = datetime(2026, 3, 2, 14, 0, tzinfo=timezone.utc)
+    files = _ten_consecutive_minutes(window_start)
+    del files[5]  # minute 5 is now genuinely missing
+    files.append(
+        _filename(
+            window_start + timedelta(minutes=3, seconds=30),
+            window_start + timedelta(minutes=4, seconds=30),
+        )
+    )
+    source = _make_source(StubRepository(files))
+
+    images = await source.discover_images(
+        _discovery_config(current_time=window_start + timedelta(minutes=11))
+    )
+
+    assert images == []
+
+
+@pytest.mark.asyncio
+async def test_emits_deduped_window_when_a_minute_is_reissued():
+    """Full minute coverage plus a reissue of one minute → emit once, with the
+    manifest carrying a single (newest) file per minute so aggregation can't
+    double-count that minute."""
+    window_start = datetime(2026, 3, 2, 14, 0, tzinfo=timezone.utc)
+    files = _ten_consecutive_minutes(window_start)
+    original_min3 = files[3]
+    reissue_min3 = _filename(
+        window_start + timedelta(minutes=3, seconds=30),
+        window_start + timedelta(minutes=4, seconds=30),
+    )
+    files.append(reissue_min3)  # 11 files, still only 10 distinct minutes
+    source = _make_source(StubRepository(files))
+
+    images = await source.discover_images(
+        _discovery_config(current_time=window_start + timedelta(minutes=11))
+    )
+
+    assert len(images) == 1
+    manifest = json.loads(images[0].source_uri)
+    assert len(manifest["files"]) == 10  # deduped from 11
+    assert reissue_min3 in manifest["files"]  # newest reissue wins
+    assert original_min3 not in manifest["files"]
 
 
 @pytest.mark.asyncio
