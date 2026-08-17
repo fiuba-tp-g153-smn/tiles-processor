@@ -103,6 +103,7 @@ def _create_goes19_repository(config: Optional[Config]) -> Goes19FileRepository:
 
 def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRegistry:
     """Create and populate the data source registry with all known sources."""
+    # pylint: disable=too-many-locals  # wires per-source discovery knobs
     registry = DataSourceRegistry()
 
     # BandConfigs that are produced as by-products of another source's processor
@@ -116,11 +117,20 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     }
 
     goes19_repo = _create_goes19_repository(config)
+    goes_target_images = config.GOES_TARGET_IMAGES if config is not None else None
+    goes_max_hours_back = config.GOES_MAX_HOURS_BACK if config is not None else None
     for _band_id, band_config in BAND_CONFIGS.items():
         if band_config.band_id in combined_products:
             continue
         # Only ABI bands remain (band_13, band_9, band_2, ...).
-        registry.register(Goes19AbiDataSource(band_config, goes19_repo))
+        registry.register(
+            Goes19AbiDataSource(
+                band_config,
+                goes19_repo,
+                target_images=goes_target_images,
+                max_hours_back=goes_max_hours_back,
+            )
+        )
 
     # Register the folder-based GLM data source (one entry covers FED/TOE/MFA).
     if config is not None:
@@ -131,6 +141,8 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
                 glm_repo,
                 accum_minutes=config.GLM_ACCUM_MINUTES,
                 produce_every_minutes=config.GLM_PRODUCE_EVERY_MINUTES,
+                safety_lag_seconds=config.GLM_SAFETY_LAG_SECONDS,
+                target_windows=config.GLM_TARGET_WINDOWS,
             )
         )
 
@@ -139,7 +151,12 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         repository = _create_radar_repository(config)
         for _product_id, product_config in RADAR_PRODUCT_CONFIGS.items():
             registry.register(
-                RadarDataSource(product_config, repository, config.RADAR_STATION_FILTER)
+                RadarDataSource(
+                    product_config,
+                    repository,
+                    config.RADAR_STATION_FILTER,
+                    target_images=config.RADAR_TARGET_IMAGES,
+                )
             )
 
     # Register WRF data sources for each enabled product
@@ -147,7 +164,13 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         wrf_repository = _create_wrf_repository(config)
         for product_id, product_config in WRF_PRODUCT_CONFIGS.items():
             if config.ENABLED_WRF_PRODUCTS.get(product_id, False):
-                registry.register(WrfDataSource(product_config, wrf_repository))
+                registry.register(
+                    WrfDataSource(
+                        product_config,
+                        wrf_repository,
+                        target_runs=config.WRF_TARGET_RUNS,
+                    )
+                )
 
     # Register ECMWF data sources (feature-flagged)
     if config is not None and config.ENABLE_ECMWF_PRECIPITATION:

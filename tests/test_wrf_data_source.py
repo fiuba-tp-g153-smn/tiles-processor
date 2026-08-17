@@ -79,6 +79,18 @@ async def test_caps_to_newest_three_runs():
 
 
 @pytest.mark.asyncio
+async def test_target_runs_override_caps_to_newest_n():
+    """An injected target_runs overrides the class-constant TARGET_RUNS cap."""
+    files = [wrf_file(run, f) for run in RUNS_OLD_TO_NEW for f in range(3)]
+    source = WrfDataSource(COLMAX_CONFIG, make_repo(files), target_runs=1)
+
+    images = await source.discover_images(make_discovery_config())
+
+    assert init_tags_of(images) == {RUNS_OLD_TO_NEW[-1]}  # only the newest run
+    assert len(images) == 3  # 1 run × 3 steps
+
+
+@pytest.mark.asyncio
 async def test_dedup_lets_older_runs_drain_backward():
     """Newest 3 runs already processed → the next-oldest runs surface (paced)."""
     files = [wrf_file(run, f) for run in RUNS_OLD_TO_NEW for f in range(3)]

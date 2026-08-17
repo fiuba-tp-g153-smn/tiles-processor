@@ -38,6 +38,7 @@ class RadarDataSource(DataSource):
         product_config: RadarProductConfig,
         repository: RadarFileRepository,
         station_filter: RadarStationFilter | None = None,
+        target_images: int | None = None,
     ):
         """
         Initialize Radar data source for a specific product.
@@ -50,10 +51,15 @@ class RadarDataSource(DataSource):
                 with the product-level feature flag as an AND — this source only
                 runs when its product is enabled, and within it only stations the
                 filter allows pass.
+            target_images: Max images published per radar station per tick;
+                ``None`` uses TARGET_IMAGES.
         """
         self._product_config = product_config
         self._repository = repository
         self._station_filter = station_filter
+        self._target_images = (
+            target_images if target_images is not None else self.TARGET_IMAGES
+        )
 
     @property
     def source_id(self) -> str:
@@ -157,7 +163,7 @@ class RadarDataSource(DataSource):
         target_images = []
         for images in by_radar.values():
             images.sort(key=lambda img: img.image_id, reverse=True)
-            target_images.extend(images[: self.TARGET_IMAGES])
+            target_images.extend(images[: self._target_images])
 
         if skipped_disabled_radar:
             logger.info(
@@ -171,7 +177,7 @@ class RadarDataSource(DataSource):
             self.source_id,
             len(new_images),
             len(target_images),
-            self.TARGET_IMAGES,
+            self._target_images,
             len(source_uris),
         )
         return target_images

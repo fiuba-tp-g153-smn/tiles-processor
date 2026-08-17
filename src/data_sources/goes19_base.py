@@ -25,7 +25,7 @@ class Goes19BaseDataSource(DataSource):
     {product_path}/YYYY/JJJ/HH/ where JJJ is the day of year.
     """
 
-    # Discovery parameters
+    # Discovery parameters (defaults; overridable via settings.json).
     MAX_HOURS_BACK = 5  # How far back to search for files
 
     def __init__(
@@ -33,6 +33,7 @@ class Goes19BaseDataSource(DataSource):
         band_config: BandConfig,
         product_path: str,
         repository: Goes19FileRepository,
+        max_hours_back: int | None = None,
     ):
         """
         Initialize GOES-19 data source.
@@ -41,10 +42,14 @@ class Goes19BaseDataSource(DataSource):
             band_config: Band configuration (determines file pattern, output prefix, etc.)
             product_path: Path prefix for the product (e.g., "ABI-L1b-RadF", "GLM-L2-LCFA")
             repository: Storage backend the hourly directories are read from
+            max_hours_back: Lookback window in hours; ``None`` uses MAX_HOURS_BACK.
         """
         self._band_config = band_config
         self._product_path = product_path
         self._repository = repository
+        self._max_hours_back = (
+            max_hours_back if max_hours_back is not None else self.MAX_HOURS_BACK
+        )
 
     @property
     def band_config(self) -> BandConfig:
@@ -70,7 +75,7 @@ class Goes19BaseDataSource(DataSource):
         all_candidates = []
         hours_back = 0
 
-        while hours_back <= self.MAX_HOURS_BACK:
+        while hours_back <= self._max_hours_back:
             search_time = current_time - timedelta(hours=hours_back)
             directory_path = self._build_directory_path(search_time)
 

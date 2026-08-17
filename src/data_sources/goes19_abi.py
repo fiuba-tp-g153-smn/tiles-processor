@@ -23,21 +23,33 @@ class Goes19AbiDataSource(Goes19BaseDataSource):
     - Supports different bands (band_13, band_9, band_2, etc.)
     """
 
-    # Discovery parameters
+    # Discovery parameters (defaults; overridable via settings.json).
     TARGET_IMAGES = 24  # ~4 hours at 10-min intervals
 
-    def __init__(self, band_config: BandConfig, repository: Goes19FileRepository):
+    def __init__(
+        self,
+        band_config: BandConfig,
+        repository: Goes19FileRepository,
+        target_images: int | None = None,
+        max_hours_back: int | None = None,
+    ):
         """
         Initialize GOES-19 ABI data source for a specific band.
 
         Args:
             band_config: Band configuration (determines file pattern, output prefix, etc.)
             repository: Storage backend the ABI files are read from
+            target_images: Max images published per tick; ``None`` uses TARGET_IMAGES.
+            max_hours_back: Discovery lookback in hours; ``None`` uses the base default.
         """
         super().__init__(
             band_config=band_config,
             product_path="ABI-L1b-RadF",
             repository=repository,
+            max_hours_back=max_hours_back,
+        )
+        self._target_images = (
+            target_images if target_images is not None else self.TARGET_IMAGES
         )
 
     @property
@@ -68,7 +80,7 @@ class Goes19AbiDataSource(Goes19BaseDataSource):
         all_candidates.sort(reverse=True)
 
         # Take top N (Strict Window)
-        target_candidates = all_candidates[: self.TARGET_IMAGES]
+        target_candidates = all_candidates[: self._target_images]
 
         # Filter out already processed or in-progress images
         new_images = []

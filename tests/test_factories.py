@@ -32,6 +32,13 @@ class TestCreateDataSourceRegistry:
         config.ENABLE_GLM_MFA = False
         config.ENABLED_RADAR_PRODUCTS = {}
         config.RADAR_STATION_FILTER = RadarStationFilter("all")
+        # Discovery knobs: None -> each data source keeps its class-constant default.
+        config.GOES_TARGET_IMAGES = None
+        config.GOES_MAX_HOURS_BACK = None
+        config.RADAR_TARGET_IMAGES = None
+        config.WRF_TARGET_RUNS = None
+        config.GLM_SAFETY_LAG_SECONDS = None
+        config.GLM_TARGET_WINDOWS = None
         config.ENABLE_ECMWF_PRECIPITATION = tp
         config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE = mslp
         config.ECMWF_OPENDATA_SOURCES = ("ecmwf", "azure", "aws")

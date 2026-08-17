@@ -14,12 +14,16 @@
     "goes19": {
       "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
       "products": { "band_13": true, "band_9": true, "band_2": true },
+      "target_images": 24,
+      "max_hours_back": 5,
       "retention_days": 1
     },
     "glm": {
       "input": { "mode": "local", "dir": "/app/data/glm_h5" },
       "accum_minutes": 10,
       "produce_every_minutes": 10,
+      "safety_lag_seconds": 30,
+      "target_windows": 24,
       "products": { "fed": true, "toe": true, "mfa": true },
       "retention_days": 1
     },
@@ -33,6 +37,7 @@
         "KDP": true,
         "VRAD": true
       },
+      "target_images": 12,
       "light_queue": "all",
       "retention_days": 1
     },
@@ -50,6 +55,7 @@
         "CAPE_BRN": true,
         "Granizo": true
       },
+      "target_runs": 3,
       "light_queue": "all",
       "retention_days": 2
     },

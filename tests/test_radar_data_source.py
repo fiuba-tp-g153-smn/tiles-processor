@@ -171,6 +171,15 @@ async def test_no_station_filter_discovers_all_stations():
 
 
 @pytest.mark.asyncio
+async def test_target_images_override_caps_per_radar():
+    # An injected target_images overrides the class-constant TARGET_IMAGES cap.
+    files = [f"/data/RMA1_0315_01_DBZH_20260114T{i:06d}Z.H5" for i in range(10)]
+    source = RadarDataSource(DBZH_CONFIG, make_repo(files), target_images=2)
+    images = await source.discover_images(make_discovery_config())
+    assert len(images) == 2
+
+
+@pytest.mark.asyncio
 async def test_download_delegates_to_repository(tmp_path):
     repo = AsyncMock()
     expected = tmp_path / "out.H5"

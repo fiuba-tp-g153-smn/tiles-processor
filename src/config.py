@@ -134,10 +134,18 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         _gfs = _sources.get("gfs", {})
 
         # --- GOES-19 ABI ---
+        # Discovery knobs are None when unset -> the data source keeps its own
+        # class-constant default (see factories.py). Same pattern for glm/radar/wrf.
         _goes19_products = _goes19.get("products", {})
         self.ENABLE_BAND_13: bool = _goes19_products.get("band_13", True)
         self.ENABLE_BAND_9: bool = _goes19_products.get("band_9", True)
         self.ENABLE_BAND_2: bool = _goes19_products.get("band_2", False)
+        self.GOES_TARGET_IMAGES: int | None = self._opt_int(
+            _goes19.get("target_images"), "sources.goes19.target_images"
+        )
+        self.GOES_MAX_HOURS_BACK: int | None = self._opt_int(
+            _goes19.get("max_hours_back"), "sources.goes19.max_hours_back", minimum=0
+        )
 
         # --- GLM (pre-gridded CG_GLM-L2-GLMF folder) ---
         _glm_products = _glm.get("products", {})
@@ -146,6 +154,12 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.ENABLE_GLM_MFA: bool = _glm_products.get("mfa", False)
         self.GLM_ACCUM_MINUTES: int = int(_glm.get("accum_minutes", 10))
         self.GLM_PRODUCE_EVERY_MINUTES: int = int(_glm.get("produce_every_minutes", 10))
+        self.GLM_SAFETY_LAG_SECONDS: int | None = self._opt_int(
+            _glm.get("safety_lag_seconds"), "sources.glm.safety_lag_seconds", minimum=0
+        )
+        self.GLM_TARGET_WINDOWS: int | None = self._opt_int(
+            _glm.get("target_windows"), "sources.glm.target_windows"
+        )
 
         # --- Radar (SINARAME) ---
         _radar_product_ids = ["DBZH", "ZDR", "RHOHV", "KDP", "VRAD"]
@@ -159,6 +173,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # {"whitelist": [...]}, or {"blacklist": [...]}; see RadarStationFilter.
         self.RADAR_STATION_FILTER: RadarStationFilter = (
             RadarStationFilter.from_settings(_radar.get("stations"))
+        )
+        self.RADAR_TARGET_IMAGES: int | None = self._opt_int(
+            _radar.get("target_images"), "sources.radar.target_images"
         )
 
         # --- WRF (WRF-ARG4K FIELD2D) ---
@@ -178,6 +195,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
                 "Granizo",
             ]
         }
+        self.WRF_TARGET_RUNS: int | None = self._opt_int(
+            _wrf.get("target_runs"), "sources.wrf.target_runs"
+        )
 
         # --- ECMWF ---
         _ecmwf_products = _ecmwf.get("products", {})
@@ -345,6 +365,20 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             s3_access_key=access_key,
             s3_secret_key=secret_key,
         )
+
+    @staticmethod
+    def _opt_int(raw: Any, name: str, *, minimum: int = 1) -> int | None:
+        """Validate an optional integer setting; ``None`` (unset) passes through.
+
+        Returns None when absent so the consuming data source keeps its own
+        class-constant default; otherwise fails fast on a non-int or out-of-range
+        value (bool is rejected — it is an int subclass but never a valid count).
+        """
+        if raw is None:
+            return None
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < minimum:
+            raise ValueError(f"{name} must be an integer >= {minimum}, got {raw!r}")
+        return raw
 
     @staticmethod
     def _parse_light_queue(raw: Any, all_ids) -> frozenset[str]:

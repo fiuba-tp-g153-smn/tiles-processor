@@ -38,6 +38,7 @@ class GlmFolderDataSource(DataSource):
     """
 
     DEFAULT_TARGET_WINDOWS = 24
+    DEFAULT_SAFETY_LAG_SECONDS = 30
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
@@ -46,8 +47,8 @@ class GlmFolderDataSource(DataSource):
         *,
         accum_minutes: int,
         produce_every_minutes: int,
-        safety_lag_seconds: int = 30,
-        target_windows: int = DEFAULT_TARGET_WINDOWS,
+        safety_lag_seconds: int | None = None,
+        target_windows: int | None = None,
     ) -> None:
         if accum_minutes <= 0:
             raise ValueError("accum_minutes must be positive")
@@ -57,8 +58,18 @@ class GlmFolderDataSource(DataSource):
         self._repository = repository
         self._accum_minutes = accum_minutes
         self._produce_every_minutes = produce_every_minutes
-        self._safety_lag = timedelta(seconds=safety_lag_seconds)
-        self._target_windows = target_windows
+        self._safety_lag = timedelta(
+            seconds=(
+                safety_lag_seconds
+                if safety_lag_seconds is not None
+                else self.DEFAULT_SAFETY_LAG_SECONDS
+            )
+        )
+        self._target_windows = (
+            target_windows
+            if target_windows is not None
+            else self.DEFAULT_TARGET_WINDOWS
+        )
 
     @property
     def source_id(self) -> str:

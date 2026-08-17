@@ -291,12 +291,16 @@ input, product toggles, retention, and tuning live together.
     "goes19": {
       "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
       "products": { "band_13": true, "band_9": true, "band_2": true },
+      "target_images": 24,
+      "max_hours_back": 5,
       "retention_days": 1
     },
     "glm": {
       "input": { "mode": "local", "dir": "/app/data/glm_h5" },
       "accum_minutes": 10,
       "produce_every_minutes": 10,
+      "safety_lag_seconds": 30,
+      "target_windows": 24,
       "products": { "fed": true, "toe": true, "mfa": true },
       "retention_days": 1
     },
@@ -304,12 +308,14 @@ input, product toggles, retention, and tuning live together.
       "input": { "mode": "local", "dir": "/app/data/radar_h5" },
       "stations": "all",
       "products": { "DBZH": true, "ZDR": true, "RHOHV": true, "KDP": true, "VRAD": true },
+      "target_images": 12,
       "light_queue": "all",
       "retention_days": 1
     },
     "wrf": {
       "input": { "mode": "local", "dir": "/app/data/wrf_nc" },
       "products": { "Colmax": true, "Granizo": true },
+      "target_runs": 3,
       "light_queue": "all",
       "retention_days": 2
     },
@@ -335,6 +341,12 @@ input, product toggles, retention, and tuning live together.
   `s3_bucket`/`s3_endpoint`/`s3_prefix`/`s3_secure` for S3. Credentials come from
   `<NAME>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars (unset = anonymous).
 - **`sources.<name>.products`**: Enable/disable individual products without a rebuild.
+- **Per-source discovery/cadence knobs** (all optional — omitting one keeps the
+  source's built-in default): `goes19.target_images` / `goes19.max_hours_back`,
+  `radar.target_images`, `wrf.target_runs`, `glm.safety_lag_seconds` /
+  `glm.target_windows`. They cap how much each source publishes per tick and how
+  far back discovery looks. Counts must be integers ≥ 1; `max_hours_back` /
+  `safety_lag_seconds` may be 0.
 - **`sources.<name>.retention_days`**: How long the source's outputs live before
   S3 expiry. One S3 **bucket lifecycle** rule per output prefix is applied once at
   worker boot (evaluated ~daily; portable across AWS/MinIO/SeaweedFS, no

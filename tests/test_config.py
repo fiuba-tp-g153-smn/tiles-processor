@@ -390,6 +390,63 @@ class TestConfig:
             assert rf.mode == "blacklist"
             assert not rf.allows("RMA3") and rf.allows("RMA1")
 
+    def test_discovery_knobs_parse_from_sources(self, tmp_path, env_vars):
+        """Per-source discovery/cadence knobs are read into config attributes."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {
+                "goes19": {"target_images": 30, "max_hours_back": 8},
+                "glm": {"safety_lag_seconds": 45, "target_windows": 12},
+                "radar": {"target_images": 6},
+                "wrf": {"target_runs": 5},
+            },
+        }
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=path)
+            assert config.GOES_TARGET_IMAGES == 30
+            assert config.GOES_MAX_HOURS_BACK == 8
+            assert config.GLM_SAFETY_LAG_SECONDS == 45
+            assert config.GLM_TARGET_WINDOWS == 12
+            assert config.RADAR_TARGET_IMAGES == 6
+            assert config.WRF_TARGET_RUNS == 5
+
+    def test_discovery_knobs_absent_are_none(self, temp_settings_file, env_vars):
+        """Unset knobs are None so the data source keeps its class-constant default."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            assert config.GOES_TARGET_IMAGES is None
+            assert config.RADAR_TARGET_IMAGES is None
+            assert config.WRF_TARGET_RUNS is None
+            assert config.GLM_SAFETY_LAG_SECONDS is None
+
+    def test_discovery_knob_rejects_zero_and_non_int(self, tmp_path, env_vars):
+        """A target count below 1 fails fast, naming the JSON path."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {"radar": {"target_images": 0}},
+        }
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(ValueError, match="sources.radar.target_images"):
+                Config(settings_path=path)
+
+    def test_max_hours_back_allows_zero(self, tmp_path, env_vars):
+        """Lookback of 0 is valid (minimum=0), unlike the target counts."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {"goes19": {"max_hours_back": 0}},
+        }
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            assert Config(settings_path=path).GOES_MAX_HOURS_BACK == 0
+
     def test_tile_lifecycle_retention_resolves_from_sources(self, tmp_path, env_vars):
         """Per-source retention_days resolves into a concrete {prefix: days} map."""
         settings = {

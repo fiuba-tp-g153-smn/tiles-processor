@@ -29,11 +29,17 @@ class WrfDataSource(DataSource):
     # Análogo a RadarDataSource.TARGET_IMAGES = 12 — acota la ráfaga por conteo
     # (no por reloj, así un snapshot estático sigue drenando) y deja que el dedup
     # arrastre corridas viejas hacia atrás en ciclos sucesivos.
-    TARGET_RUNS = 3
+    TARGET_RUNS = 3  # default; overridable via settings.json
 
-    def __init__(self, product_config: WrfProductConfig, repository: WrfFileRepository):
+    def __init__(
+        self,
+        product_config: WrfProductConfig,
+        repository: WrfFileRepository,
+        target_runs: int | None = None,
+    ):
         self._product_config = product_config
         self._repository = repository
+        self._target_runs = target_runs if target_runs is not None else self.TARGET_RUNS
 
     @property
     def source_id(self) -> str:
@@ -101,7 +107,7 @@ class WrfDataSource(DataSource):
         # viejas drenan hacia atrás en ciclos sucesivos en vez de ignorarse para
         # siempre. init_tag "YYYYMMDD_HH0000" ordena cronológicamente como string.
         runs_newest_first = sorted({init for init, _ in candidates}, reverse=True)
-        allowed = set(runs_newest_first[: self.TARGET_RUNS])
+        allowed = set(runs_newest_first[: self._target_runs])
         target = [img for init, img in candidates if init in allowed]
 
         logger.info(
@@ -110,7 +116,7 @@ class WrfDataSource(DataSource):
             len(candidates),
             len({init for init, _ in candidates}),
             len(target),
-            self.TARGET_RUNS,
+            self._target_runs,
         )
         return target
 
