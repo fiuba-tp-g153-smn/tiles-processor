@@ -29,9 +29,7 @@ from services.processing_steps import (
 
 logger = logging.getLogger(__name__)
 
-_MAX_ZOOM = 7
-_ZOOM_LEVELS = f"3-{_MAX_ZOOM}"
-_GDAL_PROCESSES = 2
+_GDAL_PROCESSES = 2  # zoom range from settings.json via config.ECMWF_ZOOM
 
 
 def _select_step(var: xr.DataArray, hours: int) -> xr.DataArray:
@@ -107,16 +105,26 @@ class EcmwfTotalPrecipitationProcessor(ImageProcessor):
 
         with self._time_stage("prewarp"):
             prewarped_path = await asyncio.to_thread(
-                prewarp_to_mercator_grid, geotiff_path, geotiff_dir, _MAX_ZOOM
+                prewarp_to_mercator_grid,
+                geotiff_path,
+                geotiff_dir,
+                self.config.ECMWF_ZOOM.max_zoom,
             )
         self._check_shutdown()
 
         with self._time_stage("tiling"):
             tiles_output_dir = await asyncio.to_thread(
-                run_gdal2tiles, prewarped_path, tiles_dir, _ZOOM_LEVELS, _GDAL_PROCESSES
+                run_gdal2tiles,
+                prewarped_path,
+                tiles_dir,
+                self.config.ECMWF_ZOOM.spec,
+                _GDAL_PROCESSES,
             )
             await asyncio.to_thread(
-                fill_missing_tiles, tiles_output_dir, work_unit.bounds, _ZOOM_LEVELS
+                fill_missing_tiles,
+                tiles_output_dir,
+                work_unit.bounds,
+                self.config.ECMWF_ZOOM.spec,
             )
         self._check_shutdown()
 

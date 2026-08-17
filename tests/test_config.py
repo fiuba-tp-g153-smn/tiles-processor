@@ -435,6 +435,43 @@ class TestConfig:
             with pytest.raises(ValueError, match="sources.radar.target_images"):
                 Config(settings_path=path)
 
+    def test_zoom_levels_parse_from_sources(self, tmp_path, env_vars):
+        """Per-source zoom_levels resolve to ZoomLevels with spec + derived max."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {"radar": {"zoom_levels": "5-10"}},
+        }
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=path)
+            assert config.RADAR_ZOOM.spec == "5-10"
+            assert config.RADAR_ZOOM.max_zoom == 10
+            # An unset source keeps its default.
+            assert config.GOES_ZOOM.spec == "3-7"
+
+    def test_zoom_levels_default_when_absent(self, temp_settings_file, env_vars):
+        """Absent zoom_levels fall back to each source's built-in default."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=temp_settings_file)
+            assert config.RADAR_ZOOM.spec == "4-9"
+            assert config.WRF_ZOOM.spec == "4-6"
+            assert config.GOES_ZOOM.spec == "3-7"
+
+    def test_zoom_levels_invalid_fails_fast(self, tmp_path, env_vars):
+        """An inverted range is rejected at startup, naming the JSON path."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {"goes19": {"zoom_levels": "7-3"}},
+        }
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(ValueError, match="sources.goes19.zoom_levels"):
+                Config(settings_path=path)
+
     def test_max_hours_back_allows_zero(self, tmp_path, env_vars):
         """Lookback of 0 is valid (minimum=0), unlike the target counts."""
         settings = {

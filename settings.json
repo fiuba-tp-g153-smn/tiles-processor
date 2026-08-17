@@ -16,6 +16,7 @@
       "products": { "band_13": true, "band_9": true, "band_2": true },
       "target_images": 24,
       "max_hours_back": 5,
+      "zoom_levels": "3-7",
       "retention_days": 1
     },
     "glm": {
@@ -25,6 +26,7 @@
       "safety_lag_seconds": 30,
       "target_windows": 24,
       "products": { "fed": true, "toe": true, "mfa": true },
+      "zoom_levels": "3-7",
       "retention_days": 1
     },
     "radar": {
@@ -38,6 +40,7 @@
         "VRAD": true
       },
       "target_images": 12,
+      "zoom_levels": "4-9",
       "light_queue": "all",
       "retention_days": 1
     },
@@ -56,6 +59,7 @@
         "Granizo": true
       },
       "target_runs": 3,
+      "zoom_levels": "4-6",
       "light_queue": "all",
       "retention_days": 2
     },
@@ -68,6 +72,7 @@
         "isobar_simplify_tolerance": 0.05,
         "smoothing_sigma": 1.5
       },
+      "zoom_levels": "3-7",
       "retention_days": { "default": 2, "grib": 1 }
     },
     "gfs": {
@@ -79,6 +84,7 @@
       "isoline_simplify_tolerance": 0.05,
       "http_timeout_seconds": 120,
       "max_concurrent_downloads": 2,
+      "zoom_levels": "3-7",
       "retention_days": 1
     }
   }

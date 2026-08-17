@@ -205,8 +205,7 @@ class WrfProcessor(ImageProcessor):
         7. Upload tiles, COG, and GeoJSON layers to S3.
     """
 
-    ZOOM_LEVELS = "4-6"
-    GDAL_PROCESSES = 2
+    GDAL_PROCESSES = 2  # zoom range from settings.json via config.WRF_ZOOM
     CONTOUR_SIMPLIFY_TOLERANCE = 0.05
 
     def __init__(self, config: Config):
@@ -926,7 +925,7 @@ class WrfProcessor(ImageProcessor):
         cmd = [
             "gdal2tiles.py",
             "-p", "mercator",
-            "-z", self.ZOOM_LEVELS,
+            "-z", self.config.WRF_ZOOM.spec,
             "-w", "none",
             "--resampling=near",
             f"--processes={self.GDAL_PROCESSES}",

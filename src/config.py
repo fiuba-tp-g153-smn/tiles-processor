@@ -15,6 +15,7 @@ from models.input_source_config import (
 )
 from models.lifecycle_config import resolve_retention_map
 from models.radar_config import RadarStationFilter
+from models.zoom_config import ZoomLevels, parse_zoom_levels
 
 
 class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
@@ -146,6 +147,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.GOES_MAX_HOURS_BACK: int | None = self._opt_int(
             _goes19.get("max_hours_back"), "sources.goes19.max_hours_back", minimum=0
         )
+        self.GOES_ZOOM: ZoomLevels = parse_zoom_levels(
+            _goes19.get("zoom_levels"), "sources.goes19.zoom_levels", default="3-7"
+        )
 
         # --- GLM (pre-gridded CG_GLM-L2-GLMF folder) ---
         _glm_products = _glm.get("products", {})
@@ -159,6 +163,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         self.GLM_TARGET_WINDOWS: int | None = self._opt_int(
             _glm.get("target_windows"), "sources.glm.target_windows"
+        )
+        self.GLM_ZOOM: ZoomLevels = parse_zoom_levels(
+            _glm.get("zoom_levels"), "sources.glm.zoom_levels", default="3-7"
         )
 
         # --- Radar (SINARAME) ---
@@ -176,6 +183,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         self.RADAR_TARGET_IMAGES: int | None = self._opt_int(
             _radar.get("target_images"), "sources.radar.target_images"
+        )
+        self.RADAR_ZOOM: ZoomLevels = parse_zoom_levels(
+            _radar.get("zoom_levels"), "sources.radar.zoom_levels", default="4-9"
         )
 
         # --- WRF (WRF-ARG4K FIELD2D) ---
@@ -197,6 +207,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         }
         self.WRF_TARGET_RUNS: int | None = self._opt_int(
             _wrf.get("target_runs"), "sources.wrf.target_runs"
+        )
+        self.WRF_ZOOM: ZoomLevels = parse_zoom_levels(
+            _wrf.get("zoom_levels"), "sources.wrf.zoom_levels", default="4-6"
         )
 
         # --- ECMWF ---
@@ -224,6 +237,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             )
             if s.strip()
         )
+        self.ECMWF_ZOOM: ZoomLevels = parse_zoom_levels(
+            _ecmwf.get("zoom_levels"), "sources.ecmwf.zoom_levels", default="3-7"
+        )
 
         # --- GFS ---
         _gfs_products = _gfs.get("products", {})
@@ -242,6 +258,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         self.GFS_TILE_SMOOTHING_RESOLUTION_DEG: float = float(
             os.getenv("GFS_TILE_SMOOTHING_RESOLUTION_DEG") or "0.01"
+        )
+        self.GFS_ZOOM: ZoomLevels = parse_zoom_levels(
+            _gfs.get("zoom_levels"), "sources.gfs.zoom_levels", default="3-7"
         )
 
         # --- Per-source input repositories (local folder or S3, same layout).

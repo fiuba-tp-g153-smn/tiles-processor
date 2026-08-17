@@ -309,6 +309,7 @@ input, product toggles, retention, and tuning live together.
       "stations": "all",
       "products": { "DBZH": true, "ZDR": true, "RHOHV": true, "KDP": true, "VRAD": true },
       "target_images": 12,
+      "zoom_levels": "4-9",
       "light_queue": "all",
       "retention_days": 1
     },
@@ -347,6 +348,10 @@ input, product toggles, retention, and tuning live together.
   `glm.target_windows`. They cap how much each source publishes per tick and how
   far back discovery looks. Counts must be integers ≥ 1; `max_hours_back` /
   `safety_lag_seconds` may be 0.
+- **`sources.<name>.zoom_levels`**: gdal2tiles zoom range as a `"MIN-MAX"` string
+  (e.g. `"3-7"`; radar defaults to `"4-9"`, WRF to `"4-6"`). Zoom depth is the
+  biggest driver of tile count / S3 storage / tiling time. Defaults match the
+  prior hardcoded values; an inverted or malformed range fails fast at startup.
 - **`sources.<name>.retention_days`**: How long the source's outputs live before
   S3 expiry. One S3 **bucket lifecycle** rule per output prefix is applied once at
   worker boot (evaluated ~daily; portable across AWS/MinIO/SeaweedFS, no

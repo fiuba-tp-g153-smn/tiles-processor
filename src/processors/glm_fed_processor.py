@@ -44,8 +44,7 @@ class GlmFedProcessor(ImageProcessor):
            d. Write GeoTIFF → gdal2tiles → fill transparent gaps → upload.
     """
 
-    GDAL_PROCESSES = 2
-    ZOOM_LEVELS = "3-7"
+    GDAL_PROCESSES = 2  # zoom range from settings.json via config.GLM_ZOOM
 
     def __init__(self, config: Config):
         super().__init__(config)
@@ -238,7 +237,7 @@ class GlmFedProcessor(ImageProcessor):
                 run_gdal2tiles,
                 geotiff_path,
                 tiles_dir,
-                zoom_levels=self.ZOOM_LEVELS,
+                zoom_levels=self.config.GLM_ZOOM.spec,
                 processes=self.GDAL_PROCESSES,
             )
 
@@ -247,7 +246,7 @@ class GlmFedProcessor(ImageProcessor):
                 fill_missing_tiles,
                 tiles_output_dir,
                 work_unit.bounds,
-                self.ZOOM_LEVELS,
+                self.config.GLM_ZOOM.spec,
             )
 
         # 4. Uploads.

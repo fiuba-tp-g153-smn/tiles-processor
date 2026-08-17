@@ -38,9 +38,8 @@ class GoesProcessor(ImageProcessor):
     Implements the Strategy pattern for the full processing pipeline.
     """
 
-    # gdal2tiles settings
+    # gdal2tiles settings (zoom range comes from settings.json via config.GOES_ZOOM)
     GDAL_PROCESSES = 2
-    ZOOM_LEVELS = "3-7"
 
     # Reprojection resolution in degrees (None = auto-compute from source)
     REPROJECT_RESOLUTION = None
@@ -319,7 +318,7 @@ class GoesProcessor(ImageProcessor):
         tiles_dir = run_gdal2tiles(
             geotiff_path,
             output_base_dir,
-            zoom_levels=self.ZOOM_LEVELS,
+            zoom_levels=self.config.GOES_ZOOM.spec,
             processes=self.GDAL_PROCESSES,
         )
         self._validate_tiles(tiles_dir)
@@ -327,10 +326,8 @@ class GoesProcessor(ImageProcessor):
 
     def _validate_tiles(self, tiles_dir: Path) -> None:
         """Validate that the expected zoom levels were generated."""
-        # Parse zoom range from ZOOM_LEVELS (e.g., "3-7")
-        zoom_parts = self.ZOOM_LEVELS.split("-")
-        min_zoom = int(zoom_parts[0])
-        max_zoom = int(zoom_parts[1]) if len(zoom_parts) > 1 else min_zoom
+        min_zoom = self.config.GOES_ZOOM.min_zoom
+        max_zoom = self.config.GOES_ZOOM.max_zoom
 
         missing_zooms = []
         for zoom in range(min_zoom, max_zoom + 1):

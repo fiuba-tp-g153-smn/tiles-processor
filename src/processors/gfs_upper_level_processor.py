@@ -39,9 +39,7 @@ from services.processing_steps import (
 
 logger = logging.getLogger(__name__)
 
-_MAX_ZOOM = 7
-_ZOOM_LEVELS = f"3-{_MAX_ZOOM}"
-_GDAL_PROCESSES = 2
+_GDAL_PROCESSES = 2  # zoom range from settings.json via config.GFS_ZOOM
 _LEVEL_WITH_THERMAL_AND_BARBS = 500
 
 _SECONDARY_COG_FIELDS = {
@@ -285,16 +283,26 @@ class GfsUpperLevelProcessor(ContourProcessor):
         """Prewarp then cut tiles, same as the other model products."""
         with self._time_stage("prewarp"):
             prewarped = await asyncio.to_thread(
-                prewarp_to_mercator_grid, rgba_path, raster_dir, _MAX_ZOOM
+                prewarp_to_mercator_grid,
+                rgba_path,
+                raster_dir,
+                self.config.GFS_ZOOM.max_zoom,
             )
         self._check_shutdown()
 
         with self._time_stage("tiling"):
             tiles_output_dir = await asyncio.to_thread(
-                run_gdal2tiles, prewarped, tiles_dir, _ZOOM_LEVELS, _GDAL_PROCESSES
+                run_gdal2tiles,
+                prewarped,
+                tiles_dir,
+                self.config.GFS_ZOOM.spec,
+                _GDAL_PROCESSES,
             )
             await asyncio.to_thread(
-                fill_missing_tiles, tiles_output_dir, bounds, _ZOOM_LEVELS
+                fill_missing_tiles,
+                tiles_output_dir,
+                bounds,
+                self.config.GFS_ZOOM.spec,
             )
         self._check_shutdown()
         self._cleanup_file(prewarped)

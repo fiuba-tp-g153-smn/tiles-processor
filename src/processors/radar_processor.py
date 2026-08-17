@@ -76,8 +76,7 @@ class RadarProcessor(ImageProcessor):
     matching SMN operational visualization standards.
     """
 
-    # Processing parameters
-    ZOOM_LEVELS = "4-9"
+    # Processing parameters (zoom range from settings.json via config.RADAR_ZOOM)
     GDAL_PROCESSES = 2
     SWEEPS = (0, 1, 2)  # Elevation indices to process
 
@@ -519,7 +518,7 @@ class RadarProcessor(ImageProcessor):
             "-p",
             "mercator",
             "-z",
-            self.ZOOM_LEVELS,
+            self.config.RADAR_ZOOM.spec,
             "-w",
             "none",
             "--resampling=near",
