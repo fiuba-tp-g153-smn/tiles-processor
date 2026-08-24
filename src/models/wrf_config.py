@@ -12,7 +12,6 @@ class WrfBarbsConfig:
         u_var: Eastward component variable name (m/s).
         v_var: Northward component variable name (m/s).
         level_hpa: Pressure level for FIELD3D vars; None means FIELD2D.
-        stride: Subsampling factor in both grid axes.
         point_query_var: Variable key for the secondary point-query COG built
             from the barb magnitude (``sqrt(u^2 + v^2)``, converted to knots).
             The COG is uploaded as ``{cog}/{init}/{F}.{point_query_var}.tif``.
@@ -21,7 +20,6 @@ class WrfBarbsConfig:
     u_var: str
     v_var: str
     level_hpa: Optional[float] = None
-    stride: int = 38
     point_query_var: str = "wind"
 
 
