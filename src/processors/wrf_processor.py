@@ -883,7 +883,13 @@ class WrfProcessor(ImageProcessor):
 
         if payload["barbs"] is not None and product_config.barbs is not None:
             u, v = payload["barbs"]
-            tiled = extract_barbs_tiled(u_ms=u, v_ms=v, lon_2d=lon, lat_2d=lat)
+            tiled = extract_barbs_tiled(
+                u_ms=u,
+                v_ms=v,
+                lon_2d=lon,
+                lat_2d=lat,
+                zoom_strides=self.config.WRF_BARB_STRIDES,
+            )
             for (zoom, tx, ty), feats in tiled.items():
                 tile_dir = work_dir / "barbs" / str(zoom) / str(tx)
                 tile_dir.mkdir(parents=True, exist_ok=True)

@@ -210,6 +210,7 @@ class GfsUpperLevelProcessor(ContourProcessor):
             v_ms=fields["v"].values,
             lon_2d=lon_2d,
             lat_2d=lat_2d,
+            zoom_strides=self.config.GFS_BARB_STRIDES,
         )
         root = self._ensure_dir(output_dir / f"{image_id}_barbs")
         for (zoom, tile_x, tile_y), features in tiled.items():

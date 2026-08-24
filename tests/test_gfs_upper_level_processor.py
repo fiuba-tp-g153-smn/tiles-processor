@@ -330,15 +330,26 @@ class TestOverlays:
         assert "speed_kt" in properties
         assert "dir_deg" in properties
 
-    def test_barb_zoom_levels_match_the_shared_strides(self, processor, tmp_path):
-        """extract_barbs_tiled caps at z8; deeper zooms overzoom on the client."""
-        from services.contouring import (  # pylint: disable=import-outside-toplevel
-            BARB_ZOOM_STRIDES,
-        )
-
+    def test_barb_zoom_levels_come_from_settings(self, processor, tmp_path):
+        """Barb tilesets must match sources.gfs.barb_zoom_strides, not a constant."""
         overlays = _overlays(processor, tmp_path, GFS_500_CONFIG)
         zooms = {int(p.name) for p in overlays["barbs"].iterdir() if p.is_dir()}
-        assert zooms <= set(BARB_ZOOM_STRIDES)
+        assert zooms <= processor.config.GFS_BARB_STRIDES.zooms
+
+    def test_barb_stride_policy_is_honoured(self, processor, tmp_path, monkeypatch):
+        """Narrowing the configured strides must narrow the emitted tilesets."""
+        from models.barb_config import (  # pylint: disable=import-outside-toplevel
+            parse_barb_zoom_strides,
+        )
+
+        monkeypatch.setattr(
+            processor.config,
+            "GFS_BARB_STRIDES",
+            parse_barb_zoom_strides({"6": 16}, "test", default={8: 9}),
+        )
+        overlays = _overlays(processor, tmp_path, GFS_500_CONFIG)
+        zooms = {int(p.name) for p in overlays["barbs"].iterdir() if p.is_dir()}
+        assert zooms == {6}
 
     def test_overlay_geometry_uses_signed_longitudes(self, processor, tmp_path):
         features = _overlay_features(processor, tmp_path, GFS_500_CONFIG, "heights")
