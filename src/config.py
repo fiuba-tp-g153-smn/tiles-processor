@@ -7,6 +7,7 @@ import socket
 from pathlib import Path
 from typing import Any, Dict
 
+from models.barb_config import BarbZoomStrides, parse_barb_zoom_strides
 from models.gfs_config import GfsAccessConfig
 from models.input_source_config import (
     INPUT_MODE_LOCAL,
@@ -217,6 +218,11 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.WRF_ZOOM: ZoomLevels = parse_zoom_levels(
             _wrf.get("zoom_levels"), "sources.wrf.zoom_levels", default="4-6"
         )
+        self.WRF_BARB_STRIDES: BarbZoomStrides = parse_barb_zoom_strides(
+            _wrf.get("barb_zoom_strides"),
+            "sources.wrf.barb_zoom_strides",
+            default={2: 150, 4: 38, 6: 16, 8: 9},
+        )
 
         # --- ECMWF ---
         _ecmwf_products = _ecmwf.get("products", {})
@@ -267,6 +273,11 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         self.GFS_ZOOM: ZoomLevels = parse_zoom_levels(
             _gfs.get("zoom_levels"), "sources.gfs.zoom_levels", default="3-7"
+        )
+        self.GFS_BARB_STRIDES: BarbZoomStrides = parse_barb_zoom_strides(
+            _gfs.get("barb_zoom_strides"),
+            "sources.gfs.barb_zoom_strides",
+            default={2: 22, 4: 5, 6: 2, 8: 1},
         )
 
         # --- Per-source input repositories (local folder or S3, same layout).
