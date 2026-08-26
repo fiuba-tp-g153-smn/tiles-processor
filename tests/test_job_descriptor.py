@@ -23,6 +23,18 @@ def test_radar_rma12_dbzh_label_and_timestamp():
     assert desc.image_timestamp == "20260114T170328Z"
 
 
+def test_radar_product_with_underscore_keeps_timestamp():
+    # DBZH_450KM has an underscore in the product id, so the timestamp must be
+    # read off the end of the image_id rather than by field position.
+    desc = describe_job(
+        "radar_DBZH_450KM", "RMA1_DBZH_450KM_20260114T170328Z", "radar"
+    )
+    assert "RMA1" in desc.product_label
+    assert "DBZH_450KM" in desc.product_label
+    assert "450 km" in desc.product_label
+    assert desc.image_timestamp == "20260114T170328Z"
+
+
 def test_wrf_colmax_label_strips_product_prefix():
     desc = describe_job("wrf_Colmax", "Colmax_20260114_00UTC_F006", "wrf_Colmax")
     assert desc.job_type == "wrf_Colmax"

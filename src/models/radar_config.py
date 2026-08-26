@@ -83,13 +83,20 @@ class RadarProductConfig:
     Configuration for a specific radar product (variable).
 
     Attributes:
-        product_id: Identifier (e.g., "DBZH", "VRAD", "RHOHV")
+        product_id: Identifier (e.g., "DBZH", "VRAD", "RHOHV"). Also the path
+            segment products are published under, so it must be unique.
         field_name: PyART field name for the variable
-        subvolume: Which subvolume to process ("01" or "02")
+        subvolume: Which subvolume to process ("01", "02" or "04")
         s3_tiles_prefix: S3 key prefix for storing tiles
         s3_cog_prefix: S3 key prefix for storing COG files
         unit: Display unit for the variable
         long_name: Descriptive name
+        file_variable: Filename token this product reads, when it differs from
+            ``product_id``. Empty (the common case) means they are the same.
+            Set it when two products share one physical moment but different
+            scan geometry — e.g. DBZH_450KM is the DBZH moment of the
+            long-range subvolume 04, so it reads "DBZH" files but publishes
+            under its own product path.
     """
 
     product_id: str
@@ -99,6 +106,12 @@ class RadarProductConfig:
     s3_cog_prefix: str
     unit: str = ""
     long_name: str = ""
+    file_variable: str = ""
+
+    @property
+    def variable(self) -> str:
+        """Filename variable token this product is discovered from."""
+        return self.file_variable or self.product_id
 
     def to_dict(self) -> dict:
         """Serialize to dictionary for JSON encoding."""
@@ -124,6 +137,21 @@ DBZH_CONFIG = RadarProductConfig(
     s3_cog_prefix="cog/radar",
     unit="dBZ",
     long_name="Horizontal Reflectivity",
+)
+
+# Long-range reflectivity: the same 0.55° DBZH moment as DBZH_CONFIG, but read
+# from subvolume 04, whose single sweep reaches ~445 km (1235 gates × 360 m)
+# instead of the ~235 km of the 15-sweep subvolume 01. Same palette and field,
+# its own product path so both coexist per radar.
+DBZH_450KM_CONFIG = RadarProductConfig(
+    product_id="DBZH_450KM",
+    field_name="reflectivity",
+    subvolume="04",
+    s3_tiles_prefix="tiles/radar",
+    s3_cog_prefix="cog/radar",
+    unit="dBZ",
+    long_name="Horizontal Reflectivity (450 km)",
+    file_variable="DBZH",
 )
 
 ZH_CONFIG = RadarProductConfig(
@@ -209,6 +237,7 @@ PHIDP_CONFIG = RadarProductConfig(
 # Registry for looking up radar product configs by ID
 RADAR_PRODUCT_CONFIGS = {
     "DBZH": DBZH_CONFIG,
+    "DBZH_450KM": DBZH_450KM_CONFIG,
     "ZH": ZH_CONFIG,
     "TH": TH_CONFIG,
     "VRAD": VRAD_CONFIG,
@@ -228,6 +257,24 @@ def get_radar_product_config(product_id: str) -> RadarProductConfig:
             f"Valid: {list(RADAR_PRODUCT_CONFIGS.keys())}"
         )
     return RADAR_PRODUCT_CONFIGS[product_id]
+
+
+def get_radar_product_config_for_file(
+    variable: str, subvolume: str
+) -> RadarProductConfig:
+    """Resolve the product a radar file belongs to from its filename tokens.
+
+    The variable token alone is ambiguous: DBZH files exist in both the
+    short-range subvolume 01 (product DBZH) and the long-range subvolume 04
+    (product DBZH_450KM). The (variable, subvolume) pair is unique across the
+    registry, so it is what identifies the product a file must be published as.
+    """
+    for config in RADAR_PRODUCT_CONFIGS.values():
+        if config.variable == variable and config.subvolume == subvolume:
+            return config
+    raise ValueError(
+        f"No radar product for variable '{variable}' subvolume '{subvolume}'"
+    )
 
 
 def parse_radar_filename(filename: str) -> dict:

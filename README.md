@@ -31,7 +31,9 @@ Distributed Python system for processing GOES-19 satellite data from NOAA S3 —
   - **Band 2 (Visible Red)**: Channel 2 (0.64 µm) for high-resolution visible imagery (500 m native).
   - **GLM Flash Extent Density (FED)**: 10-minute lightning activity maps from 20-second L2-LCFA files.
   - **GLM Time of Event (TOE)** and **Multi-Flash Aggregation (MFA)**: Additional GLM-derived products.
-  - **Radar**: Dual-pol products (DBZH, ZDR, RHOHV, KDP, VRAD) from local H5 files.
+  - **Radar**: Dual-pol products (DBZH, ZDR, RHOHV, KDP, VRAD) from local H5 files, plus
+    **DBZH_450KM** — the same 0.55° reflectivity read from the long-range subvolume 04
+    (~445 km reach, single sweep) and published as its own product.
 - **Queue-based Architecture**: RabbitMQ producer-worker pattern. Workers process images sequentially per worker (prefetch=1) with manual ack and a dead-letter queue for failures.
 - **Subprocess Isolation**: Each image is processed in an isolated subprocess to guarantee full memory reclamation between jobs.
 - **Smart Skip**: Producer checks S3 before publishing — already-processed tilesets are never re-queued.
@@ -308,7 +310,10 @@ input, product toggles, retention, and tuning live together.
     "radar": {
       "input": { "mode": "local", "dir": "/app/data/radar_h5" },
       "stations": "all",
-      "products": { "DBZH": true, "ZDR": true, "RHOHV": true, "KDP": true, "VRAD": true },
+      "products": {
+        "DBZH": true, "DBZH_450KM": true, "ZDR": true,
+        "RHOHV": true, "KDP": true, "VRAD": true
+      },
       "target_images": 12,
       "zoom_levels": "4-9",
       "light_queue": "all",
@@ -375,6 +380,11 @@ input, product toggles, retention, and tuning live together.
 
   Station IDs match the first token of each radar filename (`RMA1_0315_01_DBZH_…H5`).
   A blacklist covers new stations automatically; an ambiguous value fails fast at startup.
+- **`sources.radar.products.DBZH_450KM`**: The long-range reflectivity product. It reads
+  the *same* `DBZH` filename token as `DBZH`, told apart by the subvolume (`04` vs `01`),
+  and publishes under `tiles/radar/{radar}/DBZH_450KM/`. Subvolume 04 carries a single
+  0.55° sweep of 1235 × 360 m gates (~445 km) against subvolume 01's 15 sweeps of 652
+  gates (~235 km), so only `elev0` is produced for it.
 - **`sources.<radar|wrf>.light_queue`**: Route these units to the lightweight
   worker queue. `"all"` / `"none"`, plus WRF accepts an explicit product list
   (e.g. `["Colmax", "Granizo"]`); radar is all-or-nothing.

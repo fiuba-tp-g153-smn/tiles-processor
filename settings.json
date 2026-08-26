@@ -37,6 +37,7 @@
       "stations": "all",
       "products": {
         "DBZH": true,
+        "DBZH_450KM": true,
         "ZDR": true,
         "RHOHV": true,
         "KDP": true,

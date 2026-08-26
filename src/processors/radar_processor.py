@@ -30,7 +30,10 @@ from config import Config
 from exceptions import UnprocessableInputError
 from factories import create_s3_client
 from models.work_unit import WorkUnit
-from models.radar_config import get_radar_product_config, parse_radar_filename
+from models.radar_config import (
+    get_radar_product_config_for_file,
+    parse_radar_filename,
+)
 from processors.base_processor import ImageProcessor
 from models.radar_palettes import get_palette, mask_radar_data
 from processors.base_processor import ImageProcessor
@@ -100,8 +103,14 @@ class RadarProcessor(ImageProcessor):
         # Parse filename to get product info
         original_filename = Path(work_unit.source_uri).name
         parsed = parse_radar_filename(original_filename)
-        product_id = parsed["variable"]
-        product_config = get_radar_product_config(product_id)
+        # The variable token alone is ambiguous (DBZH lives in both subvolume 01
+        # and the long-range 04), so the product is resolved from the pair. The
+        # physical moment stays ``variable`` — that is what selects the PyART
+        # field, palette and mask — while ``product_id`` names the output path.
+        product_config = get_radar_product_config_for_file(
+            parsed["variable"], parsed["subvolume"]
+        )
+        variable_id = product_config.variable
 
         # Setup work directories
         work_dir = Path(self.config.TMP_DIR) / "radar" / self._work_dir_leaf(work_unit)
@@ -114,10 +123,10 @@ class RadarProcessor(ImageProcessor):
                 radar = self._read_radar(h5_path)
 
             # Get field name from radar object
-            field_name = self._get_field_name(radar, product_id)
+            field_name = self._get_field_name(radar, variable_id)
 
             # Get color palette for this product
-            palette = get_palette(product_id)
+            palette = get_palette(variable_id)
 
             # Process each elevation sweep
             for sweep_idx in self.SWEEPS:
@@ -146,7 +155,7 @@ class RadarProcessor(ImageProcessor):
                 # Extract polar data for this sweep
                 with self._time_stage("extract"):
                     polar_data = self._extract_polar_data(
-                        radar, sweep_idx, field_name, product_id
+                        radar, sweep_idx, field_name, variable_id
                     )
 
                 # Compute cartesian mapping once (shared between COG and GeoTIFF)
@@ -195,7 +204,8 @@ class RadarProcessor(ImageProcessor):
                 self._check_shutdown()
                 elevation_id = f"elev{sweep_idx}"
                 s3_prefix = (
-                    f"{product_config.s3_tiles_prefix}/{parsed['radar_id']}/{parsed['variable']}/"
+                    f"{product_config.s3_tiles_prefix}/{parsed['radar_id']}/"
+                    f"{product_config.product_id}/"
                     f"{elevation_id}/{parsed['timestamp']}"
                 )
                 with self._time_stage("upload"):
@@ -204,7 +214,8 @@ class RadarProcessor(ImageProcessor):
                 # Upload COG to storage
                 self._check_shutdown()
                 cog_key = (
-                    f"{product_config.s3_cog_prefix}/{parsed['radar_id']}/{parsed['variable']}/"
+                    f"{product_config.s3_cog_prefix}/{parsed['radar_id']}/"
+                    f"{product_config.product_id}/"
                     f"{elevation_id}/{parsed['timestamp']}.tif"
                 )
                 with self._time_stage("upload"):

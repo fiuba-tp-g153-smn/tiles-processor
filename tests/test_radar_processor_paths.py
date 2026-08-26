@@ -82,9 +82,20 @@ def test_read_radar_reraises_unrelated_valueerror(tmp_path):
     assert "unrelated boom" in str(excinfo.value)
 
 
+@pytest.mark.parametrize(
+    "filename,product_id",
+    [
+        ("RMA1_0315_01_DBZH_20260114T170328Z.H5", "DBZH"),
+        # Same variable token, long-range subvolume: must land under its own
+        # product path instead of overwriting the short-range DBZH tileset.
+        ("RMA1_0315_04_DBZH_20260114T170328Z.H5", "DBZH_450KM"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_radar_upload_paths_split_elevation_and_timestamp(tmp_path):
-    """Radar tiles and COG keys must use .../elevN/<timestamp>/ layout."""
+async def test_radar_upload_paths_split_elevation_and_timestamp(
+    tmp_path, filename, product_id
+):
+    """Radar tiles and COG keys must use .../<product>/elevN/<timestamp>/ layout."""
     config = MagicMock()
     config.TMP_DIR = str(tmp_path)
 
@@ -124,17 +135,17 @@ async def test_radar_upload_paths_split_elevation_and_timestamp(tmp_path):
     processor._generate_tiles = MagicMock()
     processor._upload_tiles = AsyncMock()
 
-    radar_file = tmp_path / "RMA1_0315_01_DBZH_20260114T170328Z.H5"
+    radar_file = tmp_path / filename
     radar_file.write_bytes(b"fake")
 
     work_unit = WorkUnit.create(
-        image_id="RMA1_DBZH_20260114T170328Z",
+        image_id=f"RMA1_{product_id}_20260114T170328Z",
         source_uri=str(radar_file),
-        data_source_id="radar_DBZH",
+        data_source_id=f"radar_{product_id}",
         processor_id="radar",
         output_prefix="tiles/radar",
         bounds={"minx": -70, "miny": -40, "maxx": -50, "maxy": -20},
-        band_id="radar_DBZH",
+        band_id=f"radar_{product_id}",
     )
 
     with patch("processors.radar_processor.get_palette", return_value=MagicMock()):
@@ -142,8 +153,18 @@ async def test_radar_upload_paths_split_elevation_and_timestamp(tmp_path):
 
     processor._upload_tiles.assert_awaited_once()
     uploaded_tiles_prefix = processor._upload_tiles.await_args.args[1]
-    assert uploaded_tiles_prefix == "tiles/radar/RMA1/DBZH/elev0/20260114T170328Z"
+    assert (
+        uploaded_tiles_prefix
+        == f"tiles/radar/RMA1/{product_id}/elev0/20260114T170328Z"
+    )
 
     mock_s3.upload_file.assert_awaited_once()
     uploaded_cog_key = mock_s3.upload_file.await_args.args[0]
-    assert uploaded_cog_key == "cog/radar/RMA1/DBZH/elev0/20260114T170328Z.tif"
+    assert (
+        uploaded_cog_key
+        == f"cog/radar/RMA1/{product_id}/elev0/20260114T170328Z.tif"
+    )
+
+    # Both products render the DBZH moment: the palette and PyART field must be
+    # picked by the physical variable, never by the product path.
+    processor._get_field_name.assert_called_once_with(fake_radar, "DBZH")

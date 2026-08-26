@@ -70,18 +70,22 @@ def _describe_goes(band_id: str, image_id: str) -> tuple[str, str]:
 
 
 def _describe_radar(data_source_id: str, image_id: str) -> tuple[str, str]:
-    """Radar: ``image_id`` is ``{radar_id}_{variable}_{timestamp}``."""
+    """Radar: ``image_id`` is ``{radar_id}_{product_id}_{timestamp}``.
+
+    The product segment can itself contain underscores (DBZH_450KM), so the
+    station and timestamp are read off the ends rather than by field position.
+    """
     product_id = data_source_id.removeprefix("radar_")
     config = RADAR_PRODUCT_CONFIGS.get(product_id)
     long_name = config.long_name if config else product_id
 
-    radar_id, variable, timestamp = "", product_id, image_id
+    radar_id, timestamp = "", image_id
     parts = image_id.split("_")
     if len(parts) >= 3:
-        radar_id, variable, timestamp = parts[0], parts[1], parts[2]
+        radar_id, timestamp = parts[0], parts[-1]
 
     station = f"{radar_id} " if radar_id else ""
-    return (f"Radar {station}{variable} · {long_name}", timestamp)
+    return (f"Radar {station}{product_id} · {long_name}", timestamp)
 
 
 def _describe_wrf(data_source_id: str, image_id: str) -> tuple[str, str]:

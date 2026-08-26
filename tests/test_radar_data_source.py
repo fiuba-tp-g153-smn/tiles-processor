@@ -12,6 +12,7 @@ from data_sources.radar import RadarDataSource
 from models.radar_config import RADAR_PRODUCT_CONFIGS, RadarStationFilter
 
 DBZH_CONFIG = RADAR_PRODUCT_CONFIGS["DBZH"]
+DBZH_450KM_CONFIG = RADAR_PRODUCT_CONFIGS["DBZH_450KM"]
 
 
 def make_repo(files: list[str]) -> AsyncMock:
@@ -177,6 +178,37 @@ async def test_target_images_override_caps_per_radar():
     source = RadarDataSource(DBZH_CONFIG, make_repo(files), target_images=2)
     images = await source.discover_images(make_discovery_config())
     assert len(images) == 2
+
+
+@pytest.mark.asyncio
+async def test_dbzh_and_450km_split_the_same_variable_by_subvolume():
+    # Both products read "DBZH" files; only the subvolume tells them apart, so
+    # each source must claim exactly its own scan and never the other's.
+    files = [
+        "/data/RMA1_0315_01_DBZH_20260114T170000Z.H5",
+        "/data/RMA1_0315_04_DBZH_20260114T170010Z.H5",
+    ]
+    short = await RadarDataSource(DBZH_CONFIG, make_repo(files)).discover_images(
+        make_discovery_config()
+    )
+    long_range = await RadarDataSource(
+        DBZH_450KM_CONFIG, make_repo(files)
+    ).discover_images(make_discovery_config())
+
+    assert [img.image_id for img in short] == ["RMA1_DBZH_20260114T170000Z"]
+    assert [img.image_id for img in long_range] == [
+        "RMA1_DBZH_450KM_20260114T170010Z"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_450km_image_id_uses_product_not_filename_variable():
+    # The image_id must key on product_id: it is what the producer dedupes
+    # against the S3 tileset layout, and what keeps the two DBZH products apart.
+    files = ["/data/RMA1_0315_04_DBZH_20260114T170010Z.H5"]
+    source = RadarDataSource(DBZH_450KM_CONFIG, make_repo(files))
+    existing = {"RMA1_DBZH_450KM_20260114T170010Z"}
+    assert await source.discover_images(make_discovery_config(existing=existing)) == []
 
 
 @pytest.mark.asyncio

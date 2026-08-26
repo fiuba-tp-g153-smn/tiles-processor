@@ -109,8 +109,10 @@ class RadarDataSource(DataSource):
                 logger.debug("Skipping file with invalid name: %s (%s)", filepath, e)
                 continue
 
-            # Filter by product (DBZH, VRAD, RHOHV, etc.)
-            if parsed["variable"] != self._product_config.product_id:
+            # Filter by variable (DBZH, VRAD, RHOHV, etc.). This is the filename
+            # token, which for most products equals the product_id; DBZH_450KM
+            # reads "DBZH" files and is told apart by the subvolume check below.
+            if parsed["variable"] != self._product_config.variable:
                 continue
 
             # Filter by radar station: an operator can whitelist/blacklist
@@ -130,9 +132,13 @@ class RadarDataSource(DataSource):
             if parsed["subvolume"] != self._product_config.subvolume:
                 continue
 
-            # Build image_id: radar_id/variable/timestamp
+            # Build image_id: radar_id/product/timestamp. Keyed on product_id
+            # (not the filename variable) so it matches the S3 tileset layout
+            # the producer dedupes against, and so DBZH and DBZH_450KM — which
+            # share a variable token — never collide.
             image_id = (
-                f"{parsed['radar_id']}_{parsed['variable']}_{parsed['timestamp']}"
+                f"{parsed['radar_id']}_{self._product_config.product_id}_"
+                f"{parsed['timestamp']}"
             )
 
             # Check if already processed

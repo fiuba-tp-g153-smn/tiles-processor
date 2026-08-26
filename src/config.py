@@ -176,7 +176,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
 
         # --- Radar (SINARAME) ---
-        _radar_product_ids = ["DBZH", "ZDR", "RHOHV", "KDP", "VRAD"]
+        _radar_product_ids = ["DBZH", "DBZH_450KM", "ZDR", "RHOHV", "KDP", "VRAD"]
         _radar_products = _radar.get("products", {})
         self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
             pid: _radar_products.get(pid, False) for pid in _radar_product_ids
