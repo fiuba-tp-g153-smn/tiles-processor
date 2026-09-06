@@ -1,10 +1,12 @@
 """Tests for the GLM aggregation + reprojection service.
 
 The aggregation test uses real CG_GLM-L2-GLMF sample files shipped under
-``./data/glm_h5/``. If those files are missing (e.g. CI without the data
-mount), the test is skipped rather than failed.
+``./data/glm_h5/`` (override with ``GLM_SAMPLE_DIR``). If those files are
+missing (e.g. CI without the data mount), the test is skipped rather than
+failed.
 """
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -16,8 +18,7 @@ from pyproj import CRS
 
 from services.glm_aggregation import aggregate_glm_window, reproject_to_latlon
 
-
-SAMPLE_DIR = Path("data/glm_h5")
+SAMPLE_DIR = Path(os.environ.get("GLM_SAMPLE_DIR", "data/glm_h5"))
 SAMPLE_FILES = sorted(SAMPLE_DIR.glob("CG_GLM-L2-GLMF-M3_*.nc"))[:3]
 
 
@@ -284,13 +285,14 @@ def test_reproject_to_latlon_clips_to_bounds():
 
 
 def test_reproject_uses_native_resolution_not_forced_grid():
-    """With resolution=None the output grid is source-native, not a forced 0.02°.
+    """The output grid stays source-native, never a forced 0.02°.
 
     Guards the GLM compute-cost fix: forcing resolution=0.02° inflated the full
     GOES disk before clipping (the CLAUDE.md geostationary-reproject gotcha).
-    Leaving resolution=None makes rioxarray/GDAL derive the grid from the
-    ~5424² source, yielding a coarser, near-square native pixel — so the warp
-    no longer computes the discarded ~86% of pixels.
+    The destination grid is derived from the ~5424² source by
+    calculate_default_transform and then windowed to the bounds, so the pixel
+    stays coarse and near-square and the warp never computes the discarded
+    ~86%.
     """
     _require_sample_files()
 

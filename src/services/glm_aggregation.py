@@ -26,6 +26,8 @@ import xarray as xr
 from glmtools.io.imagery import aggregate
 from pyproj import CRS
 
+from services.geo_reprojection import reproject_to_bounds
+
 # Finite nodata sentinel for the GEOS→EPSG:4326 warp. GDAL runs a slow per-pixel
 # isnan() test when nodata is NaN (~4× slower on the sparse GLM disk); a finite
 # sentinel uses a fast == test instead. ~finfo(float32).min is impossible for
@@ -177,28 +179,13 @@ def reproject_to_latlon(
     # interpolate across the sentinel and corrupt edges — revisit if that changes.
     da.rio.write_nodata(_NODATA_SENTINEL, inplace=True)
 
-    # Leave resolution=None so rioxarray/GDAL pick the source-native output
-    # grid (≈ the input pixel count) instead of inflating the full GOES disk
-    # to a forced fine grid and then discarding ~86% of it at clip_box. This
-    # mirrors the GOES path (REPROJECT_RESOLUTION=None) and the CLAUDE.md
-    # geostationary-reproject gotcha. Output resolution becomes source-native
-    # rather than a fixed 0.02°: scientifically/visually equivalent, not
-    # byte-identical.
-    reprojected = da.rio.reproject(
-        "EPSG:4326",
-        resolution=None,
-        nodata=float(_NODATA_SENTINEL),
-    )
-    clipped = reprojected.rio.clip_box(
-        minx=bounds["minx"],
-        miny=bounds["miny"],
-        maxx=bounds["maxx"],
-        maxy=bounds["maxy"],
-    )
+    # Warp straight onto the destination window covering `bounds` instead of
+    # the full disk followed by a clip.
+    clipped = reproject_to_bounds(da, bounds, nodata=float(_NODATA_SENTINEL))
     # Map the sentinel fill back to NaN (NaN data cells are already != sentinel).
     # `.where` drops the rio CRS and nodata metadata, so re-assert both to
     # restore the georeferenced NaN-nodata contract the COG write and tests rely
-    # on. The mask runs on the small *clipped* array — no full-disk memory cost.
+    # on. The mask runs on the small *windowed* array — no full-disk memory cost.
     crs = clipped.rio.crs
     clipped = clipped.where(clipped != _NODATA_SENTINEL)
     clipped.rio.write_crs(crs, inplace=True)
