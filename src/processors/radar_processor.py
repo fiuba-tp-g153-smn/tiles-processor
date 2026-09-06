@@ -506,11 +506,14 @@ class RadarProcessor(ImageProcessor):
         below_min = data < palette.vmin
         rgba_uint8[below_min, 3] = 0
 
-        grid_rgba = np.zeros((grid_size, grid_size, 4), dtype=np.uint8)
-
-        for band in range(4):
-            values = rgba_uint8[:, :, band][azimuth_idx, range_idx]
-            grid_rgba[:, :, band] = values.reshape(grid_size, grid_size)
+        # One gather over (ray, gate) pairs flattened to a single axis, instead
+        # of one fancy-indexing pass per band. Building the index as intp spares
+        # take the widened copy it would make of an int32 one.
+        flat_idx = azimuth_idx.astype(np.intp)
+        flat_idx *= rgba_uint8.shape[1]
+        flat_idx += range_idx
+        grid_rgba = rgba_uint8.reshape(-1, 4).take(flat_idx, axis=0)
+        grid_rgba = grid_rgba.reshape(grid_size, grid_size, 4)
 
         grid_rgba[outside_range.reshape(grid_size, grid_size), 3] = 0
 
