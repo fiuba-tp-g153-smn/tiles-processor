@@ -21,6 +21,7 @@ from unittest import mock
 
 import numpy as np
 import pytest
+import rioxarray  # noqa: F401  # registers the .rio accessor
 import xarray as xr
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
@@ -127,3 +128,95 @@ def test_georeferencing_is_overridden():
     assert (
         Band2Processor._apply_georeferencing is not GoesProcessor._apply_georeferencing
     )
+
+
+def _reflectance_dataset(values: np.ndarray) -> xr.Dataset:
+    """Dataset shaped like the output of the Band-2 georeferencing override."""
+    radiance = xr.DataArray(
+        values,
+        dims=("y", "x"),
+        coords={
+            "y": np.arange(values.shape[0], dtype=float) * 2000.0,
+            "x": np.arange(values.shape[1], dtype=float) * 2000.0,
+        },
+        name="Rad",
+    )
+    dataset = radiance.to_dataset(name="Rad")
+    dataset["kappa0"] = xr.DataArray(np.float32(_KAPPA0))
+    dataset.rio.write_crs("EPSG:4326", inplace=True)
+    return dataset
+
+
+def _compute_reflectance(dataset: xr.Dataset) -> xr.DataArray:
+    """Invoke the Band-2 reflectance override with a minimal ``self``."""
+    return Band2Processor._compute_brightness_temperature(SimpleNamespace(), dataset)
+
+
+class TestReflectanceFactor:
+    """Band 2 replaces the Planck function with reflectance = kappa0 * radiance.
+
+    The computation runs in place over a single buffer, so besides the numbers
+    these tests pin that the source dataset is never written into.
+    """
+
+    def test_scales_radiance_by_kappa0(self):
+        # Radiance chosen so kappa0 * radiance lands inside [0.005, 1.2].
+        radiance = np.array([[0.01, 0.25, 0.5]], dtype=np.float32)
+
+        values = _compute_reflectance(_reflectance_dataset(radiance)).values
+
+        np.testing.assert_array_equal(values, radiance * np.float32(_KAPPA0))
+
+    def test_masks_the_nighttime_noise_floor(self):
+        """Reflectance under 0.005 is sensor noise, not signal, and must go to NaN."""
+        radiance = np.array([[0.0, 0.001 / _KAPPA0, 0.005 / _KAPPA0]], dtype=np.float32)
+
+        values = _compute_reflectance(_reflectance_dataset(radiance)).values
+
+        assert np.isnan(values[0, 0])
+        assert np.isnan(values[0, 1])
+        assert not np.isnan(values[0, 2]), "0.005 is inclusive"
+
+    def test_masks_values_above_the_saturation_ceiling(self):
+        radiance = np.array([[1.2 / _KAPPA0, 1.5 / _KAPPA0]], dtype=np.float32)
+
+        values = _compute_reflectance(_reflectance_dataset(radiance)).values
+
+        assert not np.isnan(values[0, 0]), "1.2 is inclusive"
+        assert np.isnan(values[0, 1])
+
+    def test_incoming_nan_propagates(self):
+        radiance = np.array([[np.nan, 0.25]], dtype=np.float32)
+
+        values = _compute_reflectance(_reflectance_dataset(radiance)).values
+
+        assert np.isnan(values[0, 0])
+        assert not np.isnan(values[0, 1])
+
+    def test_does_not_write_into_the_source_radiance(self):
+        """The in-place mask must run on its own buffer, not on dataset['Rad']."""
+        radiance = np.array([[0.0, 0.25, np.nan], [0.5, 1e6, 1.0]], dtype=np.float32)
+        dataset = _reflectance_dataset(radiance.copy())
+        before = dataset["Rad"].values.copy()
+
+        result = _compute_reflectance(dataset)
+
+        np.testing.assert_array_equal(dataset["Rad"].values, before)
+        assert not np.shares_memory(result.values, dataset["Rad"].values)
+
+    def test_preserves_dtype_dims_coords_and_crs(self):
+        dataset = _reflectance_dataset(np.array([[0.25, 0.5]], dtype=np.float32))
+
+        result = _compute_reflectance(dataset)
+
+        assert result.dtype == np.float32
+        assert result.dims == ("y", "x")
+        np.testing.assert_array_equal(result.coords["x"].values, [0.0, 2000.0])
+        assert result.rio.crs == dataset.rio.crs
+
+    def test_reflectance_is_overridden(self):
+        """Band 2 must override the Planck step (visible light is not thermal)."""
+        assert (
+            Band2Processor._compute_brightness_temperature
+            is not GoesProcessor._compute_brightness_temperature
+        )

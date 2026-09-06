@@ -24,6 +24,7 @@ import numpy as np
 import xarray as xr
 
 from processors.goes_processor import GoesProcessor
+from services.processing_steps import mask_outside_range
 
 logger = logging.getLogger(__name__)
 
@@ -157,17 +158,18 @@ class Band2Processor(GoesProcessor):
 
         logger.info("Computing reflectance factor (kappa0=%.6f)", kappa0)
 
-        reflectance = radiance * kappa0
-        del radiance
-        gc.collect()
+        values = np.multiply(radiance.values, kappa0)
 
         # Mask nighttime noise floor (< 0.005 = sensor noise, not real signal)
-        reflectance = xr.where(
-            (reflectance >= 0.005) & (reflectance <= 1.2),
-            reflectance,
-            np.nan,
-        )
+        mask_outside_range(values, 0.005, 1.2)
 
+        reflectance = xr.DataArray(
+            values,
+            dims=radiance.dims,
+            coords=radiance.coords,
+            name=radiance.name,
+            attrs=dict(radiance.attrs),
+        )
         reflectance.rio.write_crs(dataset.rio.crs, inplace=True)
         reflectance.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
 
