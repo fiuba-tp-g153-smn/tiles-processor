@@ -47,6 +47,31 @@ def apply_goes_georeferencing(source: Path | bytes) -> xr.Dataset:
         return dataset.load()
 
 
+def mask_outside_range(values: np.ndarray, low: float, high: float) -> None:
+    """Set values outside [low, high] to NaN, in place.
+
+    Equivalent to ``xr.where((v >= low) & (v <= high), v, np.nan)``: NaN
+    compares False against both bounds, so it is left untouched — and it
+    already holds the NaN that expression would have written.
+    """
+    outside = values < low
+    outside |= values > high
+    np.copyto(values, np.nan, where=outside)
+
+
+def _apply_inverse_planck(
+    values: np.ndarray, fk1: float, fk2: float, bc1: float, bc2: float
+) -> None:
+    """Apply (fk2 / ln(fk1 / L + 1) - bc1) / bc2 in place over `values`."""
+    np.divide(fk1, values, out=values)
+    np.add(values, 1.0, out=values)
+    np.log(values, out=values)
+    with np.errstate(divide="ignore"):
+        np.divide(fk2, values, out=values)
+    np.subtract(values, bc1, out=values)
+    np.divide(values, bc2, out=values)
+
+
 def compute_brightness_temperature(dataset: xr.Dataset) -> xr.DataArray:
     """Convert radiance to brightness temperature using the inverse Planck function.
 
@@ -64,20 +89,14 @@ def compute_brightness_temperature(dataset: xr.Dataset) -> xr.DataArray:
     bc1 = float(dataset["planck_bc1"].values)
     bc2 = float(dataset["planck_bc2"].values)
 
-    radiance_safe = xr.where(radiance <= 0, 1e-10, radiance)
-    del radiance
-    gc.collect()
+    source = radiance.values
+    values = np.where(source <= 0, 1e-10, source)
+    _apply_inverse_planck(values, fk1, fk2, bc1, bc2)
+    mask_outside_range(values, 150.0, 350.0)
 
-    brightness_temperature = (fk2 / np.log((fk1 / radiance_safe) + 1.0) - bc1) / bc2
-    del radiance_safe
-    gc.collect()
-
-    brightness_temperature = xr.where(
-        (brightness_temperature >= 150) & (brightness_temperature <= 350),
-        brightness_temperature,
-        np.nan,
+    brightness_temperature = xr.DataArray(
+        values, dims=radiance.dims, coords=radiance.coords, name=radiance.name
     )
-
     brightness_temperature.rio.write_crs(dataset.rio.crs, inplace=True)
     brightness_temperature.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
     return brightness_temperature
