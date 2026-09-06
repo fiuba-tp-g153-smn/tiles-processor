@@ -19,6 +19,7 @@ from factories import create_s3_client
 from models.work_unit import WorkUnit
 from processors.base_processor import ImageProcessor, ShutdownRequested
 from services.generate_geotiff_files import GenerateGeoTIFFFilesService
+from services.geo_reprojection import reproject_to_bounds
 from services.processing_steps import (
     apply_goes_georeferencing,
     build_rgba_data_array,
@@ -40,9 +41,6 @@ class GoesProcessor(ImageProcessor):
 
     # gdal2tiles settings (zoom range comes from settings.json via config.GOES_ZOOM)
     GDAL_PROCESSES = 2
-
-    # Reprojection resolution in degrees (None = auto-compute from source)
-    REPROJECT_RESOLUTION = None
 
     # Alpha for NaN/masked pixels (0 = transparent); override in subclasses
     NAN_ALPHA: int = 0
@@ -222,7 +220,7 @@ class GoesProcessor(ImageProcessor):
         return compute_brightness_temperature(dataset)
 
     def _reproject_and_clip(self, bt_data: xr.DataArray, bounds: dict) -> xr.DataArray:
-        """Reproject to EPSG:4326 and clip to geographic bounds.
+        """Reproject to EPSG:4326 directly onto the grid window covering bounds.
 
         This step is shared between COG and GeoTIFF generation to avoid
         computing the reprojection twice.
@@ -230,26 +228,15 @@ class GoesProcessor(ImageProcessor):
         if "grid_mapping" in bt_data.attrs:
             del bt_data.attrs["grid_mapping"]
 
-        logger.debug("Reprojecting to EPSG:4326...")
-        reproj = bt_data.rio.reproject(
-            "EPSG:4326", resolution=self.REPROJECT_RESOLUTION
-        )
-        reproj.rio.write_nodata(np.nan, inplace=True)
-
         logger.debug(
-            "Clipping to bounds: minx=%s, miny=%s, maxx=%s, maxy=%s",
+            "Reprojecting to EPSG:4326 over bounds: minx=%s, miny=%s, maxx=%s, maxy=%s",
             bounds["minx"],
             bounds["miny"],
             bounds["maxx"],
             bounds["maxy"],
         )
-        clipped = reproj.rio.clip_box(
-            minx=bounds["minx"],
-            miny=bounds["miny"],
-            maxx=bounds["maxx"],
-            maxy=bounds["maxy"],
-        )
-        del reproj
+        clipped = reproject_to_bounds(bt_data, bounds)
+        clipped.rio.write_nodata(np.nan, inplace=True)
         gc.collect()
 
         logger.info(
