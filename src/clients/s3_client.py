@@ -7,38 +7,71 @@ Supports both:
 """
 
 import asyncio
+import hashlib
 import logging
+import re
+from base64 import b64encode
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
 import aioboto3
-from boto3.s3.transfer import TransferConfig
 from botocore import UNSIGNED
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
+from exceptions import EmptyUploadError, UploadTooLargeError
+
 logger = logging.getLogger(__name__)
+
+# A multipart-completed object's ETag is "<md5-of-part-md5s>-<part count>"; a
+# single PUT's is a bare MD5. The suffix is standard across AWS/MinIO/SeaweedFS,
+# which makes it a backend-portable signal that a write took the multipart path
+# and therefore carries no lifecycle-derived TTL.
+_MULTIPART_ETAG_RE = re.compile(r"-\d+$")
+
+
+def _is_multipart_etag(etag: str) -> bool:
+    """True when ``etag`` has the ``-<parts>`` suffix of a multipart upload."""
+    return bool(_MULTIPART_ETAG_RE.search(etag))
+
 
 # Default concurrency for the dedicated upload semaphore (separate from the
 # download semaphore). Sized to match max_pool_connections so concurrent tile
 # PUTs never starve the connection pool. Env-overridable via S3_UPLOAD_CONCURRENCY.
 DEFAULT_UPLOAD_CONCURRENCY = 32
 
-# Single objects at/above this size upload as parallel multipart transfers,
-# streamed from disk (never the whole file in RAM). Smaller ones are one PUT.
-_MULTIPART_THRESHOLD_BYTES = 8 * 1024 * 1024
-# Parts in flight per large single-object transfer.
-_MULTIPART_MAX_CONCURRENCY = 8
+# Heavy objects (COG/GRIB/GeoJSON) upload as ONE PUT, streamed from disk, never
+# as a multipart transfer. This is load-bearing, not a performance choice:
+# SeaweedFS resolves an S3 lifecycle Expiration.Days rule into a volume TTL only
+# on the PutObject path (upstream deferred UploadPart/CompleteMultipartUpload in
+# PR #9377 and never landed the follow-up), so a multipart-uploaded object is
+# stamped TtlSec=0 and never expires. Sept 2026: 141.8 GiB of COGs accumulated
+# that way and exhausted the cluster's volume slots. `_is_multipart_etag` below
+# is the regression guard; keep this module free of TransferConfig.
+DEFAULT_HEAVY_UPLOAD_CONCURRENCY = 4
+
+# S3 caps a single PUT at 5 GiB. Above that an object is physically undeliverable
+# without multipart, so we fail loudly rather than silently leak an untagged one.
+_MAX_SINGLE_PUT_BYTES = 5 * 1024 * 1024 * 1024
+
+# Read size for off-loop hashing of a heavy body.
+_HASH_CHUNK_BYTES = 1024 * 1024
 
 # Cap any single S3 op stalled by gateway contention at seconds, not botocore's
 # 60s default read timeout (which turned contended LISTs into ~60s blocks).
-# read_timeout is per-socket-read, so a progressing multipart transfer resets it
-# each chunk and won't false-abort a slow-but-moving upload; 'standard' mode adds
-# bounded exponential-backoff retries so a contention burst can pass before retry.
+# 'standard' mode adds bounded exponential-backoff retries so a contention burst
+# can pass before retry; a heavy PUT gets its own longer budget on its own client
+# (see DEFAULT_HEAVY_READ_TIMEOUT_S) because read_timeout is per-client.
 _CONNECT_TIMEOUT_S = 5
 _READ_TIMEOUT_S = 30
+DEFAULT_HEAVY_READ_TIMEOUT_S = 120
 _MAX_ATTEMPTS = 3
+
+# Client profiles. Two boto clients, so the tile lane keeps its 30 s response
+# budget while a heavy PUT gets a longer one and a private connection pool.
+_PROFILE_DEFAULT = "default"
+_PROFILE_HEAVY = "heavy"
 
 
 # Per-prefix object retention, in days. Sub-day expiries (radar 6h, GRIB 3h)
@@ -88,6 +121,8 @@ class S3Client:
         access_key: str | None = None,
         secret_key: str | None = None,
         upload_concurrency: int = DEFAULT_UPLOAD_CONCURRENCY,
+        heavy_upload_concurrency: int = DEFAULT_HEAVY_UPLOAD_CONCURRENCY,
+        heavy_read_timeout_s: int = DEFAULT_HEAVY_READ_TIMEOUT_S,
     ):
         """
         Initialize S3 client.
@@ -98,33 +133,38 @@ class S3Client:
             max_concurrent_downloads: Maximum number of concurrent downloads
             access_key: S3 access key (optional, for authenticated access)
             secret_key: S3 secret key (optional, for authenticated access)
-            upload_concurrency: Maximum number of concurrent uploads (separate
-                from downloads); also sizes the connection pool.
+            upload_concurrency: Maximum number of concurrent tile uploads
+                (separate from downloads); also sizes the connection pool.
+            heavy_upload_concurrency: Maximum number of concurrent heavy
+                (COG/GRIB/GeoJSON) uploads; sizes the heavy client's pool.
+            heavy_read_timeout_s: Response wait for a heavy PUT, on the heavy
+                client only.
         """
         self._bucket_name = bucket_name
         self._endpoint_url = endpoint_url
         self._max_concurrent_downloads = max_concurrent_downloads
         self._upload_concurrency = upload_concurrency
+        self._heavy_upload_concurrency = heavy_upload_concurrency
+        self._heavy_read_timeout_s = heavy_read_timeout_s
         self._semaphore = asyncio.Semaphore(self._max_concurrent_downloads)
         self._upload_semaphore = asyncio.Semaphore(self._upload_concurrency)
+        # Separate gate: heavy bodies are multi-MiB, so their in-flight count is
+        # bounded independently of the tile lane's.
+        self._heavy_upload_semaphore = asyncio.Semaphore(self._heavy_upload_concurrency)
         self._session = aioboto3.Session()
         self._access_key = access_key
         self._secret_key = secret_key
         self._backend_label = "S3"
-        self._transfer_config = TransferConfig(
-            multipart_threshold=_MULTIPART_THRESHOLD_BYTES,
-            max_concurrency=_MULTIPART_MAX_CONCURRENCY,
-        )
-        # One aioboto3 client reused across a loop's calls (warm connection
-        # pool). Lazily created in _get_client and recreated if the running loop
-        # changes (e.g. worker startup's throwaway loop → persistent loop). The
-        # exit stack owns the client context so it can be closed in aclose().
-        self._client: Any = None
-        self._exit_stack: AsyncExitStack | None = None
-        self._client_loop: asyncio.AbstractEventLoop | None = None
-        # Serializes concurrent first-use creation; rebound per loop.
-        self._client_lock: asyncio.Lock | None = None
-        self._lock_loop: asyncio.AbstractEventLoop | None = None
+        # One aioboto3 client per profile, reused across a loop's calls (warm
+        # connection pool). Lazily created in _get_client and recreated if the
+        # running loop changes (e.g. worker startup's throwaway loop → persistent
+        # loop). Each exit stack owns its client so aclose() can close them all.
+        self._clients: dict[str, Any] = {}
+        self._exit_stacks: dict[str, AsyncExitStack] = {}
+        self._client_loops: dict[str, asyncio.AbstractEventLoop] = {}
+        # Serializes concurrent first-use creation; rebound per loop, per profile.
+        self._client_locks: dict[str, asyncio.Lock] = {}
+        self._lock_loops: dict[str, asyncio.AbstractEventLoop] = {}
 
     @classmethod
     def create_with_credentials(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -136,6 +176,8 @@ class S3Client:
         secure: bool = False,
         max_concurrent_operations: int = 10,
         upload_concurrency: int = DEFAULT_UPLOAD_CONCURRENCY,
+        heavy_upload_concurrency: int = DEFAULT_HEAVY_UPLOAD_CONCURRENCY,
+        heavy_read_timeout_s: int = DEFAULT_HEAVY_READ_TIMEOUT_S,
     ) -> "S3Client":
         """
         Factory method to create an authenticated S3 client for S3.
@@ -147,7 +189,9 @@ class S3Client:
             secret_key: Secret key (password)
             secure: Use HTTPS (default: False)
             max_concurrent_operations: Max parallel downloads
-            upload_concurrency: Max parallel uploads (also sizes the pool)
+            upload_concurrency: Max parallel tile uploads (also sizes the pool)
+            heavy_upload_concurrency: Max parallel heavy uploads
+            heavy_read_timeout_s: Response wait for a heavy PUT
         """
         protocol = "https" if secure else "http"
         endpoint_url = f"{protocol}://{endpoint}"
@@ -158,9 +202,13 @@ class S3Client:
             access_key=access_key,
             secret_key=secret_key,
             upload_concurrency=upload_concurrency,
+            heavy_upload_concurrency=heavy_upload_concurrency,
+            heavy_read_timeout_s=heavy_read_timeout_s,
         )
 
-    def _get_client_kwargs(self, authenticated: bool = False) -> dict:
+    def _get_client_kwargs(
+        self, authenticated: bool = False, profile: str = _PROFILE_DEFAULT
+    ) -> dict:
         """Get kwargs for creating S3 client based on auth mode.
 
         Path-style addressing and a connection pool sized to this client's
@@ -168,18 +216,23 @@ class S3Client:
         S3-compatible gateways addressed as host:port (SeaweedFS, MinIO), and
         the pool keeps concurrent operations from contending for a single
         default connection.
+
+        The heavy profile differs only in pool size and read timeout: a
+        multi-MiB PUT needs a longer response budget than the 30 s the tile lane
+        wants, and botocore fixes read_timeout per client.
         """
+        heavy = profile == _PROFILE_HEAVY
         kwargs: dict[str, Any] = {"endpoint_url": self._endpoint_url}
-        pool = max(
-            self._max_concurrent_downloads,
-            self._upload_concurrency,
-            _MULTIPART_MAX_CONCURRENCY,
+        pool = (
+            self._heavy_upload_concurrency
+            if heavy
+            else max(self._max_concurrent_downloads, self._upload_concurrency)
         )
         boto_kwargs: dict[str, Any] = {
             "s3": {"addressing_style": "path"},
-            "max_pool_connections": pool,
+            "max_pool_connections": max(1, pool),
             "connect_timeout": _CONNECT_TIMEOUT_S,
-            "read_timeout": _READ_TIMEOUT_S,
+            "read_timeout": self._heavy_read_timeout_s if heavy else _READ_TIMEOUT_S,
             "retries": {"max_attempts": _MAX_ATTEMPTS, "mode": "standard"},
         }
         if authenticated and self._access_key and self._secret_key:
@@ -190,51 +243,71 @@ class S3Client:
         kwargs["config"] = BotoConfig(**boto_kwargs)
         return kwargs
 
-    def _lock_for_loop(self, loop: asyncio.AbstractEventLoop) -> asyncio.Lock:
+    def _lock_for_loop(
+        self, loop: asyncio.AbstractEventLoop, profile: str = _PROFILE_DEFAULT
+    ) -> asyncio.Lock:
         """Return a creation lock bound to ``loop``, rebinding on loop change.
 
         Synchronous and await-free, so concurrent callers on the same loop
         observe the same lock instance (no interleave); cross-loop use is always
         sequential here, so rebinding is safe.
         """
-        if self._client_lock is None or self._lock_loop is not loop:
-            self._client_lock = asyncio.Lock()
-            self._lock_loop = loop
-        return self._client_lock
+        if (
+            profile not in self._client_locks
+            or self._lock_loops.get(profile) is not loop
+        ):
+            self._client_locks[profile] = asyncio.Lock()
+            self._lock_loops[profile] = loop
+        return self._client_locks[profile]
 
-    async def _get_client(self):
+    async def _get_client(self, profile: str = _PROFILE_DEFAULT):
         """Return a cached aioboto3 S3 client for the running loop.
 
-        Created on first use and reused across the loop's calls (warm pool). If
-        the running loop differs from the one the client was bound to, the stale
-        client is dropped (it cannot be closed from another loop) and a fresh one
-        is created.
+        Created on first use per profile and reused across the loop's calls
+        (warm pool). If the running loop differs from the one the client was
+        bound to, the stale client is dropped (it cannot be closed from another
+        loop) and a fresh one is created.
         """
         loop = asyncio.get_running_loop()
-        if self._client is not None and self._client_loop is loop:
-            return self._client
-        async with self._lock_for_loop(loop):
-            if self._client is not None and self._client_loop is loop:
-                return self._client
-            if self._client is not None:
-                logger.debug("Discarding S3 client bound to a previous event loop")
-                self._client = self._exit_stack = self._client_loop = None
+        cached = self._clients.get(profile)
+        if cached is not None and self._client_loops.get(profile) is loop:
+            return cached
+        async with self._lock_for_loop(loop, profile):
+            cached = self._clients.get(profile)
+            if cached is not None and self._client_loops.get(profile) is loop:
+                return cached
+            if cached is not None:
+                logger.debug(
+                    "Discarding S3 client (%s) bound to a previous event loop",
+                    profile,
+                )
+                self._drop_client(profile)
             # The exit stack keeps the client open beyond this call (reused
             # across the loop) and owns its eventual close in aclose().
             stack = AsyncExitStack()
-            self._client = await stack.enter_async_context(
+            client = await stack.enter_async_context(
                 self._session.client(
-                    "s3", **self._get_client_kwargs(authenticated=True)
+                    "s3",
+                    **self._get_client_kwargs(authenticated=True, profile=profile),
                 )
             )
-            self._exit_stack = stack
-            self._client_loop = loop
-            return self._client
+            self._clients[profile] = client
+            self._exit_stacks[profile] = stack
+            self._client_loops[profile] = loop
+            return client
+
+    def _drop_client(self, profile: str) -> None:
+        """Forget a profile's client without closing it (foreign-loop safe)."""
+        self._clients.pop(profile, None)
+        self._exit_stacks.pop(profile, None)
+        self._client_loops.pop(profile, None)
 
     @asynccontextmanager
-    async def _client_session(self) -> AsyncIterator[Any]:
+    async def _client_session(
+        self, profile: str = _PROFILE_DEFAULT
+    ) -> AsyncIterator[Any]:
         """Yield the reused client without closing it (close is lifecycle-owned)."""
-        yield await self._get_client()
+        yield await self._get_client(profile)
 
     async def aclose(self) -> None:
         """Close the cached client and its pool. Call on producer/worker shutdown.
@@ -242,19 +315,20 @@ class S3Client:
         Only awaits the close when running on the client's own loop; otherwise
         the references are dropped (a client cannot be closed from a foreign loop).
         """
-        stack = self._exit_stack
-        if stack is None:
+        if not self._exit_stacks:
             return
         try:
             running = asyncio.get_running_loop()
         except RuntimeError:
             running = None
-        if running is not None and self._client_loop is running:
-            try:
-                await stack.aclose()
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                logger.debug("Error closing S3 client: %s", e)
-        self._client = self._exit_stack = self._client_loop = None
+        for profile in list(self._exit_stacks):
+            stack = self._exit_stacks[profile]
+            if running is not None and self._client_loops.get(profile) is running:
+                try:
+                    await stack.aclose()
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    logger.debug("Error closing S3 client (%s): %s", profile, e)
+            self._drop_client(profile)
 
     async def __aenter__(self) -> "S3Client":
         return self
@@ -660,36 +734,125 @@ class S3Client:
             return False
 
     async def upload_file(self, key: str, file_path: Path) -> bool:
-        """Upload a single local file via the managed transfer API.
+        """Upload one heavy local file (COG/GRIB/GeoJSON) as a single PUT.
 
-        Large objects (COG/GRIB) upload as parallel multipart transfers streamed
-        from disk — never the whole file in RAM — while small files fall back to a
-        single PUT automatically. Bounded by the dedicated upload semaphore.
+        Streamed from disk — never the whole file in RAM — and deliberately
+        never multipart: on SeaweedFS only the PutObject path resolves the
+        bucket's lifecycle Expiration.Days rule into a volume TTL, so a
+        multipart object would be written with no expiry at all. The response
+        ETag is verified against the body's MD5, which both checks integrity and
+        proves the object did not go multipart (a multipart ETag is
+        ``<hex32>-<parts>``). Bounded by the heavy upload semaphore.
 
         Args:
             key: Destination object key (e.g., "cog/band_13/image.tif").
             file_path: Local path of the file to upload.
 
         Returns:
-            ``True`` when upload succeeds, ``False`` when it fails.
+            ``True`` when upload succeeds and verifies, ``False`` otherwise.
         """
         try:
-            s3_client = await self._get_client()
-            async with self._upload_semaphore:
-                await s3_client.upload_file(
-                    str(file_path),
-                    self._bucket_name,
-                    key,
-                    ExtraArgs={"ContentType": self._get_content_type(file_path)},
-                    Config=self._transfer_config,
-                )
-            logger.debug(
-                "Uploaded via %s (managed transfer): %s", self._backend_label, key
-            )
-            return True
+            size = await asyncio.to_thread(self._validated_heavy_size, file_path)
+            content_md5, md5_hex = await asyncio.to_thread(self._file_md5, file_path)
+            etag = await self._put_streaming(key, file_path, content_md5)
+            return self._verify_heavy_etag(key, etag, md5_hex, size)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.debug("Failed to upload %s to %s: %s", file_path, key, e)
+            # ERROR, not DEBUG: unlike one tile among thousands, a dropped COG
+            # is a product the visualizer and point-value reads depend on.
+            logger.error(
+                "Heavy upload failed: %s -> %s/%s (%s: %s)",
+                file_path,
+                self._bucket_name,
+                key,
+                type(e).__name__,
+                e,
+            )
             return False
+
+    async def _put_streaming(
+        self, key: str, file_path: Path, content_md5: str
+    ) -> str | None:
+        """PUT ``file_path`` as one streamed request; return the response ETag.
+
+        The body is an open file handle, so botocore streams it rather than
+        buffering, and can rewind it for its own bounded retries. ``ContentMD5``
+        is supplied so no checksum pass has to re-read the body on the loop.
+        """
+        s3_client = await self._get_client(_PROFILE_HEAVY)
+        async with self._heavy_upload_semaphore:
+            handle = await asyncio.to_thread(file_path.open, "rb")
+            try:
+                response = await s3_client.put_object(
+                    Bucket=self._bucket_name,
+                    Key=key,
+                    Body=handle,
+                    ContentType=self._get_content_type(file_path),
+                    ContentMD5=content_md5,
+                )
+            finally:
+                await asyncio.to_thread(handle.close)
+        return response.get("ETag")
+
+    def _verify_heavy_etag(
+        self, key: str, etag: str | None, md5_hex: str, size: int
+    ) -> bool:
+        """Confirm the object landed as a single, intact, non-multipart PUT.
+
+        Blocking-free and pure. Runs on every heavy upload because a silent
+        multipart fallback is precisely how 141.8 GiB of never-expiring COGs
+        accumulated before Sept 2026.
+        """
+        normalized = (etag or "").strip('"')
+        if _is_multipart_etag(normalized):
+            logger.error(
+                "Heavy upload of %s returned a MULTIPART ETag (%s): the object "
+                "carries NO lifecycle TTL and will never expire. Multipart must "
+                "stay disabled on this path.",
+                key,
+                normalized,
+            )
+            return False
+        if normalized and normalized != md5_hex:
+            logger.error(
+                "Heavy upload of %s failed integrity check: ETag %s != MD5 %s",
+                key,
+                normalized,
+                md5_hex,
+            )
+            return False
+        logger.debug(
+            "Uploaded via %s (single PUT, %d bytes): %s",
+            self._backend_label,
+            size,
+            key,
+        )
+        return True
+
+    @staticmethod
+    def _validated_heavy_size(file_path: Path) -> int:
+        """Return the file size, rejecting inputs a single PUT must not carry."""
+        size = file_path.stat().st_size
+        if size == 0:
+            raise EmptyUploadError(f"refusing to upload 0-byte file: {file_path}")
+        if size > _MAX_SINGLE_PUT_BYTES:
+            raise UploadTooLargeError(
+                f"{file_path} is {size} bytes, above the {_MAX_SINGLE_PUT_BYTES} "
+                "single-PUT limit; multipart is disabled because it would write "
+                "the object with no lifecycle TTL"
+            )
+        return size
+
+    @staticmethod
+    def _file_md5(file_path: Path) -> tuple[str, str]:
+        """Hash ``file_path`` off the event loop.
+
+        Returns ``(base64 for ContentMD5, hex for the ETag comparison)``.
+        """
+        digest = hashlib.md5(usedforsecurity=False)
+        with file_path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(_HASH_CHUNK_BYTES), b""):
+                digest.update(chunk)
+        return b64encode(digest.digest()).decode("ascii"), digest.hexdigest()
 
     async def delete_prefix(self, s3_prefix: str) -> int:
         """

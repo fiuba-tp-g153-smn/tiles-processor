@@ -255,6 +255,11 @@ def create_s3_client(config: Config) -> S3Client:
     gateway, MinIO, AWS S3) is swappable. Object expiry is handled by per-prefix
     bucket lifecycle rules (see ``S3Client.configure_lifecycle_policy``), not by
     a backend-specific per-object TTL.
+
+    Two upload lanes share the client: many small objects under a prefix
+    (``upload_directory``) and one heavy object at a time (``upload_file``). They
+    are sized and timed separately, because a multi-MiB COG and a 4 KB tile want
+    opposite trade-offs from the same gateway.
     """
     return S3Client.create_with_credentials(
         bucket_name=config.S3_TILES_DATA_BUCKET_NAME,
@@ -263,4 +268,6 @@ def create_s3_client(config: Config) -> S3Client:
         secret_key=config.S3_TILES_DATA_RW_SECRET_KEY,
         secure=config.S3_TILES_DATA_SECURE,
         upload_concurrency=config.S3_UPLOAD_CONCURRENCY,
+        heavy_upload_concurrency=config.S3_HEAVY_UPLOAD_CONCURRENCY,
+        heavy_read_timeout_s=config.S3_HEAVY_READ_TIMEOUT_S,
     )

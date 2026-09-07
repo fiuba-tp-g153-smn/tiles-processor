@@ -1,7 +1,11 @@
 import asyncio
+import hashlib
 import logging
 import sys
 import os
+from base64 import b64encode
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -503,10 +507,20 @@ class TestS3ClientGetFolderFilePaths:
 
 
 class TestS3ClientUploadFile:
-    """Tests for S3Client.upload_file (managed multipart transfer)."""
+    """Heavy uploads: one streamed PUT, never multipart.
 
-    @staticmethod
-    def _make_client():
+    Multipart is not merely slower here — SeaweedFS resolves the bucket's
+    lifecycle Expiration.Days rule into a volume TTL only on the PutObject path,
+    so a multipart object is written with no expiry and never reclaims its
+    volume slots. These tests pin that invariant.
+    """
+
+    BODY = b"heavy-cog-bytes"
+    MD5_HEX = hashlib.md5(BODY, usedforsecurity=False).hexdigest()
+    MD5_B64 = b64encode(bytes.fromhex(MD5_HEX)).decode("ascii")
+
+    @classmethod
+    def _make_client(cls, etag: str | None = None):
         s3_client = S3Client(
             bucket_name="tiles-data",
             endpoint_url="http://s3:9000",
@@ -514,42 +528,150 @@ class TestS3ClientUploadFile:
             secret_key="pass",
         )
         boto_client = AsyncMock()
+        boto_client.put_object.return_value = {
+            "ETag": f'"{cls.MD5_HEX if etag is None else etag}"'
+        }
         s3_client._session.client = lambda *a, **k: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
         return s3_client, boto_client
 
-    @pytest.mark.asyncio
-    async def test_upload_file_uses_managed_transfer_with_multipart_config(
-        self, tmp_path
-    ):
-        """upload_file routes through the managed transfer API (not put_object)."""
+    @classmethod
+    def _write_body(cls, tmp_path):
         file_path = tmp_path / "sample.tif"
-        file_path.write_bytes(b"abc")
+        file_path.write_bytes(cls.BODY)
+        return file_path
+
+    @pytest.mark.asyncio
+    async def test_uses_single_put_and_never_the_transfer_manager(self, tmp_path):
+        """The body goes out as one put_object; multipart is never engaged."""
+        file_path = self._write_body(tmp_path)
         s3_client, boto_client = self._make_client()
 
         uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
 
         assert uploaded is True
-        boto_client.put_object.assert_not_awaited()
-        boto_client.upload_file.assert_awaited_once()
-        args, kwargs = boto_client.upload_file.call_args
-        assert args[0] == str(file_path)
-        assert args[1] == "tiles-data"
-        assert args[2] == "cog/band_13/image.tif"
-        assert kwargs["ExtraArgs"]["ContentType"] == "image/tiff"
-        assert kwargs["Config"] is s3_client._transfer_config
-        assert kwargs["Config"].multipart_threshold == 8 * 1024 * 1024
+        boto_client.upload_file.assert_not_awaited()
+        boto_client.put_object.assert_awaited_once()
+        kwargs = boto_client.put_object.call_args.kwargs
+        assert kwargs["Bucket"] == "tiles-data"
+        assert kwargs["Key"] == "cog/band_13/image.tif"
+        assert kwargs["ContentType"] == "image/tiff"
+        assert kwargs["ContentMD5"] == self.MD5_B64
 
     @pytest.mark.asyncio
-    async def test_upload_file_returns_false_on_transfer_failure(self, tmp_path):
-        """upload_file should not raise and should return False on transfer errors."""
-        file_path = tmp_path / "sample.tif"
-        file_path.write_bytes(b"abc")
+    async def test_body_is_streamed_never_bytes(self, tmp_path):
+        """Body must be a file handle, so RAM stays bounded and retries rewind."""
+        file_path = self._write_body(tmp_path)
         s3_client, boto_client = self._make_client()
-        boto_client.upload_file.side_effect = RuntimeError("boom")
 
-        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
+        await s3_client.upload_file("cog/band_13/image.tif", file_path)
+
+        body = boto_client.put_object.call_args.kwargs["Body"]
+        assert not isinstance(body, (bytes, bytearray))
+        assert hasattr(body, "read") and hasattr(body, "seek")
+
+    @pytest.mark.asyncio
+    async def test_rejects_multipart_shaped_etag(self, tmp_path, caplog):
+        """A "-<parts>" ETag proves the object took the no-TTL path: fail closed."""
+        file_path = self._write_body(tmp_path)
+        s3_client, _ = self._make_client(etag=f"{self.MD5_HEX}-3")
+
+        with caplog.at_level(logging.ERROR):
+            uploaded = await s3_client.upload_file("cog/band_13/i.tif", file_path)
 
         assert uploaded is False
+        assert "MULTIPART" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rejects_etag_that_does_not_match_the_body(self, tmp_path):
+        """ETag mismatch means a corrupted body; do not report success."""
+        file_path = self._write_body(tmp_path)
+        s3_client, _ = self._make_client(etag="0" * 32)
+
+        assert await s3_client.upload_file("cog/band_13/i.tif", file_path) is False
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_file_before_any_request(self, tmp_path):
+        """A 0-byte COG means the generating step failed; never publish it."""
+        file_path = tmp_path / "empty.tif"
+        file_path.write_bytes(b"")
+        s3_client, boto_client = self._make_client()
+
+        assert await s3_client.upload_file("cog/band_13/i.tif", file_path) is False
+        boto_client.put_object.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rejects_object_above_the_single_put_limit(self, tmp_path):
+        """Above 5 GiB a single PUT is impossible and multipart is not an option."""
+        file_path = self._write_body(tmp_path)
+        s3_client, boto_client = self._make_client()
+
+        with patch.object(
+            Path, "stat", return_value=SimpleNamespace(st_size=6 * 1024**3)
+        ):
+            uploaded = await s3_client.upload_file("cog/band_13/i.tif", file_path)
+
+        assert uploaded is False
+        boto_client.put_object.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_returns_false_and_logs_error_on_transfer_failure(
+        self, tmp_path, caplog
+    ):
+        """Failures are visible: a dropped COG is a product, not one tile of many."""
+        file_path = self._write_body(tmp_path)
+        s3_client, boto_client = self._make_client()
+        boto_client.put_object.side_effect = RuntimeError("boom")
+
+        with caplog.at_level(logging.ERROR):
+            uploaded = await s3_client.upload_file("cog/band_13/i.tif", file_path)
+
+        assert uploaded is False
+        assert "Heavy upload failed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_uses_the_heavy_lane_not_the_tile_lane(self, tmp_path):
+        """Heavy uploads hold the heavy gate and leave the tile lane alone.
+
+        Both semaphores are sampled from inside the in-flight request, which is
+        the only moment the distinction is observable.
+        """
+        file_path = self._write_body(tmp_path)
+        s3_client, boto_client = self._make_client()
+        seen = {}
+
+        async def sample(**_kwargs):
+            seen["heavy_free"] = s3_client._heavy_upload_semaphore._value
+            seen["tile_free"] = s3_client._upload_semaphore._value
+            return {"ETag": f'"{self.MD5_HEX}"'}
+
+        boto_client.put_object.side_effect = sample
+
+        assert await s3_client.upload_file("cog/band_13/i.tif", file_path) is True
+        # One heavy slot taken, tile lane fully idle.
+        assert seen["heavy_free"] == s3_client._heavy_upload_concurrency - 1
+        assert seen["tile_free"] == s3_client._upload_concurrency
+
+    def test_heavy_client_gets_its_own_timeout_and_pool(self):
+        """read_timeout is per-client in botocore, so the lanes need two clients."""
+        s3_client = S3Client(
+            bucket_name="tiles-data",
+            endpoint_url="http://s3:9000",
+            access_key="user",
+            secret_key="pass",
+            upload_concurrency=32,
+            heavy_upload_concurrency=4,
+            heavy_read_timeout_s=120,
+        )
+
+        default = s3_client._get_client_kwargs(authenticated=True)["config"]
+        heavy = s3_client._get_client_kwargs(authenticated=True, profile="heavy")[
+            "config"
+        ]
+
+        assert default.read_timeout == 30
+        assert heavy.read_timeout == 120
+        assert default.max_pool_connections == 32
+        assert heavy.max_pool_connections == 4
 
 
 class TestS3ClientReuse:

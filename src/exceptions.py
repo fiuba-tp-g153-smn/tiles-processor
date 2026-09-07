@@ -37,3 +37,24 @@ class SourceFileNotFoundError(Exception):
     missing file surfaces as a visible failure on the dashboard (fail rate =
     error + dlq) instead of churning through re-downloads that can never succeed.
     """
+
+
+class EmptyUploadError(Exception):
+    """A file selected for upload is 0 bytes.
+
+    A zero-length COG/GRIB means the generating step failed silently. Uploading
+    it would publish a product that data-service reads for point values and the
+    visualizer renders as a layer, so the upload is refused instead. Callers
+    surface this as a failed upload (``False``) rather than propagating.
+    """
+
+
+class UploadTooLargeError(Exception):
+    """An object exceeds what a single S3 PUT can carry (5 GiB).
+
+    Heavy uploads deliberately never use multipart: on SeaweedFS only the
+    PutObject path resolves the bucket's lifecycle ``Expiration.Days`` rule into
+    a volume TTL, so a multipart object is stored with no expiry and never
+    reclaims its volume slots. An object this large therefore cannot be
+    delivered safely and is refused loudly rather than written untagged.
+    """

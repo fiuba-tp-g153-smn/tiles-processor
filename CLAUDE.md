@@ -96,7 +96,7 @@ For `rio.reproject("EPSG:4326")` on geostationary data, leave `resolution=None`.
 ### Infrastructure
 - Docker: `mem_limit`, `cpus`, `--memory-swap=0`. Monitor with `docker stats`.
 - RabbitMQ: prefetch=1, manual ack, message TTL, dead-letter exchange.
-- S3: multipart uploads >5MB, aioboto3 async, exponential backoff retries, stream to disk.
+- S3: **never multipart** — one streamed `put_object` per object, aioboto3 async, exponential backoff retries, stream to disk. SeaweedFS resolves a bucket lifecycle `Expiration.Days` rule into a volume TTL only on the PutObject path, so a multipart object is stored with **no expiry** and never returns its volume slots (upstream deferred this in seaweedfs PR #9377 and never landed the follow-up). Sept 2026: 141.8 GiB of multipart-uploaded COGs never expired and exhausted the cluster's 900 volume slots, failing 100% of writes. `S3Client.upload_file` streams heavy objects (COG/GRIB/GeoJSON) as a single PUT and rejects any `<hex32>-<parts>` ETag; keep `TransferConfig` out of `src/clients/`.
 - Monitoring: structured logging with timing, track queue depth / processing time / error rates, `time.perf_counter()`.
 
 ## Anti-Patterns

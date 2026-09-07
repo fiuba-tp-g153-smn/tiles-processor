@@ -62,6 +62,20 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.S3_UPLOAD_CONCURRENCY: int = int(
             os.getenv("S3_UPLOAD_CONCURRENCY") or "32"
         )
+        # Heavy uploads (COG/GRIB/GeoJSON) stream from disk as one PUT each, so
+        # they are sized separately from the tile lane: a handful of multi-MiB
+        # bodies in flight rather than dozens of 4-8 KB ones, and they get their
+        # own connection pool so a slow product upload cannot starve tile PUTs.
+        self.S3_HEAVY_UPLOAD_CONCURRENCY: int = int(
+            os.getenv("S3_HEAVY_UPLOAD_CONCURRENCY") or "4"
+        )
+        # Response wait for a heavy PUT. The tile lane's 30 s exists to stop a
+        # contended LIST blocking for botocore's 60 s default; a multi-MiB body
+        # legitimately needs longer, which is why the two lanes hold separate
+        # clients (read_timeout is per-client in botocore, not per-request).
+        self.S3_HEAVY_READ_TIMEOUT_S: int = int(
+            os.getenv("S3_HEAVY_READ_TIMEOUT_S") or "120"
+        )
 
         # RabbitMQ Configuration
         self.RABBITMQ_HOST: str = self._get_required_env("RABBITMQ_HOST")
@@ -590,6 +604,8 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("S3_TILES_DATA_BUCKET_NAME: %s", self.S3_TILES_DATA_BUCKET_NAME)
         logger.info("S3_TILES_DATA_SECURE: %s", self.S3_TILES_DATA_SECURE)
         logger.info("S3_UPLOAD_CONCURRENCY: %s", self.S3_UPLOAD_CONCURRENCY)
+        logger.info("S3_HEAVY_UPLOAD_CONCURRENCY: %s", self.S3_HEAVY_UPLOAD_CONCURRENCY)
+        logger.info("S3_HEAVY_READ_TIMEOUT_S: %s", self.S3_HEAVY_READ_TIMEOUT_S)
         logger.info("RABBITMQ_HOST: %s", self.RABBITMQ_HOST)
         logger.info("RABBITMQ_PORT: %s", self.RABBITMQ_PORT)
         logger.info("RABBITMQ_QUEUE: %s", self.RABBITMQ_QUEUE)
