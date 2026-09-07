@@ -131,7 +131,7 @@ fi
 
 # Hard ceiling on volume slots. At 100 % the master cannot assign: every PutObject fails with
 # "InternalError" while GETs keep working. Shared with the pressure warning so they can't drift.
-SEAWEEDFS_VOLUME_MAX="${SEAWEEDFS_VOLUME_MAX:-900}"
+SEAWEEDFS_VOLUME_MAX="${SEAWEEDFS_VOLUME_MAX:-2000}"
 
 # Monitor cadence, and the delay before the first check — long enough for volumes to register with
 # the master, short enough that a container booted against a full cluster reports it in minutes.
