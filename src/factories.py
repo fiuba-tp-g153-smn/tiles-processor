@@ -256,10 +256,11 @@ def create_s3_client(config: Config) -> S3Client:
     bucket lifecycle rules (see ``S3Client.configure_lifecycle_policy``), not by
     a backend-specific per-object TTL.
 
-    Two upload lanes share the client: many small objects under a prefix
-    (``upload_directory``) and one heavy object at a time (``upload_file``). They
-    are sized and timed separately, because a multi-MiB COG and a 4 KB tile want
-    opposite trade-offs from the same gateway.
+    Upload lanes share the client but are sized and timed separately, because a
+    4 KB tile, a 4 MiB WRF COG and a 46 MiB ECMWF GRIB want different trade-offs
+    from the same gateway: many small objects under a prefix
+    (``upload_directory``), sub-threshold single objects, and large single
+    objects on a narrow gate of their own.
     """
     return S3Client.create_with_credentials(
         bucket_name=config.S3_TILES_DATA_BUCKET_NAME,
@@ -270,4 +271,6 @@ def create_s3_client(config: Config) -> S3Client:
         upload_concurrency=config.S3_UPLOAD_CONCURRENCY,
         heavy_upload_concurrency=config.S3_HEAVY_UPLOAD_CONCURRENCY,
         heavy_read_timeout_s=config.S3_HEAVY_READ_TIMEOUT_S,
+        large_upload_concurrency=config.S3_LARGE_UPLOAD_CONCURRENCY,
+        large_object_threshold_mb=config.S3_LARGE_OBJECT_THRESHOLD_MB,
     )

@@ -7,10 +7,7 @@ Supports both:
 """
 
 import asyncio
-import hashlib
 import logging
-import re
-from base64 import b64encode
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
@@ -20,20 +17,9 @@ from botocore import UNSIGNED
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
-from exceptions import EmptyUploadError, UploadTooLargeError
+from clients.heavy_upload import etag_failure_reason, file_md5, validated_size
 
 logger = logging.getLogger(__name__)
-
-# A multipart-completed object's ETag is "<md5-of-part-md5s>-<part count>"; a
-# single PUT's is a bare MD5. The suffix is standard across AWS/MinIO/SeaweedFS,
-# which makes it a backend-portable signal that a write took the multipart path
-# and therefore carries no lifecycle-derived TTL.
-_MULTIPART_ETAG_RE = re.compile(r"-\d+$")
-
-
-def _is_multipart_etag(etag: str) -> bool:
-    """True when ``etag`` has the ``-<parts>`` suffix of a multipart upload."""
-    return bool(_MULTIPART_ETAG_RE.search(etag))
 
 
 # Default concurrency for the dedicated upload semaphore (separate from the
@@ -42,21 +28,17 @@ def _is_multipart_etag(etag: str) -> bool:
 DEFAULT_UPLOAD_CONCURRENCY = 32
 
 # Heavy objects (COG/GRIB/GeoJSON) upload as ONE PUT, streamed from disk, never
-# as a multipart transfer. This is load-bearing, not a performance choice:
-# SeaweedFS resolves an S3 lifecycle Expiration.Days rule into a volume TTL only
-# on the PutObject path (upstream deferred UploadPart/CompleteMultipartUpload in
-# PR #9377 and never landed the follow-up), so a multipart-uploaded object is
-# stamped TtlSec=0 and never expires. Sept 2026: 141.8 GiB of COGs accumulated
-# that way and exhausted the cluster's volume slots. `_is_multipart_etag` below
-# is the regression guard; keep this module free of TransferConfig.
-DEFAULT_HEAVY_UPLOAD_CONCURRENCY = 4
-
-# S3 caps a single PUT at 5 GiB. Above that an object is physically undeliverable
-# without multipart, so we fail loudly rather than silently leak an untagged one.
-_MAX_SINGLE_PUT_BYTES = 5 * 1024 * 1024 * 1024
-
-# Read size for off-loop hashing of a heavy body.
-_HASH_CHUNK_BYTES = 1024 * 1024
+# as a multipart transfer — see clients/heavy_upload.py for why that is
+# load-bearing rather than a performance choice, and for the guards. Keep this
+# module free of TransferConfig.
+#
+# The lane is split by size so a handful of 46 MiB GRIBs cannot head-of-line
+# block thousands of sub-MiB COGs sharing the client. Sizing rationale and the
+# measured distribution behind the 6 MiB boundary live with the tunables, in
+# Config.S3_LARGE_OBJECT_THRESHOLD_MB.
+DEFAULT_HEAVY_UPLOAD_CONCURRENCY = 16
+DEFAULT_LARGE_UPLOAD_CONCURRENCY = 4
+DEFAULT_LARGE_OBJECT_THRESHOLD_MB = 6
 
 # Cap any single S3 op stalled by gateway contention at seconds, not botocore's
 # 60s default read timeout (which turned contended LISTs into ~60s blocks).
@@ -123,6 +105,8 @@ class S3Client:
         upload_concurrency: int = DEFAULT_UPLOAD_CONCURRENCY,
         heavy_upload_concurrency: int = DEFAULT_HEAVY_UPLOAD_CONCURRENCY,
         heavy_read_timeout_s: int = DEFAULT_HEAVY_READ_TIMEOUT_S,
+        large_upload_concurrency: int = DEFAULT_LARGE_UPLOAD_CONCURRENCY,
+        large_object_threshold_mb: int = DEFAULT_LARGE_OBJECT_THRESHOLD_MB,
     ):
         """
         Initialize S3 client.
@@ -136,9 +120,14 @@ class S3Client:
             upload_concurrency: Maximum number of concurrent tile uploads
                 (separate from downloads); also sizes the connection pool.
             heavy_upload_concurrency: Maximum number of concurrent heavy
-                (COG/GRIB/GeoJSON) uploads; sizes the heavy client's pool.
+                (COG/GRIB/GeoJSON) uploads below the large-object threshold.
             heavy_read_timeout_s: Response wait for a heavy PUT, on the heavy
                 client only.
+            large_upload_concurrency: Maximum number of concurrent uploads at or
+                above the large-object threshold, so a few very large bodies
+                cannot head-of-line block the many small ones.
+            large_object_threshold_mb: Size at which an upload moves to the
+                large lane.
         """
         self._bucket_name = bucket_name
         self._endpoint_url = endpoint_url
@@ -146,11 +135,15 @@ class S3Client:
         self._upload_concurrency = upload_concurrency
         self._heavy_upload_concurrency = heavy_upload_concurrency
         self._heavy_read_timeout_s = heavy_read_timeout_s
+        self._large_upload_concurrency = large_upload_concurrency
+        self._large_object_threshold_bytes = large_object_threshold_mb * 1024 * 1024
         self._semaphore = asyncio.Semaphore(self._max_concurrent_downloads)
         self._upload_semaphore = asyncio.Semaphore(self._upload_concurrency)
-        # Separate gate: heavy bodies are multi-MiB, so their in-flight count is
-        # bounded independently of the tile lane's.
+        # Two gates inside the heavy lane, bounded independently of the tile
+        # lane's: sub-threshold bodies get width, at-or-above ones get a narrow
+        # gate so they cannot monopolise the gateway (see the size note above).
         self._heavy_upload_semaphore = asyncio.Semaphore(self._heavy_upload_concurrency)
+        self._large_upload_semaphore = asyncio.Semaphore(self._large_upload_concurrency)
         self._session = aioboto3.Session()
         self._access_key = access_key
         self._secret_key = secret_key
@@ -178,6 +171,8 @@ class S3Client:
         upload_concurrency: int = DEFAULT_UPLOAD_CONCURRENCY,
         heavy_upload_concurrency: int = DEFAULT_HEAVY_UPLOAD_CONCURRENCY,
         heavy_read_timeout_s: int = DEFAULT_HEAVY_READ_TIMEOUT_S,
+        large_upload_concurrency: int = DEFAULT_LARGE_UPLOAD_CONCURRENCY,
+        large_object_threshold_mb: int = DEFAULT_LARGE_OBJECT_THRESHOLD_MB,
     ) -> "S3Client":
         """
         Factory method to create an authenticated S3 client for S3.
@@ -190,8 +185,10 @@ class S3Client:
             secure: Use HTTPS (default: False)
             max_concurrent_operations: Max parallel downloads
             upload_concurrency: Max parallel tile uploads (also sizes the pool)
-            heavy_upload_concurrency: Max parallel heavy uploads
+            heavy_upload_concurrency: Max parallel sub-threshold heavy uploads
             heavy_read_timeout_s: Response wait for a heavy PUT
+            large_upload_concurrency: Max parallel at-or-above-threshold uploads
+            large_object_threshold_mb: Size at which the large lane takes over
         """
         protocol = "https" if secure else "http"
         endpoint_url = f"{protocol}://{endpoint}"
@@ -203,6 +200,8 @@ class S3Client:
             secret_key=secret_key,
             upload_concurrency=upload_concurrency,
             heavy_upload_concurrency=heavy_upload_concurrency,
+            large_upload_concurrency=large_upload_concurrency,
+            large_object_threshold_mb=large_object_threshold_mb,
             heavy_read_timeout_s=heavy_read_timeout_s,
         )
 
@@ -224,7 +223,8 @@ class S3Client:
         heavy = profile == _PROFILE_HEAVY
         kwargs: dict[str, Any] = {"endpoint_url": self._endpoint_url}
         pool = (
-            self._heavy_upload_concurrency
+            # Both heavy sub-lanes share this client, so the pool covers both.
+            self._heavy_upload_concurrency + self._large_upload_concurrency
             if heavy
             else max(self._max_concurrent_downloads, self._upload_concurrency)
         )
@@ -742,7 +742,8 @@ class S3Client:
         multipart object would be written with no expiry at all. The response
         ETag is verified against the body's MD5, which both checks integrity and
         proves the object did not go multipart (a multipart ETag is
-        ``<hex32>-<parts>``). Bounded by the heavy upload semaphore.
+        ``<hex32>-<parts>``). Bounded by whichever heavy sub-lane its size
+        selects (see ``_lane_for``).
 
         Args:
             key: Destination object key (e.g., "cog/band_13/image.tif").
@@ -752,9 +753,9 @@ class S3Client:
             ``True`` when upload succeeds and verifies, ``False`` otherwise.
         """
         try:
-            size = await asyncio.to_thread(self._validated_heavy_size, file_path)
-            content_md5, md5_hex = await asyncio.to_thread(self._file_md5, file_path)
-            etag = await self._put_streaming(key, file_path, content_md5)
+            size = await asyncio.to_thread(validated_size, file_path)
+            content_md5, md5_hex = await asyncio.to_thread(file_md5, file_path)
+            etag = await self._put_streaming(key, file_path, content_md5, size)
             return self._verify_heavy_etag(key, etag, md5_hex, size)
         except Exception as e:  # pylint: disable=broad-exception-caught
             # ERROR, not DEBUG: unlike one tile among thousands, a dropped COG
@@ -769,8 +770,18 @@ class S3Client:
             )
             return False
 
+    def _lane_for(self, size: int) -> tuple[asyncio.Semaphore, str]:
+        """Pick the heavy sub-lane for ``size``; returns (gate, label for logs).
+
+        At or above the threshold an object takes the narrow lane, so a burst of
+        very large bodies cannot starve the many small ones sharing the client.
+        """
+        if size >= self._large_object_threshold_bytes:
+            return self._large_upload_semaphore, "large"
+        return self._heavy_upload_semaphore, "heavy"
+
     async def _put_streaming(
-        self, key: str, file_path: Path, content_md5: str
+        self, key: str, file_path: Path, content_md5: str, size: int
     ) -> str | None:
         """PUT ``file_path`` as one streamed request; return the response ETag.
 
@@ -779,7 +790,9 @@ class S3Client:
         is supplied so no checksum pass has to re-read the body on the loop.
         """
         s3_client = await self._get_client(_PROFILE_HEAVY)
-        async with self._heavy_upload_semaphore:
+        gate, lane = self._lane_for(size)
+        logger.debug("Heavy upload %s via the %s lane (%d bytes)", key, lane, size)
+        async with gate:
             handle = await asyncio.to_thread(file_path.open, "rb")
             try:
                 response = await s3_client.put_object(
@@ -796,29 +809,10 @@ class S3Client:
     def _verify_heavy_etag(
         self, key: str, etag: str | None, md5_hex: str, size: int
     ) -> bool:
-        """Confirm the object landed as a single, intact, non-multipart PUT.
-
-        Blocking-free and pure. Runs on every heavy upload because a silent
-        multipart fallback is precisely how 141.8 GiB of never-expiring COGs
-        accumulated before Sept 2026.
-        """
-        normalized = (etag or "").strip('"')
-        if _is_multipart_etag(normalized):
-            logger.error(
-                "Heavy upload of %s returned a MULTIPART ETag (%s): the object "
-                "carries NO lifecycle TTL and will never expire. Multipart must "
-                "stay disabled on this path.",
-                key,
-                normalized,
-            )
-            return False
-        if normalized and normalized != md5_hex:
-            logger.error(
-                "Heavy upload of %s failed integrity check: ETag %s != MD5 %s",
-                key,
-                normalized,
-                md5_hex,
-            )
+        """Log and report whether the object landed as a single, intact PUT."""
+        reason = etag_failure_reason(etag, md5_hex)
+        if reason is not None:
+            logger.error("Heavy upload of %s %s", key, reason)
             return False
         logger.debug(
             "Uploaded via %s (single PUT, %d bytes): %s",
@@ -827,32 +821,6 @@ class S3Client:
             key,
         )
         return True
-
-    @staticmethod
-    def _validated_heavy_size(file_path: Path) -> int:
-        """Return the file size, rejecting inputs a single PUT must not carry."""
-        size = file_path.stat().st_size
-        if size == 0:
-            raise EmptyUploadError(f"refusing to upload 0-byte file: {file_path}")
-        if size > _MAX_SINGLE_PUT_BYTES:
-            raise UploadTooLargeError(
-                f"{file_path} is {size} bytes, above the {_MAX_SINGLE_PUT_BYTES} "
-                "single-PUT limit; multipart is disabled because it would write "
-                "the object with no lifecycle TTL"
-            )
-        return size
-
-    @staticmethod
-    def _file_md5(file_path: Path) -> tuple[str, str]:
-        """Hash ``file_path`` off the event loop.
-
-        Returns ``(base64 for ContentMD5, hex for the ETag comparison)``.
-        """
-        digest = hashlib.md5(usedforsecurity=False)
-        with file_path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(_HASH_CHUNK_BYTES), b""):
-                digest.update(chunk)
-        return b64encode(digest.digest()).decode("ascii"), digest.hexdigest()
 
     async def delete_prefix(self, s3_prefix: str) -> int:
         """

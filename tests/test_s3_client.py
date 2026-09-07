@@ -651,6 +651,66 @@ class TestS3ClientUploadFile:
         assert seen["heavy_free"] == s3_client._heavy_upload_concurrency - 1
         assert seen["tile_free"] == s3_client._upload_concurrency
 
+    @pytest.mark.asyncio
+    async def test_small_object_takes_the_wide_heavy_lane(self, tmp_path):
+        """Sub-threshold objects (99% of heavy count) must not be throttled."""
+        file_path = self._write_body(tmp_path)  # a few bytes
+        s3_client, boto_client = self._make_client()
+        seen = {}
+
+        async def sample(**_kwargs):
+            seen["heavy"] = s3_client._heavy_upload_semaphore._value
+            seen["large"] = s3_client._large_upload_semaphore._value
+            return {"ETag": f'"{self.MD5_HEX}"'}
+
+        boto_client.put_object.side_effect = sample
+        assert await s3_client.upload_file("cog/radar/x.tif", file_path) is True
+
+        assert seen["heavy"] == s3_client._heavy_upload_concurrency - 1
+        assert seen["large"] == s3_client._large_upload_concurrency  # untouched
+
+    @pytest.mark.asyncio
+    async def test_large_object_takes_the_narrow_lane(self, tmp_path):
+        """At/above the threshold an object must not consume the wide lane.
+
+        Guards the head-of-line case: a few 46 MiB ECMWF GRIBs sharing one
+        client with thousands of sub-MiB radar COGs.
+        """
+        file_path = self._write_body(tmp_path)
+        s3_client, boto_client = self._make_client()
+        seen = {}
+
+        async def sample(**_kwargs):
+            seen["heavy"] = s3_client._heavy_upload_semaphore._value
+            seen["large"] = s3_client._large_upload_semaphore._value
+            return {"ETag": f'"{self.MD5_HEX}"'}
+
+        boto_client.put_object.side_effect = sample
+        big = s3_client._large_object_threshold_bytes + 1
+        with patch.object(Path, "stat", return_value=SimpleNamespace(st_size=big)):
+            assert await s3_client.upload_file("grib/x.grib2", file_path) is True
+
+        assert seen["large"] == s3_client._large_upload_concurrency - 1
+        assert seen["heavy"] == s3_client._heavy_upload_concurrency  # untouched
+
+    def test_lane_boundary_is_inclusive_at_the_threshold(self):
+        """Exactly-at-threshold counts as large: borderline errs cautious."""
+        s3_client = S3Client(bucket_name="tiles-data", endpoint_url="http://s3:9000")
+        thr = s3_client._large_object_threshold_bytes
+
+        assert s3_client._lane_for(thr - 1)[1] == "heavy"
+        assert s3_client._lane_for(thr)[1] == "large"
+        assert s3_client._lane_for(thr + 1)[1] == "large"
+
+    def test_threshold_defaults_to_the_measured_valley(self):
+        """6 MiB sits between the WRF (<=4.81) and GOES (>=9.31) clusters."""
+        s3_client = S3Client(bucket_name="tiles-data", endpoint_url="http://s3:9000")
+
+        assert s3_client._large_object_threshold_bytes == 6 * 1024 * 1024
+        assert s3_client._lane_for(int(4.81 * 1024 * 1024))[1] == "heavy"
+        assert s3_client._lane_for(int(9.31 * 1024 * 1024))[1] == "large"
+        assert s3_client._lane_for(46 * 1024 * 1024)[1] == "large"
+
     def test_heavy_client_gets_its_own_timeout_and_pool(self):
         """read_timeout is per-client in botocore, so the lanes need two clients."""
         s3_client = S3Client(
@@ -659,8 +719,9 @@ class TestS3ClientUploadFile:
             access_key="user",
             secret_key="pass",
             upload_concurrency=32,
-            heavy_upload_concurrency=4,
+            heavy_upload_concurrency=16,
             heavy_read_timeout_s=120,
+            large_upload_concurrency=4,
         )
 
         default = s3_client._get_client_kwargs(authenticated=True)["config"]
@@ -671,7 +732,8 @@ class TestS3ClientUploadFile:
         assert default.read_timeout == 30
         assert heavy.read_timeout == 120
         assert default.max_pool_connections == 32
-        assert heavy.max_pool_connections == 4
+        # Both heavy sub-lanes share the client, so its pool covers both gates.
+        assert heavy.max_pool_connections == 20
 
 
 class TestS3ClientReuse:

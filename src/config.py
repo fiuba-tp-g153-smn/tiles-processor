@@ -63,11 +63,27 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             os.getenv("S3_UPLOAD_CONCURRENCY") or "32"
         )
         # Heavy uploads (COG/GRIB/GeoJSON) stream from disk as one PUT each, so
-        # they are sized separately from the tile lane: a handful of multi-MiB
-        # bodies in flight rather than dozens of 4-8 KB ones, and they get their
-        # own connection pool so a slow product upload cannot starve tile PUTs.
+        # they are sized separately from the tile lane and get their own
+        # connection pool: a slow product upload cannot starve tile PUTs.
+        #
+        # The heavy lane is itself split by size, because these objects are
+        # bimodal: ~99 % are under 6 MiB (radar/GLM/model COGs plus the 4-6 MiB
+        # WRF cluster) and a few hundred a day are 9-46 MiB (GOES bands, ECMWF
+        # GRIB). The small side gets width so a WRF run's ~1500 COGs drain
+        # quickly; the large side gets a narrow gate so a handful of 46 MiB
+        # GRIBs cannot head-of-line block them.
         self.S3_HEAVY_UPLOAD_CONCURRENCY: int = int(
-            os.getenv("S3_HEAVY_UPLOAD_CONCURRENCY") or "4"
+            os.getenv("S3_HEAVY_UPLOAD_CONCURRENCY") or "16"
+        )
+        self.S3_LARGE_UPLOAD_CONCURRENCY: int = int(
+            os.getenv("S3_LARGE_UPLOAD_CONCURRENCY") or "4"
+        )
+        # Threshold between the two. 6 MiB is the middle of an empty band: in a
+        # 10 h sample of 32,812 heavy objects, only 8 fell between the WRF
+        # cluster's 4.81 MiB ceiling and the GOES cluster's 9.31 MiB floor, so
+        # the split is insensitive to either side drifting.
+        self.S3_LARGE_OBJECT_THRESHOLD_MB: int = int(
+            os.getenv("S3_LARGE_OBJECT_THRESHOLD_MB") or "6"
         )
         # Response wait for a heavy PUT. The tile lane's 30 s exists to stop a
         # contended LIST blocking for botocore's 60 s default; a multi-MiB body
@@ -606,6 +622,10 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("S3_UPLOAD_CONCURRENCY: %s", self.S3_UPLOAD_CONCURRENCY)
         logger.info("S3_HEAVY_UPLOAD_CONCURRENCY: %s", self.S3_HEAVY_UPLOAD_CONCURRENCY)
         logger.info("S3_HEAVY_READ_TIMEOUT_S: %s", self.S3_HEAVY_READ_TIMEOUT_S)
+        logger.info("S3_LARGE_UPLOAD_CONCURRENCY: %s", self.S3_LARGE_UPLOAD_CONCURRENCY)
+        logger.info(
+            "S3_LARGE_OBJECT_THRESHOLD_MB: %s", self.S3_LARGE_OBJECT_THRESHOLD_MB
+        )
         logger.info("RABBITMQ_HOST: %s", self.RABBITMQ_HOST)
         logger.info("RABBITMQ_PORT: %s", self.RABBITMQ_PORT)
         logger.info("RABBITMQ_QUEUE: %s", self.RABBITMQ_QUEUE)
