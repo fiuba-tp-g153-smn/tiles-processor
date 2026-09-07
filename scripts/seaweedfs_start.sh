@@ -129,6 +129,22 @@ fi
 # =================================================================================================
 # Housekeeping itself is owned by SeaweedFS's own plugin tasks — see the monitor loop below.
 
+# Go runtime memory. weed runs master+volume+filer+s3 in one process; with the default GOGC=100 the
+# heap grows to ~2x the live set before collecting, and Go returns freed pages to the OS lazily, so
+# RSS sits ~1.2 GB even on a few GB of data. GOMEMLIMIT is a SOFT cap the GC honours by collecting
+# harder as the heap nears it; GOGC=50 collects at 50 % growth over live instead of 100 %. Exported
+# (not passed as flags) so weed and its admin/worker children all inherit them from the process env.
+#
+# This does NOT constrain data growth: .dat volumes and the leveldb needle/filer indexes live on
+# disk and are mmap'd, so they are OS page cache, not Go heap, and are not counted here. The heap
+# scales with volume COUNT (~KB each) and concurrent request / metadata-log traffic, not stored
+# bytes. And the cap is soft — if the live set ever exceeds it, weed trades CPU on GC first and only
+# then exceeds it, so it degrades under pressure rather than OOM-crashing. Raise via env on a node
+# that legitimately needs more headroom; set GOMEMLIMIT=off (and GOGC=100) to restore the stock Go
+# behaviour. An empty env value falls back to the defaults below, matching the repo's ":-" convention.
+export GOMEMLIMIT="${GOMEMLIMIT:-768MiB}"
+export GOGC="${GOGC:-50}"
+
 # Hard ceiling on volume slots. At 100 % the master cannot assign: every PutObject fails with
 # "InternalError" while GETs keep working. Shared with the pressure warning so they can't drift.
 SEAWEEDFS_VOLUME_MAX="${SEAWEEDFS_VOLUME_MAX:-2000}"
