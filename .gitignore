@@ -21,3 +21,6 @@ sftpgo/
 data_rustfs/
 *.grib2.*.idx
 CODE_REVIEW.md
+
+# pip cache for containerised `make test`
+.cache/
