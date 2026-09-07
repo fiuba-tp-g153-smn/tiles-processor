@@ -172,6 +172,48 @@ SEAWEEDFS_METALOG_RETENTION_DAYS="${SEAWEEDFS_METALOG_RETENTION_DAYS:-2}"
 # and a bucket with no Expiration.Days rule gets no TTL stamped anyway.
 SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS="${SEAWEEDFS_LIFECYCLE_FASTPATH_BUCKETS:-${S3_TILES_DATA_BUCKET_NAME} ${S3_BASEMAP_BUCKET_NAME} ${S3_WEATHER_STATIONS_BUCKET_NAME:-weather-stations-data}}"
 
+# glog sink. Every weed process (server, admin, worker) logs through glog, which with an empty
+# -logdir writes INFO/WARNING/ERROR files into os.TempDir(). In a container that is the writable
+# layer, and glog's caps are per severity per process — 1800 MB * 5 files * 3 severities, times
+# three processes — so a write-failure storm can exhaust whatever filesystem backs it long before
+# glog rotates anything.
+#
+# Default is -logtostderr: nothing hits disk, and the platform's log driver owns rotation and
+# retention. That is the only setting that assumes nothing about what is mounted where.
+#
+# Setting SEAWEEDFS_LOG_DIR switches to on-disk files instead, capped and pruned. Worth it only
+# where the platform's log window is too short to diagnose a storm after the fact, and only on a
+# path with room for MAX_SIZE_MB * MAX_FILES * 3 severities * 3 processes.
+SEAWEEDFS_LOG_DIR="${SEAWEEDFS_LOG_DIR:-}"
+SEAWEEDFS_LOG_MAX_SIZE_MB="${SEAWEEDFS_LOG_MAX_SIZE_MB:-32}"
+SEAWEEDFS_LOG_MAX_FILES="${SEAWEEDFS_LOG_MAX_FILES:-3}"
+# glog's -log_max_files only prunes files the running process created, so on a logdir that outlives
+# the process every previous PID's files survive forever. Bound the directory itself at boot.
+SEAWEEDFS_LOG_KEEP_FILES="${SEAWEEDFS_LOG_KEEP_FILES:-24}"
+
+# Global flags, so they must precede the subcommand: weed strips these off flag.CommandLine before
+# dispatching, and `weed server -logdir=…` dies as an unknown server flag. Unquoted on use, like
+# $METRICS_FLAG below.
+if [ -n "$SEAWEEDFS_LOG_DIR" ]; then
+    WEED_LOG_FLAGS="-logdir=${SEAWEEDFS_LOG_DIR}"
+    WEED_LOG_FLAGS="${WEED_LOG_FLAGS} -log_max_size_mb=${SEAWEEDFS_LOG_MAX_SIZE_MB}"
+    WEED_LOG_FLAGS="${WEED_LOG_FLAGS} -log_max_files=${SEAWEEDFS_LOG_MAX_FILES}"
+    WEED_LOG_FLAGS="${WEED_LOG_FLAGS} -log_compress"
+    mkdir -p "$SEAWEEDFS_LOG_DIR"
+    echo "glog -> ${SEAWEEDFS_LOG_DIR} (keeping ${SEAWEEDFS_LOG_KEEP_FILES} files)"
+    # Newest first, drop everything past the keep count. The weed.INFO/WARNING/ERROR symlinks are
+    # re-pointed by glog on start, so they are matched out rather than counted.
+    ls -1t "$SEAWEEDFS_LOG_DIR" 2>/dev/null \
+        | grep -E '\.log\.(INFO|WARNING|ERROR)\.' \
+        | tail -n +"$((SEAWEEDFS_LOG_KEEP_FILES + 1))" \
+        | while IFS= read -r _stale; do
+              rm -f "${SEAWEEDFS_LOG_DIR}/${_stale}"
+          done
+else
+    WEED_LOG_FLAGS="-logtostderr"
+    echo "glog -> stderr (platform log driver owns rotation)"
+fi
+
 # Drop benign "volume_layout.go … becomes (un)?crowded" spam from weed server logs (glog.V(0),
 # no gate; pending-delta bursts cross threshold even with volumes ~30 % full). awk+fflush
 # (busybox grep lacks --line-buffered); named FIFO (direct pipe breaks $!); admin/worker unfiltered.
@@ -183,7 +225,7 @@ awk '!/volume_layout\.go:[0-9]+ Volume [0-9]+ becomes (un)?crowded$/ { print; ff
 WEED_LOG_FILTER_PID=$!
 
 echo "Starting SeaweedFS (master + volume + filer + S3 gateway)..."
-weed server \
+weed $WEED_LOG_FLAGS server \
   -dir=/data \
   -master \
   -master.garbageThreshold=0.01 \
@@ -362,7 +404,7 @@ if [ ! -f "$EC_CONFIG_FILE" ]; then
 fi
 
 echo "Starting SeaweedFS admin scheduler..."
-weed admin \
+weed $WEED_LOG_FLAGS admin \
   -master=localhost:9333 \
   -dataDir="$ADMIN_DATA_DIR" \
   -adminUser="${S3_ROOT_USER}" \
@@ -373,7 +415,7 @@ ADMIN_PID=$!
 
 echo "Starting SeaweedFS maintenance worker..."
 mkdir -p /data/worker-data
-weed worker \
+weed $WEED_LOG_FLAGS worker \
   -admin=localhost:23646 \
   -workingDir=/data/worker-data \
   -metricsPort=2112 &
