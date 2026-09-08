@@ -1,0 +1,97 @@
+{
+  "timezone": "America/Argentina/Buenos_Aires",
+  "bounds": {
+    "minx": -110.0,
+    "miny": -60.0,
+    "maxx": -30.0,
+    "maxy": -15.0
+  },
+  "metrics": {
+    "enabled": true,
+    "max_rows": 1000000
+  },
+  "scheduler": {
+    "discovery_cron": "*/5 * * * *"
+  },
+  "sources": {
+    "goes19": {
+      "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
+      "products": { "band_13": true, "band_9": true, "band_2": false },
+      "target_images": 24,
+      "max_hours_back": 5,
+      "zoom_levels": "3-7",
+      "retention_days": 1
+    },
+    "glm": {
+      "input": { "mode": "local", "dir": "/app/data/glm_h5" },
+      "accum_minutes": 10,
+      "produce_every_minutes": 10,
+      "safety_lag_seconds": 30,
+      "target_windows": 24,
+      "products": { "fed": true, "toe": false, "mfa": false },
+      "zoom_levels": "3-7",
+      "retention_days": 1
+    },
+    "radar": {
+      "input": { "mode": "local", "dir": "/app/data/radar_h5" },
+      "stations": { "whitelist": ["RMA1", "RMA2", "RMA8"] },
+      "products": {
+        "DBZH": true,
+        "DBZH_450KM": true,
+        "ZDR": true,
+        "RHOHV": true,
+        "KDP": true,
+        "VRAD": true
+      },
+      "target_images": 12,
+      "zoom_levels": "4-9",
+      "light_queue": "all",
+      "retention_days": 1
+    },
+    "wrf": {
+      "input": { "mode": "local", "dir": "/app/data/wrf_nc" },
+      "products": {
+        "Colmax": true,
+        "Rafagas": true,
+        "Campo900hPa": false,
+        "Precipitacion1h": false,
+        "MUCAPE": false,
+        "AguaPrecipitable": false,
+        "JetCapasBajas": false,
+        "CortanteNivelesBajos": false,
+        "CAPE_BRN": false,
+        "Granizo": false
+      },
+      "target_runs": 3,
+      "zoom_levels": "4-6",
+      "barb_zoom_strides": { "2": 150, "4": 38, "6": 16, "8": 9 },
+      "light_queue": "all",
+      "retention_days": 2
+    },
+    "ecmwf": {
+      "products": {
+        "precipitation": true,
+        "mean_sea_level_pressure": false
+      },
+      "mslp": {
+        "isobar_simplify_tolerance": 0.05,
+        "smoothing_sigma": 1.5
+      },
+      "zoom_levels": "3-7",
+      "retention_days": { "default": 2, "grib": 1 }
+    },
+    "gfs": {
+      "products": { "mslp": true, "500": false, "250": false },
+      "cycles_to_maintain": 3,
+      "max_steps_per_tick": 12,
+      "availability_probe_hours": { "from": 3, "to": 8 },
+      "smoothing_sigma": 1.5,
+      "isoline_simplify_tolerance": 0.05,
+      "http_timeout_seconds": 120,
+      "max_concurrent_downloads": 2,
+      "zoom_levels": "3-7",
+      "barb_zoom_strides": { "2": 24, "4": 7, "6": 3, "8": 2 },
+      "retention_days": 1
+    }
+  }
+}

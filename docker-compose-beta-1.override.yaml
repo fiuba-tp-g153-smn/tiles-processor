@@ -1,0 +1,16 @@
+services:
+  producer:
+    volumes:
+      - ./settings-beta-1.json:/app/settings.json:ro
+
+  worker1:
+    volumes:
+      - ./settings-beta-1.json:/app/settings.json:ro
+
+  worker-light1:
+    volumes:
+      - ./settings-beta-1.json:/app/settings.json:ro
+
+  metrics-api:
+    volumes:
+      - ./settings-beta-1.json:/app/settings.json:ro
