@@ -77,7 +77,7 @@ For `rio.reproject("EPSG:4326")` on geostationary data, leave `resolution=None`.
 - **Composition over inheritance**.
 - **Typed registries**: `Generic[T]`, validate on registration, decorator or explicit registration, scoped not global.
 - **Error handling**: Custom exception hierarchies, context managers for cleanup, catch specific exceptions.
-- **Testing**: Test interfaces not implementations, DI for easy mocking, mock external services, Protocol for test doubles.
+- **Testing**: Test interfaces not implementations, DI for mocking, mock external services, Protocol for test doubles.
 
 ## Resource Management
 
