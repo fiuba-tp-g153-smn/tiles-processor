@@ -153,7 +153,7 @@ class TestConfig:
 
             assert config.RADAR_INPUT.mode == "local"
             assert config.RADAR_INPUT.input_dir == "/tmp/test/radar_h5"
-            assert config.GLM_FOLDER_INPUT.mode == "local"
+            assert config.GOES19_GLM_INPUT.mode == "local"
             assert config.WRF_INPUT.mode == "local"
             assert config.GOES19_INPUT.mode == "s3"
             assert config.GOES19_INPUT.s3_bucket == "noaa-goes19"
@@ -166,7 +166,7 @@ class TestConfig:
             config = Config(settings_path=temp_settings_file)
 
             assert config.RADAR_INPUT_DIR == config.RADAR_INPUT.input_dir
-            assert config.GLM_FOLDER_INPUT_DIR == config.GLM_FOLDER_INPUT.input_dir
+            assert config.GOES19_GLM_INPUT_DIR == config.GOES19_GLM_INPUT.input_dir
             assert config.WRF_INPUT_DIR == config.WRF_INPUT.input_dir
 
     def test_input_source_s3_mode_from_settings(self, tmp_path, env_vars):
@@ -197,7 +197,7 @@ class TestConfig:
             assert config.RADAR_INPUT.s3_endpoint == "seaweedfs:8333"
             assert config.RADAR_INPUT.s3_prefix == "radar_h5/"
             assert config.RADAR_INPUT.s3_secure is True
-            assert config.GLM_FOLDER_INPUT.mode == "local"
+            assert config.GOES19_GLM_INPUT.mode == "local"
 
     def test_input_source_credentials_from_env(self, tmp_path, env_vars):
         """Per-source S3 credentials come from {ENV_PREFIX}_S3_* env vars."""

@@ -1,12 +1,12 @@
-"""Tests for LocalGlmFolderFileRepository and S3GlmFolderFileRepository."""
+"""Tests for LocalGoes19GlmFileRepository and S3Goes19GlmFileRepository."""
 
 from unittest.mock import AsyncMock
 
 import pytest
 
-from data_sources.glm_folder_repository import (
-    LocalGlmFolderFileRepository,
-    S3GlmFolderFileRepository,
+from data_sources.goes19_glm_repository import (
+    LocalGoes19GlmFileRepository,
+    S3Goes19GlmFileRepository,
 )
 
 
@@ -49,7 +49,7 @@ def glm_nested(tmp_path):
 
 @pytest.mark.asyncio
 async def test_list_files_flat_returns_only_glm_nc(glm_flat):
-    repo = LocalGlmFolderFileRepository(glm_flat)
+    repo = LocalGoes19GlmFileRepository(glm_flat)
     files = await repo.list_files()
     assert len(files) == 2
     assert all(f.endswith(".nc") for f in files)
@@ -58,7 +58,7 @@ async def test_list_files_flat_returns_only_glm_nc(glm_flat):
 
 @pytest.mark.asyncio
 async def test_list_files_handles_nested_layout(glm_nested):
-    repo = LocalGlmFolderFileRepository(glm_nested)
+    repo = LocalGoes19GlmFileRepository(glm_nested)
     files = await repo.list_files()
     assert len(files) == 2
     # Sorted by absolute path → date subdir order
@@ -68,7 +68,7 @@ async def test_list_files_handles_nested_layout(glm_nested):
 
 @pytest.mark.asyncio
 async def test_list_files_missing_dir_returns_empty(tmp_path):
-    repo = LocalGlmFolderFileRepository(tmp_path / "nonexistent")
+    repo = LocalGoes19GlmFileRepository(tmp_path / "nonexistent")
     assert await repo.list_files() == []
 
 
@@ -87,7 +87,7 @@ async def test_download_to_dir_copies_files(tmp_path):
         b"file2",
     )
 
-    repo = LocalGlmFolderFileRepository(src_dir)
+    repo = LocalGoes19GlmFileRepository(src_dir)
     dest = tmp_path / "dest"
     result = await repo.download_to_dir([str(f1), str(f2)], dest)
 
@@ -98,7 +98,7 @@ async def test_download_to_dir_copies_files(tmp_path):
 
 @pytest.mark.asyncio
 async def test_download_to_dir_raises_for_missing_source(tmp_path):
-    repo = LocalGlmFolderFileRepository(tmp_path)
+    repo = LocalGoes19GlmFileRepository(tmp_path)
     with pytest.raises(FileNotFoundError):
         await repo.download_to_dir([str(tmp_path / "missing.nc")], tmp_path / "out")
 
@@ -111,7 +111,7 @@ async def test_s3_list_files_filters_by_glob_and_sorts():
         "glm_h5/notes.txt",
         "glm_h5/20260302/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
     ]
-    repo = S3GlmFolderFileRepository(s3_client, prefix="glm_h5/")
+    repo = S3Goes19GlmFileRepository(s3_client, prefix="glm_h5/")
 
     files = await repo.list_files()
 
@@ -126,7 +126,7 @@ async def test_s3_list_files_filters_by_glob_and_sorts():
 async def test_s3_download_to_dir_preserves_basenames(tmp_path):
     s3_client = AsyncMock()
     s3_client.bucket_name = "glm-input"
-    repo = S3GlmFolderFileRepository(s3_client)
+    repo = S3Goes19GlmFileRepository(s3_client)
     dest = tmp_path / "window"
     uris = [
         "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
@@ -171,7 +171,7 @@ async def test_download_to_dir_is_atomic_on_partial_failure(tmp_path):
         / "CG_GLM-L2-GLMF-M3_G19_s20260611401000_e20260611402000_c20260611403020.nc"
     )
 
-    repo = LocalGlmFolderFileRepository(src_dir)
+    repo = LocalGoes19GlmFileRepository(src_dir)
     dest = tmp_path / "dest"
     with pytest.raises(FileNotFoundError):
         await repo.download_to_dir([str(good), str(missing)], dest)
@@ -184,7 +184,7 @@ async def test_s3_download_to_dir_is_atomic_on_partial_failure(tmp_path):
     """If one S3 download raises, the dest dir is not created half-populated."""
     s3_client = AsyncMock()
     s3_client.download_to_file.side_effect = RuntimeError("network blip")
-    repo = S3GlmFolderFileRepository(s3_client)
+    repo = S3Goes19GlmFileRepository(s3_client)
     dest = tmp_path / "window"
 
     with pytest.raises(RuntimeError):

@@ -19,7 +19,7 @@ from data_sources import (
     DataSource,
     DataSourceRegistry,
     DiscoveryConfig,
-    GlmFolderDataSource,
+    Goes19GlmDataSource,
     RadarDataSource,
     WrfDataSource,
 )
@@ -215,7 +215,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             existing_tilesets = await self._get_existing_tilesets(
                 data_source.band_config.s3_tiles_prefix
             )
-        elif isinstance(data_source, GlmFolderDataSource):
+        elif isinstance(data_source, Goes19GlmDataSource):
             # GLM folder source carries its BandConfig the same way as ABI/GLM
             # AWS sources, but does not inherit from Goes19BaseDataSource.
             band_id = data_source.band_config.band_id

@@ -13,9 +13,9 @@ from data_sources.ecmwf_repository import (
 )
 from data_sources.gfs_fetcher import GfsGribFetcher
 from data_sources.gfs_repository import LocalGfsGribRepository, S3GfsGribRepository
-from data_sources.glm_folder_repository import (
-    LocalGlmFolderFileRepository,
-    S3GlmFolderFileRepository,
+from data_sources.goes19_glm_repository import (
+    LocalGoes19GlmFileRepository,
+    S3Goes19GlmFileRepository,
 )
 from data_sources.goes19_repository import (
     LocalGoes19FileRepository,
@@ -58,13 +58,13 @@ class TestCreateDataSourceRegistry:
         config.ENABLE_GFS_500 = False
         config.ENABLE_GFS_250 = False
         config.RADAR_INPUT_DIR = "/tmp/radar"
-        config.GLM_FOLDER_INPUT_DIR = "/tmp/glm"
+        config.GOES19_GLM_INPUT_DIR = "/tmp/glm"
         config.GLM_ACCUM_MINUTES = 10
         config.GLM_PRODUCE_EVERY_MINUTES = 10
         config.WRF_INPUT_DIR = "/tmp/wrf"
         config.ENABLED_WRF_PRODUCTS = {}
         config.RADAR_INPUT = InputSourceConfig(mode="local", input_dir="/tmp/radar")
-        config.GLM_FOLDER_INPUT = InputSourceConfig(mode="local", input_dir="/tmp/glm")
+        config.GOES19_GLM_INPUT = InputSourceConfig(mode="local", input_dir="/tmp/glm")
         config.WRF_INPUT = InputSourceConfig(mode="local", input_dir="/tmp/wrf")
         config.GOES19_INPUT = InputSourceConfig(
             mode="s3", input_dir="/tmp/goes19", s3_bucket="noaa-goes19"
@@ -140,14 +140,14 @@ class TestCreateDataSourceRegistry:
 
     def test_glm_s3_mode_builds_s3_repository(self):
         config = self._build_config(tp=False, mslp=False)
-        config.GLM_FOLDER_INPUT = InputSourceConfig(
+        config.GOES19_GLM_INPUT = InputSourceConfig(
             mode="s3", input_dir="/tmp/glm", s3_bucket="glm-input"
         )
         with patch("factories.S3Client"):
             registry = create_data_source_registry(config)
 
         glm_source = registry.get("goes19_glm")
-        assert isinstance(glm_source._repository, S3GlmFolderFileRepository)
+        assert isinstance(glm_source._repository, S3Goes19GlmFileRepository)
 
     def test_goes19_local_mode_builds_local_repository(self):
         config = self._build_config(tp=False, mslp=False)
@@ -199,7 +199,7 @@ class TestCreateDataSourceRegistry:
         registry = create_data_source_registry(config)
 
         assert isinstance(
-            registry.get("goes19_glm")._repository, LocalGlmFolderFileRepository
+            registry.get("goes19_glm")._repository, LocalGoes19GlmFileRepository
         )
 
     def test_wrf_local_mode_builds_local_repository(self):

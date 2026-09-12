@@ -1,4 +1,4 @@
-"""Tests for GlmFolderDataSource."""
+"""Tests for Goes19GlmDataSource."""
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from data_sources.base import DiscoveryConfig
-from data_sources.glm_folder import GlmFolderDataSource
-from data_sources.glm_folder_repository import GlmFolderFileRepository
+from data_sources.goes19_glm import Goes19GlmDataSource
+from data_sources.goes19_glm_repository import Goes19GlmFileRepository
 from models.band_config import BandConfig
 
 GLM_FED_CONFIG = BandConfig(
@@ -23,7 +23,7 @@ GLM_FED_CONFIG = BandConfig(
 )
 
 
-class StubRepository(GlmFolderFileRepository):
+class StubRepository(Goes19GlmFileRepository):
     """In-memory fake whose list/download surface is fully controlled by tests."""
 
     def __init__(self, files):
@@ -86,7 +86,7 @@ def _make_source(repository, **overrides):
         safety_lag_seconds=0,
     )
     kwargs.update(overrides)
-    return GlmFolderDataSource(**kwargs)
+    return Goes19GlmDataSource(**kwargs)
 
 
 @pytest.mark.asyncio
@@ -270,10 +270,10 @@ async def test_download_parses_manifest_and_delegates_to_repository(tmp_path):
 def test_constructor_validates_periods():
     repo = StubRepository([])
     with pytest.raises(ValueError, match="accum_minutes"):
-        GlmFolderDataSource(
+        Goes19GlmDataSource(
             GLM_FED_CONFIG, repo, accum_minutes=0, produce_every_minutes=10
         )
     with pytest.raises(ValueError, match="produce_every_minutes"):
-        GlmFolderDataSource(
+        Goes19GlmDataSource(
             GLM_FED_CONFIG, repo, accum_minutes=10, produce_every_minutes=0
         )

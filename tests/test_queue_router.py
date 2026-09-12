@@ -87,7 +87,7 @@ def test_three_way_split():
     [
         ("goes19_abi_band_2", "goes_band_2"),
         ("goes19_abi_band_13", "goes_band_13"),
-        ("glm_folder", "goes19_glm_fed"),
+        ("goes19_glm", "goes19_glm_fed"),
         ("ecmwf_tp_producer", "ecmwf_tp_processor"),
     ],
 )

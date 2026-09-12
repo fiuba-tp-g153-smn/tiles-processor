@@ -42,7 +42,7 @@ def _make_work_unit(window_start: datetime) -> WorkUnit:
     return WorkUnit.create(
         image_id="20260611400000",
         source_uri=manifest,
-        data_source_id="glm_folder",
+        data_source_id="goes19_glm",
         processor_id="goes19_glm_fed",
         output_prefix="tiles/goes19/glm/fed",
         bounds=SMALL_BOUNDS,

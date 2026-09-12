@@ -96,18 +96,18 @@ BAND_2_CONFIG = BandConfig(
 # Folder-based GLM pipeline (CG_GLM-L2-GLMF inputs, LogNorm rendering).
 # vmin/vmax are the SMN reference LogNorm ranges in the variable's native
 # units; the processor takes log10 before normalize_and_colorize.
-GLM_FOLDER_FED_CONFIG = BandConfig(
+GOES19_GLM_FED_CONFIG = BandConfig(
     band_id="goes19_glm_fed",
     file_pattern="CG_GLM-L2-GLMF",
     vmin=1.0,
     vmax=128.0,  # flashes / cell (LogNorm)
-    palette_name="GLM_FOLDER_FED_PALETTE",
+    palette_name="GOES19_GLM_FED_PALETTE",
     s3_tiles_prefix="tiles/goes19/glm/fed",
     s3_cog_prefix="cog/goes19/glm/fed",
     product_name="GLM_Flash_Extent_Density",
 )
 
-GLM_FOLDER_TOE_CONFIG = BandConfig(
+GOES19_GLM_TOE_CONFIG = BandConfig(
     band_id="goes19_glm_toe",
     file_pattern="CG_GLM-L2-GLMF",
     # ``total_energy`` is converted from nJ to fJ inside aggregate_glm_window
@@ -116,18 +116,18 @@ GLM_FOLDER_TOE_CONFIG = BandConfig(
     # (64, 2500).
     vmin=0.01,
     vmax=1500.0,
-    palette_name="GLM_FOLDER_TOE_PALETTE",
+    palette_name="GOES19_GLM_TOE_PALETTE",
     s3_tiles_prefix="tiles/goes19/glm/toe",
     s3_cog_prefix="cog/goes19/glm/toe",
     product_name="GLM_Total_Optical_Energy",
 )
 
-GLM_FOLDER_MFA_CONFIG = BandConfig(
+GOES19_GLM_MFA_CONFIG = BandConfig(
     band_id="goes19_glm_mfa",
     file_pattern="CG_GLM-L2-GLMF",
     vmin=64.0,
     vmax=2500.0,  # km² / cell (LogNorm)
-    palette_name="GLM_FOLDER_MFA_PALETTE",
+    palette_name="GOES19_GLM_MFA_PALETTE",
     s3_tiles_prefix="tiles/goes19/glm/mfa",
     s3_cog_prefix="cog/goes19/glm/mfa",
     product_name="GLM_Minimum_Flash_Area",
@@ -138,9 +138,9 @@ BAND_CONFIGS = {
     "goes19_abi_c13": BAND_13_CONFIG,
     "goes19_abi_c09": BAND_9_CONFIG,
     "goes19_abi_c02": BAND_2_CONFIG,
-    "goes19_glm_fed": GLM_FOLDER_FED_CONFIG,
-    "goes19_glm_toe": GLM_FOLDER_TOE_CONFIG,
-    "goes19_glm_mfa": GLM_FOLDER_MFA_CONFIG,
+    "goes19_glm_fed": GOES19_GLM_FED_CONFIG,
+    "goes19_glm_toe": GOES19_GLM_TOE_CONFIG,
+    "goes19_glm_mfa": GOES19_GLM_MFA_CONFIG,
 }
 
 

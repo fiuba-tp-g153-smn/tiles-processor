@@ -12,14 +12,14 @@ from logging import getLogger
 from pathlib import Path
 
 from data_sources.base import DataSource, DiscoveryConfig, ImageInfo
-from data_sources.glm_folder_repository import GlmFolderFileRepository
+from data_sources.goes19_glm_repository import Goes19GlmFileRepository
 from models.band_config import BandConfig
-from models.glm_folder_config import parse_glm_folder_filename
+from models.goes19_glm_config import parse_goes19_glm_filename
 
 logger = getLogger(__name__)
 
 
-class GlmFolderDataSource(DataSource):
+class Goes19GlmDataSource(DataSource):
     """Discovers GLM aggregation windows from a local folder of 1-minute files.
 
     Each window is anchored to a clock-aligned boundary spaced every
@@ -43,7 +43,7 @@ class GlmFolderDataSource(DataSource):
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         band_config: BandConfig,
-        repository: GlmFolderFileRepository,
+        repository: Goes19GlmFileRepository,
         *,
         accum_minutes: int,
         produce_every_minutes: int,
@@ -149,7 +149,7 @@ class GlmFolderDataSource(DataSource):
 
         for uri in source_uris:
             try:
-                parts = parse_glm_folder_filename(Path(uri).name)
+                parts = parse_goes19_glm_filename(Path(uri).name)
             except ValueError as exc:
                 logger.debug("Skipping non-GLM file %s (%s)", uri, exc)
                 continue
@@ -215,7 +215,7 @@ class GlmFolderDataSource(DataSource):
         """
         by_minute: dict[datetime, str] = {}
         for uri in sorted(files):
-            minute = parse_glm_folder_filename(Path(uri).name).start_dt.replace(
+            minute = parse_goes19_glm_filename(Path(uri).name).start_dt.replace(
                 second=0, microsecond=0
             )
             by_minute[minute] = uri

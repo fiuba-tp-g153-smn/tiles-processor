@@ -13,7 +13,7 @@ from data_sources import (
     EcmwfProducerDataSource,
     GfsProducerDataSource,
     GfsStepDataSource,
-    GlmFolderDataSource,
+    Goes19GlmDataSource,
     Goes19AbiDataSource,
     RadarDataSource,
     WrfDataSource,
@@ -31,10 +31,10 @@ from data_sources.gfs_repository import (
     LocalGfsGribRepository,
     S3GfsGribRepository,
 )
-from data_sources.glm_folder_repository import (
-    GlmFolderFileRepository,
-    LocalGlmFolderFileRepository,
-    S3GlmFolderFileRepository,
+from data_sources.goes19_glm_repository import (
+    Goes19GlmFileRepository,
+    LocalGoes19GlmFileRepository,
+    S3Goes19GlmFileRepository,
 )
 from data_sources.goes19_repository import (
     GOES19_BUCKET_NAME,
@@ -95,11 +95,11 @@ def _create_radar_repository(config: Config) -> RadarFileRepository:
     return S3RadarFileRepository(_create_input_s3_client(src), prefix=src.s3_prefix)
 
 
-def _create_glm_folder_repository(config: Config) -> GlmFolderFileRepository:
-    src = config.GLM_FOLDER_INPUT
+def _create_goes19_glm_repository(config: Config) -> Goes19GlmFileRepository:
+    src = config.GOES19_GLM_INPUT
     if not src.is_s3:
-        return LocalGlmFolderFileRepository(Path(src.input_dir))
-    return S3GlmFolderFileRepository(_create_input_s3_client(src), prefix=src.s3_prefix)
+        return LocalGoes19GlmFileRepository(Path(src.input_dir))
+    return S3Goes19GlmFileRepository(_create_input_s3_client(src), prefix=src.s3_prefix)
 
 
 def _create_wrf_repository(config: Config) -> WrfFileRepository:
@@ -182,9 +182,9 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
 
     # Register the folder-based GLM data source (one entry covers FED/TOE/MFA).
     if config is not None:
-        glm_repo = _create_glm_folder_repository(config)
+        glm_repo = _create_goes19_glm_repository(config)
         registry.register(
-            GlmFolderDataSource(
+            Goes19GlmDataSource(
                 get_band_config("goes19_glm_fed"),
                 glm_repo,
                 accum_minutes=config.GLM_ACCUM_MINUTES,

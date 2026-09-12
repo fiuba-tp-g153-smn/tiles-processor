@@ -83,7 +83,7 @@ def _sample_cmap(name_or_hex_stops, n: int = 256) -> list[str]:
         cmap = colormaps[name_or_hex_stops]
     else:
         cmap = LinearSegmentedColormap.from_list(
-            "_glm_folder_cmap", list(name_or_hex_stops)
+            "_goes19_glm_cmap", list(name_or_hex_stops)
         )
 
     samples = cmap(np.linspace(0.0, 1.0, n))
@@ -95,7 +95,7 @@ def _sample_cmap(name_or_hex_stops, n: int = 256) -> list[str]:
 
 # Reference 17-color stops for FED, ported from
 # data/glm_codigos/grafico_glmtools_viejo.py:102-105.
-_GLM_FOLDER_FED_STOPS: list[str] = [
+_GOES19_GLM_FED_STOPS: list[str] = [
     "#0000b8",
     "#0702c1",
     "#0f05cb",
@@ -687,9 +687,9 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
     # LUTs; the processor applies a log10 pre-transform on the data so the
     # lookup reproduces SMN's matplotlib LogNorm rendering exactly. See
     # services.glm_aggregation for the data side.
-    GLM_FOLDER_FED_PALETTE = _sample_cmap(_GLM_FOLDER_FED_STOPS)
-    GLM_FOLDER_TOE_PALETTE = _sample_cmap("magma")
-    GLM_FOLDER_MFA_PALETTE = _sample_cmap("viridis_r")
+    GOES19_GLM_FED_PALETTE = _sample_cmap(_GOES19_GLM_FED_STOPS)
+    GOES19_GLM_TOE_PALETTE = _sample_cmap("magma")
+    GOES19_GLM_MFA_PALETTE = _sample_cmap("viridis_r")
 
     @classmethod
     def get_palette(cls, name: str) -> list[str]:
@@ -698,9 +698,9 @@ class GenerateGeoTIFFFilesService:  # pylint: disable=too-few-public-methods
             "CLOUD_TOPS_PALETTE": cls.CLOUD_TOPS_PALETTE,
             "WATER_VAPOR_PALETTE": cls.WATER_VAPOR_PALETTE,
             "VISIBLE_PALETTE": cls.VISIBLE_PALETTE,
-            "GLM_FOLDER_FED_PALETTE": cls.GLM_FOLDER_FED_PALETTE,
-            "GLM_FOLDER_TOE_PALETTE": cls.GLM_FOLDER_TOE_PALETTE,
-            "GLM_FOLDER_MFA_PALETTE": cls.GLM_FOLDER_MFA_PALETTE,
+            "GOES19_GLM_FED_PALETTE": cls.GOES19_GLM_FED_PALETTE,
+            "GOES19_GLM_TOE_PALETTE": cls.GOES19_GLM_TOE_PALETTE,
+            "GOES19_GLM_MFA_PALETTE": cls.GOES19_GLM_MFA_PALETTE,
         }
         if name not in palettes:
             raise ValueError(f"Unknown palette '{name}'. Valid: {list(palettes)}")

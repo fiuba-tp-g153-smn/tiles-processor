@@ -42,7 +42,7 @@ def test_wrf_colmax_label_strips_product_prefix():
     assert desc.image_timestamp == "20260114_00UTC_F006"
 
 
-def test_glm_folder_label():
+def test_goes19_glm_label():
     desc = describe_job("goes19_glm", "20260521320209", "goes19_glm_fed")
     assert desc.job_type == "goes19_glm"
     assert "GLM" in desc.product_label

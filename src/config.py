@@ -325,7 +325,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             env_prefix="RADAR_SINARAME",
             default_dir=str(Path(self.DATA_DIR) / "radar_h5"),
         )
-        self.GLM_FOLDER_INPUT: InputSourceConfig = self._parse_input_source(
+        self.GOES19_GLM_INPUT: InputSourceConfig = self._parse_input_source(
             _glm,
             "goes19-glm",
             env_prefix="GOES19_GLM",
@@ -358,7 +358,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         # Legacy *_INPUT_DIR aliases retained for callers that read them directly.
         self.RADAR_INPUT_DIR: str = self.RADAR_INPUT.input_dir
-        self.GLM_FOLDER_INPUT_DIR: str = self.GLM_FOLDER_INPUT.input_dir
+        self.GOES19_GLM_INPUT_DIR: str = self.GOES19_GLM_INPUT.input_dir
         self.WRF_INPUT_DIR: str = self.WRF_INPUT.input_dir
 
         # Light-queue routing: matching units go to the light queue so a larger
@@ -706,10 +706,10 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             ", ".join(sorted(_radar_filter.stations)) or "-",
         )
         logger.info("RADAR_INPUT_DIR: %s", self.RADAR_INPUT_DIR)
-        logger.info("GLM_FOLDER_INPUT_DIR: %s", self.GLM_FOLDER_INPUT_DIR)
+        logger.info("GOES19_GLM_INPUT_DIR: %s", self.GOES19_GLM_INPUT_DIR)
         for name, src in (
             ("RADAR", self.RADAR_INPUT),
-            ("GLM_FOLDER", self.GLM_FOLDER_INPUT),
+            ("GOES19_GLM", self.GOES19_GLM_INPUT),
             ("WRF", self.WRF_INPUT),
             ("GOES19", self.GOES19_INPUT),
             ("ECMWF", self.ECMWF_INPUT),
