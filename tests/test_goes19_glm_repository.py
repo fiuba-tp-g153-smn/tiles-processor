@@ -107,18 +107,18 @@ async def test_download_to_dir_raises_for_missing_source(tmp_path):
 async def test_s3_list_files_filters_by_glob_and_sorts():
     s3_client = AsyncMock()
     s3_client.list_files.return_value = [
-        "glm_h5/20260303/CG_GLM-L2-GLMF-M3_G19_s20260621400000_e1_c1.nc",
-        "glm_h5/notes.txt",
-        "glm_h5/20260302/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+        "goes19-glm/20260303/CG_GLM-L2-GLMF-M3_G19_s20260621400000_e1_c1.nc",
+        "goes19-glm/notes.txt",
+        "goes19-glm/20260302/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
     ]
-    repo = S3Goes19GlmFileRepository(s3_client, prefix="glm_h5/")
+    repo = S3Goes19GlmFileRepository(s3_client, prefix="goes19-glm/")
 
     files = await repo.list_files()
 
-    s3_client.list_files.assert_awaited_once_with("glm_h5/", file_pattern="")
+    s3_client.list_files.assert_awaited_once_with("goes19-glm/", file_pattern="")
     assert files == [
-        "glm_h5/20260302/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
-        "glm_h5/20260303/CG_GLM-L2-GLMF-M3_G19_s20260621400000_e1_c1.nc",
+        "goes19-glm/20260302/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+        "goes19-glm/20260303/CG_GLM-L2-GLMF-M3_G19_s20260621400000_e1_c1.nc",
     ]
 
 
@@ -129,8 +129,8 @@ async def test_s3_download_to_dir_preserves_basenames(tmp_path):
     repo = S3Goes19GlmFileRepository(s3_client)
     dest = tmp_path / "window"
     uris = [
-        "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
-        "s3://glm-input/glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
+        "goes19-glm/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+        "s3://glm-input/goes19-glm/CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
     ]
 
     result = await repo.download_to_dir(uris, dest)
@@ -146,11 +146,11 @@ async def test_s3_download_to_dir_preserves_basenames(tmp_path):
     }
     assert awaited == {
         (
-            "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
+            "goes19-glm/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
             "CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc",
         ),
         (
-            "glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
+            "goes19-glm/CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
             "CG_GLM-L2-GLMF-M3_G19_s20260611401000_e1_c1.nc",
         ),
     }
@@ -189,7 +189,7 @@ async def test_s3_download_to_dir_is_atomic_on_partial_failure(tmp_path):
 
     with pytest.raises(RuntimeError):
         await repo.download_to_dir(
-            ["glm_h5/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc"], dest
+            ["goes19-glm/CG_GLM-L2-GLMF-M3_G19_s20260611400000_e1_c1.nc"], dest
         )
 
     assert not dest.exists()

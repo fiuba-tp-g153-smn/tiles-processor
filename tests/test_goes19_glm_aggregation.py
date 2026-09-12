@@ -1,7 +1,7 @@
 """Tests for the GLM aggregation + reprojection service.
 
 The aggregation test uses real CG_GLM-L2-GLMF sample files shipped under
-``./data/glm_h5/`` (override with ``GLM_SAMPLE_DIR``). If those files are
+``./data/goes19-glm/`` (override with ``GLM_SAMPLE_DIR``). If those files are
 missing (e.g. CI without the data mount), the test is skipped rather than
 failed.
 """
@@ -18,7 +18,7 @@ from pyproj import CRS
 
 from services.glm_aggregation import aggregate_glm_window, reproject_to_latlon
 
-SAMPLE_DIR = Path(os.environ.get("GLM_SAMPLE_DIR", "data/glm_h5"))
+SAMPLE_DIR = Path(os.environ.get("GLM_SAMPLE_DIR", "data/goes19-glm"))
 SAMPLE_FILES = sorted(SAMPLE_DIR.glob("CG_GLM-L2-GLMF-M3_*.nc"))[:3]
 
 

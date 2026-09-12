@@ -36,7 +36,7 @@ def _make_work_unit(window_start: datetime) -> WorkUnit:
     manifest = json.dumps(
         {
             "window_start": window_start.isoformat(),
-            "files": ["/data/glm_h5/file1.nc", "/data/glm_h5/file2.nc"],
+            "files": ["/data/goes19-glm/file1.nc", "/data/goes19-glm/file2.nc"],
         }
     )
     return WorkUnit.create(

@@ -152,7 +152,7 @@ class TestConfig:
             config = Config(settings_path=temp_settings_file)
 
             assert config.RADAR_INPUT.mode == "local"
-            assert config.RADAR_INPUT.input_dir == "/tmp/test/radar_h5"
+            assert config.RADAR_INPUT.input_dir == "/tmp/test/radar-sinarame"
             assert config.GOES19_GLM_INPUT.mode == "local"
             assert config.WRF_INPUT.mode == "local"
             assert config.GOES19_INPUT.mode == "s3"
@@ -180,7 +180,7 @@ class TestConfig:
                         "mode": "s3",
                         "s3_bucket": "radar-input",
                         "s3_endpoint": "seaweedfs:8333",
-                        "s3_prefix": "radar_h5/",
+                        "s3_prefix": "radar-sinarame/",
                         "s3_secure": True,
                     }
                 }
@@ -195,7 +195,7 @@ class TestConfig:
             assert config.RADAR_INPUT.is_s3
             assert config.RADAR_INPUT.s3_bucket == "radar-input"
             assert config.RADAR_INPUT.s3_endpoint == "seaweedfs:8333"
-            assert config.RADAR_INPUT.s3_prefix == "radar_h5/"
+            assert config.RADAR_INPUT.s3_prefix == "radar-sinarame/"
             assert config.RADAR_INPUT.s3_secure is True
             assert config.GOES19_GLM_INPUT.mode == "local"
 
@@ -342,10 +342,10 @@ class TestConfig:
             tmp_path,
             env_vars,
             "radar-sinarame",
-            {"mode": "s3", "s3_bucket": "radar-input", "s3_prefix": "/radar_h5"},
+            {"mode": "s3", "s3_bucket": "radar-input", "s3_prefix": "/radar-sinarame"},
         )
 
-        assert config.RADAR_INPUT.s3_prefix == "radar_h5/"
+        assert config.RADAR_INPUT.s3_prefix == "radar-sinarame/"
 
     def test_region_and_addressing_style_are_configurable(self, tmp_path, env_vars):
         config = self._config_with_input(

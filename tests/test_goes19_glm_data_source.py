@@ -54,7 +54,7 @@ def _filename(start: datetime, end: datetime) -> str:
         )
 
     return (
-        f"/data/glm_h5/CG_GLM-L2-GLMF-M3_G19_s{_fmt(start)}_e{_fmt(end)}"
+        f"/data/goes19-glm/CG_GLM-L2-GLMF-M3_G19_s{_fmt(start)}_e{_fmt(end)}"
         f"_c{_fmt(end)}.nc"
     )
 

@@ -317,25 +317,25 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             _radar,
             "radar-sinarame",
             env_prefix="RADAR_SINARAME",
-            default_dir=str(Path(self.DATA_DIR) / "radar_h5"),
+            default_dir=str(Path(self.DATA_DIR) / "radar-sinarame"),
         )
         self.GOES19_GLM_INPUT: InputSourceConfig = self._parse_input_source(
             _glm,
             "goes19-glm",
             env_prefix="GOES19_GLM",
-            default_dir=str(Path(self.DATA_DIR) / "glm_h5"),
+            default_dir=str(Path(self.DATA_DIR) / "goes19-glm"),
         )
         self.WRF_INPUT: InputSourceConfig = self._parse_input_source(
             _wrf,
             "wrf-arg4k",
             env_prefix="WRF_ARG4K",
-            default_dir=str(Path(self.DATA_DIR) / "wrf_nc"),
+            default_dir=str(Path(self.DATA_DIR) / "wrf-arg4k"),
         )
         self.GOES19_INPUT: InputSourceConfig = self._parse_input_source(
             _goes19,
             "goes19-abi",
             env_prefix="GOES19_ABI",
-            default_dir=str(Path(self.DATA_DIR) / "goes19"),
+            default_dir=str(Path(self.DATA_DIR) / "goes19-abi"),
             default_mode=INPUT_MODE_S3,
             default_bucket="noaa-goes19",
         )
@@ -343,14 +343,14 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             _ecmwf,
             "ecmwf-ifs",
             env_prefix="ECMWF_IFS",
-            default_dir=str(Path(self.DATA_DIR) / "ecmwf_grib"),
+            default_dir=str(Path(self.DATA_DIR) / "ecmwf-ifs"),
             default_mode=INPUT_MODE_OPENDATA,
             extra_modes=(INPUT_MODE_OPENDATA,),
         )
         self.GFS_INPUT: InputSourceConfig = self._parse_input_source(
             _gfs,
             "gfs",
-            default_dir=str(Path(self.DATA_DIR) / "gfs_grib"),
+            default_dir=str(Path(self.DATA_DIR) / "gfs"),
             default_mode=INPUT_MODE_NOMADS,
             extra_modes=(INPUT_MODE_NOMADS,),
         )

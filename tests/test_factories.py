@@ -131,7 +131,7 @@ class TestCreateDataSourceRegistry:
             input_dir="/tmp/radar",
             s3_bucket="radar-input",
             s3_endpoint="seaweedfs:8333",
-            s3_prefix="radar_h5/",
+            s3_prefix="radar-sinarame/",
         )
         with patch("factories.S3Client") as mock_s3_cls:
             registry = create_data_source_registry(config)
@@ -222,14 +222,14 @@ class TestCreateDataSourceRegistry:
             mode="s3",
             input_dir="/tmp/wrf",
             s3_bucket="wrf-input",
-            s3_prefix="wrf_nc/",
+            s3_prefix="wrf-arg4k/",
         )
         with patch("factories.S3Client"):
             registry = create_data_source_registry(config)
 
         repository = registry.get("wrf_arg4k_colmax")._repository
         assert isinstance(repository, S3WrfFileRepository)
-        assert repository._prefix == "wrf_nc/"
+        assert repository._prefix == "wrf-arg4k/"
 
     def test_ecmwf_defaults_to_the_opendata_mirrors(self):
         config = self._build_config(tp=True, mslp=False)

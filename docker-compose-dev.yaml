@@ -95,7 +95,7 @@ services:
     command: python3 src/main.py producer
     volumes:
       - ./data:${DATA_DIR}
-      - ./data/radar_h5:${DATA_DIR}/radar_h5
+      - ./data/radar-sinarame:${DATA_DIR}/radar-sinarame
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
@@ -160,7 +160,7 @@ services:
     command: python3 src/main.py worker
     volumes:
       - ./data:${DATA_DIR}
-      - ./data/radar_h5:${DATA_DIR}/radar_h5
+      - ./data/radar-sinarame:${DATA_DIR}/radar-sinarame
     environment:
       - WORKER_ID=worker1
       - LOG_LEVEL=${LOG_LEVEL}
@@ -226,7 +226,7 @@ services:
     command: python3 src/main.py worker
     volumes:
       - ./data:${DATA_DIR}
-      - ./data/radar_h5:${DATA_DIR}/radar_h5
+      - ./data/radar-sinarame:${DATA_DIR}/radar-sinarame
     environment:
       - WORKER_ID=worker2
       - LOG_LEVEL=${LOG_LEVEL}
@@ -292,7 +292,7 @@ services:
     command: python3 src/main.py worker
     volumes:
       - ./data:${DATA_DIR}
-      - ./data/radar_h5:${DATA_DIR}/radar_h5
+      - ./data/radar-sinarame:${DATA_DIR}/radar-sinarame
     environment:
       - WORKER_ID=worker-light1
       - LOG_LEVEL=${LOG_LEVEL}
@@ -359,7 +359,7 @@ services:
     command: python3 src/main.py worker
     volumes:
       - ./data:${DATA_DIR}
-      - ./data/radar_h5:${DATA_DIR}/radar_h5
+      - ./data/radar-sinarame:${DATA_DIR}/radar-sinarame
     environment:
       - WORKER_ID=worker-light2
       - LOG_LEVEL=${LOG_LEVEL}
@@ -426,7 +426,7 @@ services:
     command: python3 src/main.py worker
     volumes:
       - ./data:${DATA_DIR}
-      - ./data/radar_h5:${DATA_DIR}/radar_h5
+      - ./data/radar-sinarame:${DATA_DIR}/radar-sinarame
     environment:
       - WORKER_ID=worker-light3
       - LOG_LEVEL=${LOG_LEVEL}
