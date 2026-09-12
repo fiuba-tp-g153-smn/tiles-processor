@@ -22,7 +22,7 @@ own schema — Alembic is the single source of truth. Migrations are applied by:
 - **tests:** the `migrated_dbs` fixture in `tests/conftest.py`.
 
 Baselines are **idempotent** (they skip table creation if it already exists), so
-running against a pre-existing database just stamps the baseline revision — no
+running against a pre-existing database stamps the baseline revision — no
 manual `alembic stamp` needed.
 
 ## Add a migration (e.g. a new column, backfilling every existing row)

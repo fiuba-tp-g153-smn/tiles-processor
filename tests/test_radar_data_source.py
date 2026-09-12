@@ -11,8 +11,8 @@ from data_sources.base import DiscoveryConfig
 from data_sources.radar import RadarDataSource
 from models.radar_config import RADAR_PRODUCT_CONFIGS, RadarStationFilter
 
-DBZH_CONFIG = RADAR_PRODUCT_CONFIGS["DBZH"]
-DBZH_450KM_CONFIG = RADAR_PRODUCT_CONFIGS["DBZH_450KM"]
+DBZH_CONFIG = RADAR_PRODUCT_CONFIGS["dbzh"]
+DBZH_450KM_CONFIG = RADAR_PRODUCT_CONFIGS["dbzh-450km"]
 
 
 def make_repo(files: list[str]) -> AsyncMock:
@@ -40,7 +40,7 @@ async def test_discover_images_returns_matching_files():
     source = RadarDataSource(DBZH_CONFIG, make_repo(files))
     images = await source.discover_images(make_discovery_config())
     assert len(images) == 2
-    assert all("DBZH" in img.image_id for img in images)
+    assert all("dbzh" in img.image_id for img in images)
 
 
 @pytest.mark.asyncio
@@ -52,14 +52,14 @@ async def test_discover_images_filters_wrong_product():
     source = RadarDataSource(DBZH_CONFIG, make_repo(files))
     images = await source.discover_images(make_discovery_config())
     assert len(images) == 1
-    assert "DBZH" in images[0].image_id
+    assert "dbzh" in images[0].image_id
 
 
 @pytest.mark.asyncio
 async def test_discover_images_filters_already_processed():
     files = ["/data/RMA1_0315_01_DBZH_20260114T170000Z.H5"]
     source = RadarDataSource(DBZH_CONFIG, make_repo(files))
-    existing = {"RMA1_DBZH_20260114T170000Z"}
+    existing = {"RMA1_dbzh_20260114T170000Z"}
     images = await source.discover_images(make_discovery_config(existing=existing))
     assert images == []
 
@@ -68,7 +68,7 @@ async def test_discover_images_filters_already_processed():
 async def test_discover_images_filters_in_progress():
     files = ["/data/RMA1_0315_01_DBZH_20260114T170000Z.H5"]
     source = RadarDataSource(DBZH_CONFIG, make_repo(files))
-    in_progress = {"RMA1_DBZH_20260114T170000Z"}
+    in_progress = {"RMA1_dbzh_20260114T170000Z"}
     images = await source.discover_images(
         make_discovery_config(in_progress=in_progress)
     )
@@ -128,7 +128,7 @@ async def test_station_filter_whitelist_keeps_only_listed():
         station_filter=RadarStationFilter("whitelist", frozenset({"RMA1"})),
     )
     images = await source.discover_images(make_discovery_config())
-    assert [img.image_id for img in images] == ["RMA1_DBZH_20260114T170000Z"]
+    assert [img.image_id for img in images] == ["RMA1_dbzh_20260114T170000Z"]
 
 
 @pytest.mark.asyncio
@@ -144,7 +144,7 @@ async def test_station_filter_blacklist_drops_listed():
         station_filter=RadarStationFilter("blacklist", frozenset({"RMA2"})),
     )
     images = await source.discover_images(make_discovery_config())
-    assert [img.image_id for img in images] == ["RMA1_DBZH_20260114T170000Z"]
+    assert [img.image_id for img in images] == ["RMA1_dbzh_20260114T170000Z"]
 
 
 @pytest.mark.asyncio
@@ -195,10 +195,8 @@ async def test_dbzh_and_450km_split_the_same_variable_by_subvolume():
         DBZH_450KM_CONFIG, make_repo(files)
     ).discover_images(make_discovery_config())
 
-    assert [img.image_id for img in short] == ["RMA1_DBZH_20260114T170000Z"]
-    assert [img.image_id for img in long_range] == [
-        "RMA1_DBZH_450KM_20260114T170010Z"
-    ]
+    assert [img.image_id for img in short] == ["RMA1_dbzh_20260114T170000Z"]
+    assert [img.image_id for img in long_range] == ["RMA1_dbzh-450km_20260114T170010Z"]
 
 
 @pytest.mark.asyncio
@@ -207,7 +205,7 @@ async def test_450km_image_id_uses_product_not_filename_variable():
     # against the S3 tileset layout, and what keeps the two DBZH products apart.
     files = ["/data/RMA1_0315_04_DBZH_20260114T170010Z.H5"]
     source = RadarDataSource(DBZH_450KM_CONFIG, make_repo(files))
-    existing = {"RMA1_DBZH_450KM_20260114T170010Z"}
+    existing = {"RMA1_dbzh-450km_20260114T170010Z"}
     assert await source.discover_images(make_discovery_config(existing=existing)) == []
 
 

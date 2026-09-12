@@ -20,8 +20,8 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "sources": {
-                "goes19": {
-                    "products": {"band_13": True, "band_9": False},
+                "goes19-abi": {
+                    "products": {"c13": True, "c09": False},
                 },
             },
             "bounds": {
@@ -153,7 +153,7 @@ class TestConfig:
 
             assert config.RADAR_INPUT.mode == "local"
             assert config.RADAR_INPUT.input_dir == "/tmp/test/radar_h5"
-            assert config.GLM_FOLDER_INPUT.mode == "local"
+            assert config.GOES19_GLM_INPUT.mode == "local"
             assert config.WRF_INPUT.mode == "local"
             assert config.GOES19_INPUT.mode == "s3"
             assert config.GOES19_INPUT.s3_bucket == "noaa-goes19"
@@ -166,7 +166,7 @@ class TestConfig:
             config = Config(settings_path=temp_settings_file)
 
             assert config.RADAR_INPUT_DIR == config.RADAR_INPUT.input_dir
-            assert config.GLM_FOLDER_INPUT_DIR == config.GLM_FOLDER_INPUT.input_dir
+            assert config.GOES19_GLM_INPUT_DIR == config.GOES19_GLM_INPUT.input_dir
             assert config.WRF_INPUT_DIR == config.WRF_INPUT.input_dir
 
     def test_input_source_s3_mode_from_settings(self, tmp_path, env_vars):
@@ -175,7 +175,7 @@ class TestConfig:
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
-                "radar": {
+                "radar-sinarame": {
                     "input": {
                         "mode": "s3",
                         "s3_bucket": "radar-input",
@@ -197,7 +197,7 @@ class TestConfig:
             assert config.RADAR_INPUT.s3_endpoint == "seaweedfs:8333"
             assert config.RADAR_INPUT.s3_prefix == "radar_h5/"
             assert config.RADAR_INPUT.s3_secure is True
-            assert config.GLM_FOLDER_INPUT.mode == "local"
+            assert config.GOES19_GLM_INPUT.mode == "local"
 
     def test_input_source_credentials_from_env(self, tmp_path, env_vars):
         """Per-source S3 credentials come from {ENV_PREFIX}_S3_* env vars."""
@@ -205,12 +205,16 @@ class TestConfig:
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
-                "wrf": {"input": {"mode": "s3", "s3_bucket": "wrf-input"}},
+                "wrf-arg4k": {"input": {"mode": "s3", "s3_bucket": "wrf-input"}},
             },
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
-        env = {**env_vars, "WRF_S3_ACCESS_KEY": "ak", "WRF_S3_SECRET_KEY": "sk"}
+        env = {
+            **env_vars,
+            "WRF_ARG4K_S3_ACCESS_KEY": "ak",
+            "WRF_ARG4K_S3_SECRET_KEY": "sk",
+        }
 
         with mock.patch.dict(os.environ, env, clear=True):
             config = Config(settings_path=settings_path)
@@ -218,18 +222,229 @@ class TestConfig:
             assert config.WRF_INPUT.s3_access_key == "ak"
             assert config.WRF_INPUT.s3_secret_key == "sk"
 
+    def _config_with_input(self, tmp_path, env_vars, source, input_cfg):
+        """Build a Config whose only configured source carries ``input_cfg``."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {source: {"input": input_cfg}},
+        }
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            return Config(settings_path=settings_path)
+
+    @pytest.mark.parametrize(
+        "endpoint,secure,expected",
+        [
+            ("seaweedfs:8333", False, "http://seaweedfs:8333"),
+            ("seaweedfs:8333", True, "https://seaweedfs:8333"),
+            ("http://seaweedfs:8333", False, "http://seaweedfs:8333"),
+            ("https://gw.example.com", True, "https://gw.example.com"),
+            ("https://gw.example.com/s3/", True, "https://gw.example.com/s3"),
+        ],
+    )
+    def test_endpoint_accepts_host_port_and_full_urls(
+        self, tmp_path, env_vars, endpoint, secure, expected
+    ):
+        """A gateway may be configured the way it is written down."""
+        config = self._config_with_input(
+            tmp_path,
+            env_vars,
+            "radar-sinarame",
+            {
+                "mode": "s3",
+                "s3_bucket": "radar-input",
+                "s3_endpoint": endpoint,
+                "s3_secure": secure,
+            },
+        )
+
+        assert config.RADAR_INPUT.endpoint_url == expected
+
+    def test_endpoint_unset_means_the_aws_default(self, tmp_path, env_vars):
+        config = self._config_with_input(
+            tmp_path,
+            env_vars,
+            "radar-sinarame",
+            {"mode": "s3", "s3_bucket": "radar-input"},
+        )
+
+        assert config.RADAR_INPUT.endpoint_url is None
+
+    @pytest.mark.parametrize(
+        "endpoint", ["ftp://host", "http://", "host name:9000", "http://h?a=1"]
+    )
+    def test_endpoint_that_is_not_a_url_fails_at_startup(
+        self, tmp_path, env_vars, endpoint
+    ):
+        """A malformed endpoint must not survive until the first request."""
+        with pytest.raises(
+            ValueError, match="sources.radar-sinarame.input.s3_endpoint"
+        ):
+            self._config_with_input(
+                tmp_path,
+                env_vars,
+                "radar-sinarame",
+                {
+                    "mode": "s3",
+                    "s3_bucket": "radar-input",
+                    "s3_endpoint": endpoint,
+                },
+            )
+
+    def test_endpoint_scheme_contradicting_explicit_secure_fails(
+        self, tmp_path, env_vars
+    ):
+        """Writing both, and disagreeing, is a mistake worth naming."""
+        with pytest.raises(ValueError, match="disagree"):
+            self._config_with_input(
+                tmp_path,
+                env_vars,
+                "radar-sinarame",
+                {
+                    "mode": "s3",
+                    "s3_bucket": "radar-input",
+                    "s3_endpoint": "https://gw.example.com",
+                    "s3_secure": False,
+                },
+            )
+
+    def test_bucket_accepts_an_s3_uri_carrying_the_prefix(self, tmp_path, env_vars):
+        """A whole location can be pasted as one value."""
+        config = self._config_with_input(
+            tmp_path,
+            env_vars,
+            "goes19-abi",
+            {"mode": "s3", "s3_bucket": "s3://my-mirror/goes19/raw"},
+        )
+
+        assert config.GOES19_INPUT.s3_bucket == "my-mirror"
+        assert config.GOES19_INPUT.s3_prefix == "goes19/raw/"
+
+    def test_bucket_uri_and_explicit_prefix_together_fail(self, tmp_path, env_vars):
+        """Two sources of truth for the prefix is a misconfiguration, not a merge."""
+        with pytest.raises(ValueError, match="prefix twice"):
+            self._config_with_input(
+                tmp_path,
+                env_vars,
+                "goes19-abi",
+                {
+                    "mode": "s3",
+                    "s3_bucket": "s3://my-mirror/goes19",
+                    "s3_prefix": "raw/",
+                },
+            )
+
+    def test_prefix_is_normalized_to_a_single_trailing_slash(self, tmp_path, env_vars):
+        """Without the slash a prefix also matches sibling keys."""
+        config = self._config_with_input(
+            tmp_path,
+            env_vars,
+            "radar-sinarame",
+            {"mode": "s3", "s3_bucket": "radar-input", "s3_prefix": "/radar_h5"},
+        )
+
+        assert config.RADAR_INPUT.s3_prefix == "radar_h5/"
+
+    def test_region_and_addressing_style_are_configurable(self, tmp_path, env_vars):
+        config = self._config_with_input(
+            tmp_path,
+            env_vars,
+            "radar-sinarame",
+            {
+                "mode": "s3",
+                "s3_bucket": "radar-input",
+                "s3_region": "sa-east-1",
+                "s3_addressing_style": "virtual",
+            },
+        )
+
+        assert config.RADAR_INPUT.s3_region == "sa-east-1"
+        assert config.RADAR_INPUT.s3_addressing_style == "virtual"
+
+    def test_addressing_style_defaults_to_path(self, tmp_path, env_vars):
+        """Path style is what every host:port gateway needs."""
+        config = self._config_with_input(
+            tmp_path,
+            env_vars,
+            "radar-sinarame",
+            {"mode": "s3", "s3_bucket": "radar-input"},
+        )
+
+        assert config.RADAR_INPUT.s3_addressing_style == "path"
+
+    def test_unknown_addressing_style_fails_fast(self, tmp_path, env_vars):
+        with pytest.raises(ValueError, match="s3_addressing_style"):
+            self._config_with_input(
+                tmp_path,
+                env_vars,
+                "radar-sinarame",
+                {
+                    "mode": "s3",
+                    "s3_bucket": "radar-input",
+                    "s3_addressing_style": "dns",
+                },
+            )
+
+    def test_ecmwf_and_gfs_default_to_their_upstream_apis(self, tmp_path, env_vars):
+        """The two API-backed sources keep their production default."""
+        config = self._config_with_input(
+            tmp_path, env_vars, "radar-sinarame", {"mode": "local", "dir": "/tmp/radar"}
+        )
+
+        assert config.ECMWF_INPUT.mode == "external-provider-opendata"
+        assert config.GFS_INPUT.mode == "external-provider-nomads"
+
+    @pytest.mark.parametrize("source,mode", [("ecmwf-ifs", "local"), ("gfs", "local")])
+    def test_ecmwf_and_gfs_accept_the_file_modes(
+        self, tmp_path, env_vars, source, mode
+    ):
+        """Both API-backed sources can also read from a folder."""
+        config = self._config_with_input(
+            tmp_path, env_vars, source, {"mode": mode, "dir": f"/tmp/{source}"}
+        )
+
+        parsed = config.ECMWF_INPUT if source.startswith("ecmwf") else config.GFS_INPUT
+        assert parsed.is_local
+        assert parsed.input_dir == f"/tmp/{source}"
+
+    @pytest.mark.parametrize("source", ["ecmwf-ifs", "gfs"])
+    def test_ecmwf_and_gfs_accept_s3_mode(self, tmp_path, env_vars, source):
+        config = self._config_with_input(
+            tmp_path,
+            env_vars,
+            source,
+            {"mode": "s3", "s3_bucket": f"s3://models/grib/{source}"},
+        )
+
+        parsed = config.ECMWF_INPUT if source.startswith("ecmwf") else config.GFS_INPUT
+        assert parsed.is_s3
+        assert parsed.s3_bucket == "models"
+        assert parsed.s3_prefix == f"grib/{source}/"
+
+    def test_upstream_mode_is_scoped_to_its_own_source(self, tmp_path, env_vars):
+        """An external-provider mode is meaningless for radar; reject it there."""
+        with pytest.raises(ValueError, match="sources.radar-sinarame.input.mode"):
+            self._config_with_input(
+                tmp_path,
+                env_vars,
+                "radar-sinarame",
+                {"mode": "external-provider-opendata"},
+            )
+
     def test_input_source_rejects_invalid_mode(self, tmp_path, env_vars):
         """An unknown input mode fails fast, naming the JSON path."""
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"radar": {"input": {"mode": "ftp"}}},
+            "sources": {"radar-sinarame": {"input": {"mode": "ftp"}}},
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
 
         with mock.patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises(ValueError, match="sources.radar.input.mode"):
+            with pytest.raises(ValueError, match="sources.radar-sinarame.input.mode"):
                 Config(settings_path=settings_path)
 
     def test_input_source_s3_mode_requires_bucket(self, tmp_path, env_vars):
@@ -237,7 +452,7 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"glm": {"input": {"mode": "s3"}}},
+            "sources": {"goes19-glm": {"input": {"mode": "s3"}}},
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
@@ -304,16 +519,20 @@ class TestConfig:
         self, temp_settings_file, env_vars
     ):
         """Only one of access/secret key set fails fast instead of going anonymous."""
-        env = {**env_vars, "RADAR_S3_ACCESS_KEY": "ak"}
+        env = {**env_vars, "RADAR_SINARAME_S3_ACCESS_KEY": "ak"}
         with mock.patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match="RADAR_S3_ACCESS_KEY"):
+            with pytest.raises(ValueError, match="RADAR_SINARAME_S3_ACCESS_KEY"):
                 Config(settings_path=temp_settings_file)
 
     def test_input_source_empty_env_credentials_are_anonymous(
         self, temp_settings_file, env_vars
     ):
         """Compose-supplied empty credential strings normalize to anonymous."""
-        env = {**env_vars, "GOES19_S3_ACCESS_KEY": "", "GOES19_S3_SECRET_KEY": ""}
+        env = {
+            **env_vars,
+            "GOES19_ABI_S3_ACCESS_KEY": "",
+            "GOES19_ABI_S3_SECRET_KEY": "",
+        }
         with mock.patch.dict(os.environ, env, clear=True):
             config = Config(settings_path=temp_settings_file)
             assert config.GOES19_INPUT.s3_access_key is None
@@ -325,9 +544,9 @@ class TestConfig:
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
-                "ecmwf": {
-                    "products": {"mean_sea_level_pressure": True},
-                    "mslp": {
+                "ecmwf-ifs": {
+                    "products": {"mean-sea-level-pressure": True},
+                    "mean-sea-level-pressure": {
                         "isobar_simplify_tolerance": 0.5,
                         "smoothing_sigma": 2.5,
                     },
@@ -351,7 +570,7 @@ class TestConfig:
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
         }
         if radar_stations is not None:
-            settings["sources"] = {"radar": {"stations": radar_stations}}
+            settings["sources"] = {"radar-sinarame": {"stations": radar_stations}}
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
         return settings_path
@@ -428,10 +647,10 @@ class TestConfig:
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
-                "goes19": {"target_images": 30, "max_hours_back": 8},
-                "glm": {"safety_lag_seconds": 45, "target_windows": 12},
-                "radar": {"target_images": 6},
-                "wrf": {"target_runs": 5},
+                "goes19-abi": {"target_images": 30, "max_hours_back": 8},
+                "goes19-glm": {"safety_lag_seconds": 45, "target_windows": 12},
+                "radar-sinarame": {"target_images": 6},
+                "wrf-arg4k": {"target_runs": 5},
             },
         }
         path = tmp_path / "settings.json"
@@ -459,7 +678,7 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"radar": {"target_images": 0}},
+            "sources": {"radar-sinarame": {"target_images": 0}},
         }
         path = tmp_path / "settings.json"
         path.write_text(json.dumps(settings))
@@ -472,7 +691,7 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"radar": {"zoom_levels": "5-10"}},
+            "sources": {"radar-sinarame": {"zoom_levels": "5-10"}},
         }
         path = tmp_path / "settings.json"
         path.write_text(json.dumps(settings))
@@ -496,7 +715,7 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"goes19": {"zoom_levels": "7-3"}},
+            "sources": {"goes19-abi": {"zoom_levels": "7-3"}},
         }
         path = tmp_path / "settings.json"
         path.write_text(json.dumps(settings))
@@ -509,7 +728,7 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"goes19": {"max_hours_back": 0}},
+            "sources": {"goes19-abi": {"max_hours_back": 0}},
         }
         path = tmp_path / "settings.json"
         path.write_text(json.dumps(settings))
@@ -522,20 +741,20 @@ class TestConfig:
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
-                "radar": {"retention_days": 3},
-                "ecmwf": {"retention_days": {"default": 2, "grib": 1}},
+                "radar-sinarame": {"retention_days": 3},
+                "ecmwf-ifs": {"retention_days": {"default": 2, "grib": 1}},
             },
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
         with mock.patch.dict(os.environ, env_vars, clear=True):
             retention = Config(settings_path=settings_path).TILE_LIFECYCLE_RETENTION
-            assert retention["tiles/radar"] == 3
-            assert retention["cog/radar"] == 3
-            assert retention["grib/models/ecmwf"] == 1
-            assert retention["tiles/models/ecmwf"] == 2
+            assert retention["tiles/radar/sinarame"] == 3
+            assert retention["cog/radar/sinarame"] == 3
+            assert retention["grib/ecmwf-ifs"] == 1
+            assert retention["tiles/ecmwf-ifs"] == 2
             # A source with no retention_days falls back to the default (1 day).
-            assert retention["tiles/models/gfs"] == 1
+            assert retention["tiles/gfs"] == 1
 
     def test_radar_stations_invalid_shape_fails_fast(self, tmp_path, env_vars):
         """An object with both whitelist and blacklist is rejected at startup."""

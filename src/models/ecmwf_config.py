@@ -28,14 +28,14 @@ ECMWF_TP_CONFIG = EcmwfProductConfig(
     vmin=0.0,
     vmax=100.0,
     palette_name="precipitation",
-    grib_prefix="grib/models/ecmwf/total_precipitation",
-    cog_prefix="cog/models/ecmwf/total_precipitation",
-    tiles_prefix="tiles/models/ecmwf/total_precipitation",
-    producer_data_source_id="ecmwf_tp_producer",
-    period_data_source_id="ecmwf_tp_period",
-    processor_id="ecmwf_tp_processor",
-    inline_processor_id="ecmwf_tp_grib_download",
-    band_id="ecmwf_tp",
+    grib_prefix="grib/ecmwf-ifs/total-precipitation",
+    cog_prefix="cog/ecmwf-ifs/total-precipitation",
+    tiles_prefix="tiles/ecmwf-ifs/total-precipitation",
+    producer_data_source_id="ecmwf_ifs_total_precipitation_producer",
+    period_data_source_id="ecmwf_ifs_total_precipitation_period",
+    processor_id="ecmwf_ifs_total_precipitation_processor",
+    inline_processor_id="ecmwf_ifs_total_precipitation_grib_download",
+    band_id="ecmwf_ifs_total_precipitation",
     log_prefix="ECMWF-TP",
 )
 
@@ -44,16 +44,16 @@ ECMWF_MSLP_CONFIG = EcmwfProductConfig(
     vmin=950.0,  # hPa
     vmax=1050.0,  # hPa
     palette_name="pressure",
-    grib_prefix="grib/models/ecmwf/mean_sea_level_pressure",
-    cog_prefix="cog/models/ecmwf/mean_sea_level_pressure",
-    tiles_prefix="tiles/models/ecmwf/mean_sea_level_pressure",
-    producer_data_source_id="ecmwf_mslp_producer",
-    period_data_source_id="ecmwf_mslp_period",
-    processor_id="ecmwf_mslp_processor",
-    inline_processor_id="ecmwf_mslp_grib_download",
-    band_id="ecmwf_mslp",
+    grib_prefix="grib/ecmwf-ifs/mean-sea-level-pressure",
+    cog_prefix="cog/ecmwf-ifs/mean-sea-level-pressure",
+    tiles_prefix="tiles/ecmwf-ifs/mean-sea-level-pressure",
+    producer_data_source_id="ecmwf_ifs_mean_sea_level_pressure_producer",
+    period_data_source_id="ecmwf_ifs_mean_sea_level_pressure_period",
+    processor_id="ecmwf_ifs_mean_sea_level_pressure_processor",
+    inline_processor_id="ecmwf_ifs_mean_sea_level_pressure_grib_download",
+    band_id="ecmwf_ifs_mean_sea_level_pressure",
     log_prefix="ECMWF-MSLP",
-    geojson_prefix="geojson/models/ecmwf/mean_sea_level_pressure",
+    geojson_prefix="geojson/ecmwf-ifs/mean-sea-level-pressure",
 )
 
 # Forecast scheduling constants (global to ECMWF Open Data, not product-specific)

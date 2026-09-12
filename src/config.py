@@ -10,12 +10,19 @@ from typing import Any, Dict
 from models.barb_config import BarbZoomStrides, parse_barb_zoom_strides
 from models.gfs_config import GfsAccessConfig
 from models.input_source_config import (
+    ADDRESSING_STYLES,
     INPUT_MODE_LOCAL,
+    INPUT_MODE_NOMADS,
+    INPUT_MODE_OPENDATA,
     INPUT_MODE_S3,
     InputSourceConfig,
+    has_url_scheme,
+    normalize_s3_prefix,
+    split_s3_bucket_uri,
 )
 from models.lifecycle_config import resolve_retention_map
-from models.radar_config import RadarStationFilter
+from models.radar_config import RADAR_PRODUCT_CONFIGS, RadarStationFilter
+from models.wrf_config import WRF_PRODUCT_CONFIGS
 from models.zoom_config import ZoomLevels, parse_zoom_levels
 
 
@@ -164,20 +171,20 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # Each data source's full config lives under "sources.<name>": its input
         # repository, product toggles, and any per-source tuning, co-located.
         _sources: Dict[str, Any] = settings.get("sources", {})
-        _goes19 = _sources.get("goes19", {})
-        _glm = _sources.get("glm", {})
-        _radar = _sources.get("radar", {})
-        _wrf = _sources.get("wrf", {})
-        _ecmwf = _sources.get("ecmwf", {})
+        _goes19 = _sources.get("goes19-abi", {})
+        _glm = _sources.get("goes19-glm", {})
+        _radar = _sources.get("radar-sinarame", {})
+        _wrf = _sources.get("wrf-arg4k", {})
+        _ecmwf = _sources.get("ecmwf-ifs", {})
         _gfs = _sources.get("gfs", {})
 
         # --- GOES-19 ABI ---
         # Discovery knobs are None when unset -> the data source keeps its own
         # class-constant default (see factories.py). Same pattern for glm/radar/wrf.
         _goes19_products = _goes19.get("products", {})
-        self.ENABLE_BAND_13: bool = _goes19_products.get("band_13", True)
-        self.ENABLE_BAND_9: bool = _goes19_products.get("band_9", True)
-        self.ENABLE_BAND_2: bool = _goes19_products.get("band_2", False)
+        self.ENABLE_BAND_13: bool = _goes19_products.get("c13", True)
+        self.ENABLE_BAND_9: bool = _goes19_products.get("c09", True)
+        self.ENABLE_BAND_2: bool = _goes19_products.get("c02", False)
         self.GOES_TARGET_IMAGES: int | None = self._opt_int(
             _goes19.get("target_images"), "sources.goes19.target_images"
         )
@@ -206,11 +213,15 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
 
         # --- Radar (SINARAME) ---
-        _radar_product_ids = ["DBZH", "DBZH_450KM", "ZDR", "RHOHV", "KDP", "VRAD"]
+        # Derived from the product registry, never repeated here: a literal list
+        # silently drifts out of step with a product rename, and every lookup
+        # then returns the False default instead of failing.
+        _radar_product_ids = list(RADAR_PRODUCT_CONFIGS)
         _radar_products = _radar.get("products", {})
         self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
             pid: _radar_products.get(pid, False) for pid in _radar_product_ids
         }
+        self._reject_radar_products_without_a_palette()
         # Per-radar-station enablement, AND-combined with the product flags above:
         # a (radar, product) pair is processed iff the product is enabled AND the
         # station filter allows the radar. Accepts "all" (default), "none",
@@ -227,20 +238,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
 
         # --- WRF (WRF-ARG4K FIELD2D) ---
         _wrf_products = _wrf.get("products", {})
+        # Same as radar: read the ids off the registry, not a second copy.
         self.ENABLED_WRF_PRODUCTS: dict[str, bool] = {
-            pid: _wrf_products.get(pid, False)
-            for pid in [
-                "Colmax",
-                "Rafagas",
-                "Campo900hPa",
-                "Precipitacion1h",
-                "MUCAPE",
-                "AguaPrecipitable",
-                "JetCapasBajas",
-                "CortanteNivelesBajos",
-                "CAPE_BRN",
-                "Granizo",
-            ]
+            pid: _wrf_products.get(pid, False) for pid in WRF_PRODUCT_CONFIGS
         }
         self.WRF_TARGET_RUNS: int | None = self._opt_int(
             _wrf.get("target_runs"), "sources.wrf.target_runs"
@@ -257,12 +257,12 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # --- ECMWF ---
         _ecmwf_products = _ecmwf.get("products", {})
         self.ENABLE_ECMWF_PRECIPITATION: bool = _ecmwf_products.get(
-            "precipitation", False
+            "total-precipitation", False
         )
         self.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE: bool = _ecmwf_products.get(
-            "mean_sea_level_pressure", False
+            "mean-sea-level-pressure", False
         )
-        _ecmwf_mslp = _ecmwf.get("mslp", {})
+        _ecmwf_mslp = _ecmwf.get("mean-sea-level-pressure", {})
         self.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE: float = float(
             _ecmwf_mslp.get("isobar_simplify_tolerance", 0.1)
         )
@@ -285,9 +285,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
 
         # --- GFS ---
         _gfs_products = _gfs.get("products", {})
-        self.ENABLE_GFS_MSLP: bool = _gfs_products.get("mslp", False)
-        self.ENABLE_GFS_500: bool = _gfs_products.get("500", False)
-        self.ENABLE_GFS_250: bool = _gfs_products.get("250", False)
+        self.ENABLE_GFS_MSLP: bool = _gfs_products.get("mean-sea-level-pressure", False)
+        self.ENABLE_GFS_500: bool = _gfs_products.get("geopotential-500hpa", False)
+        self.ENABLE_GFS_250: bool = _gfs_products.get("geopotential-250hpa", False)
         self.GFS_ACCESS: GfsAccessConfig = self._parse_gfs_access(_gfs)
         self.GFS_CYCLES_TO_MAINTAIN: int = int(_gfs.get("cycles_to_maintain", 3))
         self.GFS_MAX_STEPS_PER_TICK: int = int(_gfs.get("max_steps_per_tick", 12))
@@ -314,27 +314,49 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # Mode/dir/bucket/endpoint/prefix come from sources.<name>.input;
         # credentials from {ENV_PREFIX}_S3_ACCESS_KEY/_SECRET_KEY env vars. ---
         self.RADAR_INPUT: InputSourceConfig = self._parse_input_source(
-            _radar, "radar", default_dir=str(Path(self.DATA_DIR) / "radar_h5")
+            _radar,
+            "radar-sinarame",
+            env_prefix="RADAR_SINARAME",
+            default_dir=str(Path(self.DATA_DIR) / "radar_h5"),
         )
-        self.GLM_FOLDER_INPUT: InputSourceConfig = self._parse_input_source(
+        self.GOES19_GLM_INPUT: InputSourceConfig = self._parse_input_source(
             _glm,
-            "glm",
-            env_prefix="GLM_FOLDER",
+            "goes19-glm",
+            env_prefix="GOES19_GLM",
             default_dir=str(Path(self.DATA_DIR) / "glm_h5"),
         )
         self.WRF_INPUT: InputSourceConfig = self._parse_input_source(
-            _wrf, "wrf", default_dir=str(Path(self.DATA_DIR) / "wrf_nc")
+            _wrf,
+            "wrf-arg4k",
+            env_prefix="WRF_ARG4K",
+            default_dir=str(Path(self.DATA_DIR) / "wrf_nc"),
         )
         self.GOES19_INPUT: InputSourceConfig = self._parse_input_source(
             _goes19,
-            "goes19",
+            "goes19-abi",
+            env_prefix="GOES19_ABI",
             default_dir=str(Path(self.DATA_DIR) / "goes19"),
             default_mode=INPUT_MODE_S3,
             default_bucket="noaa-goes19",
         )
+        self.ECMWF_INPUT: InputSourceConfig = self._parse_input_source(
+            _ecmwf,
+            "ecmwf-ifs",
+            env_prefix="ECMWF_IFS",
+            default_dir=str(Path(self.DATA_DIR) / "ecmwf_grib"),
+            default_mode=INPUT_MODE_OPENDATA,
+            extra_modes=(INPUT_MODE_OPENDATA,),
+        )
+        self.GFS_INPUT: InputSourceConfig = self._parse_input_source(
+            _gfs,
+            "gfs",
+            default_dir=str(Path(self.DATA_DIR) / "gfs_grib"),
+            default_mode=INPUT_MODE_NOMADS,
+            extra_modes=(INPUT_MODE_NOMADS,),
+        )
         # Legacy *_INPUT_DIR aliases retained for callers that read them directly.
         self.RADAR_INPUT_DIR: str = self.RADAR_INPUT.input_dir
-        self.GLM_FOLDER_INPUT_DIR: str = self.GLM_FOLDER_INPUT.input_dir
+        self.GOES19_GLM_INPUT_DIR: str = self.GOES19_GLM_INPUT.input_dir
         self.WRF_INPUT_DIR: str = self.WRF_INPUT.input_dir
 
         # Light-queue routing: matching units go to the light queue so a larger
@@ -392,6 +414,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         env_prefix: str | None = None,
         default_mode: str = INPUT_MODE_LOCAL,
         default_bucket: str | None = None,
+        extra_modes: tuple[str, ...] = (),
     ) -> InputSourceConfig:
         """Parse one source's input config from ``sources.<json_key>.input``.
 
@@ -402,16 +425,119 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         """
         env_prefix = env_prefix or json_key.upper()
         inp = source_cfg.get("input", {})
+        mode = Config._parse_input_mode(inp, json_key, default_mode, extra_modes)
+        bucket, prefix = Config._parse_input_bucket(inp, json_key, mode, default_bucket)
+        access_key, secret_key = Config._input_credentials(env_prefix)
+        source = InputSourceConfig(
+            mode=mode,
+            input_dir=inp.get("dir", default_dir),
+            s3_bucket=bucket,
+            s3_endpoint=inp.get("s3_endpoint") or None,
+            s3_prefix=prefix,
+            s3_secure=bool(inp.get("s3_secure", False)),
+            s3_access_key=access_key,
+            s3_secret_key=secret_key,
+            s3_region=inp.get("s3_region") or None,
+            s3_addressing_style=Config._parse_addressing_style(inp, json_key),
+        )
+        Config._validate_input_endpoint(source, inp, json_key)
+        return source
+
+    @staticmethod
+    def _parse_input_mode(
+        inp: Dict[str, Any],
+        json_key: str,
+        default_mode: str,
+        extra_modes: tuple[str, ...] = (),
+    ) -> str:
+        """Read and validate ``input.mode``.
+
+        Every source accepts "local" and "s3". A source that also pulls from its
+        own upstream API (ECMWF Open Data, NOMADS) passes that mode in
+        ``extra_modes`` so it stays configurable alongside the two file modes.
+        """
+        allowed = (INPUT_MODE_LOCAL, INPUT_MODE_S3, *extra_modes)
         mode = inp.get("mode", default_mode)
-        if mode not in (INPUT_MODE_LOCAL, INPUT_MODE_S3):
+        if mode not in allowed:
             raise ValueError(
-                f"sources.{json_key}.input.mode must be 'local' or 's3', got '{mode}'"
+                f"sources.{json_key}.input.mode must be one of {list(allowed)}, "
+                f"got '{mode}'"
             )
-        bucket = inp.get("s3_bucket", default_bucket)
-        if mode == INPUT_MODE_S3 and not bucket:
+        return mode
+
+    @staticmethod
+    def _parse_input_bucket(
+        inp: Dict[str, Any],
+        json_key: str,
+        mode: str,
+        default_bucket: str | None,
+    ) -> tuple[str | None, str]:
+        """Resolve the bucket and key prefix, accepting an ``s3://`` bucket URI.
+
+        ``s3_bucket`` may be written either as a bare name or as
+        ``s3://bucket/prefix``; the URI form fills the prefix, so a whole
+        location can be pasted from the AWS console as one value. Setting the
+        prefix twice is rejected rather than silently resolved.
+        """
+        raw_bucket = inp.get("s3_bucket", default_bucket)
+        if mode == INPUT_MODE_S3 and not raw_bucket:
             raise ValueError(
                 f"sources.{json_key}.input has mode 's3' but no s3_bucket set"
             )
+        if raw_bucket is None:
+            return None, normalize_s3_prefix(inp.get("s3_prefix", ""))
+        try:
+            bucket, uri_prefix = split_s3_bucket_uri(raw_bucket)
+        except ValueError as exc:
+            raise ValueError(f"sources.{json_key}.input.s3_bucket: {exc}") from exc
+        explicit_prefix = inp.get("s3_prefix", "")
+        if uri_prefix and explicit_prefix:
+            raise ValueError(
+                f"sources.{json_key}.input sets a prefix twice: s3_bucket "
+                f"'{raw_bucket}' already carries one, so drop s3_prefix"
+            )
+        return bucket, normalize_s3_prefix(uri_prefix or explicit_prefix)
+
+    @staticmethod
+    def _parse_addressing_style(inp: Dict[str, Any], json_key: str) -> str:
+        """Read and validate ``input.s3_addressing_style``.
+
+        Defaults to path-style, which every S3-compatible gateway addressed as
+        host:port needs. Virtual-host style is opt-in for endpoints that only
+        answer on ``<bucket>.<host>``.
+        """
+        style = inp.get("s3_addressing_style", "path")
+        if style not in ADDRESSING_STYLES:
+            raise ValueError(
+                f"sources.{json_key}.input.s3_addressing_style must be one of "
+                f"{list(ADDRESSING_STYLES)}, got '{style}'"
+            )
+        return style
+
+    @staticmethod
+    def _validate_input_endpoint(
+        source: InputSourceConfig, inp: Dict[str, Any], json_key: str
+    ) -> None:
+        """Fail fast at startup on an endpoint that cannot be read as a URL.
+
+        Without this a malformed value survives client construction and only
+        surfaces later as a connection error against a nonsense host.
+        """
+        endpoint = source.s3_endpoint
+        if endpoint and "s3_secure" in inp and has_url_scheme(endpoint):
+            if endpoint.lower().startswith("https://") != source.s3_secure:
+                raise ValueError(
+                    f"sources.{json_key}.input: s3_endpoint '{endpoint}' and "
+                    f"s3_secure {source.s3_secure} disagree; drop one of them"
+                )
+        try:
+            _ = source.endpoint_url
+        except ValueError as exc:
+            raise ValueError(f"sources.{json_key}.input.s3_endpoint: {exc}") from exc
+
+    @staticmethod
+    def _input_credentials(env_prefix: str) -> tuple[str | None, str | None]:
+        """Read one source's S3 credentials; both unset means anonymous."""
         # `or None` normalizes compose-supplied empty strings to unset.
         access_key = os.getenv(f"{env_prefix}_S3_ACCESS_KEY") or None
         secret_key = os.getenv(f"{env_prefix}_S3_SECRET_KEY") or None
@@ -421,16 +547,30 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
                 f"{env_prefix}_S3_ACCESS_KEY and {env_prefix}_S3_SECRET_KEY "
                 "must be set together (or neither, for anonymous access)"
             )
-        return InputSourceConfig(
-            mode=mode,
-            input_dir=inp.get("dir", default_dir),
-            s3_bucket=bucket,
-            s3_endpoint=inp.get("s3_endpoint") or None,
-            s3_prefix=inp.get("s3_prefix", ""),
-            s3_secure=bool(inp.get("s3_secure", False)),
-            s3_access_key=access_key,
-            s3_secret_key=secret_key,
+        return access_key, secret_key
+
+    def _reject_radar_products_without_a_palette(self) -> None:
+        """An enabled radar product with no palette must not reach a worker.
+
+        Deriving the id list from the registry made zh/th/wrad/phidp reachable
+        for the first time, and phidp has no palette: get_palette raises per
+        file, forever, once the toggle is flipped. Failing here turns that into
+        one startup error naming the product instead of an endless DLQ.
+        """
+        from models.radar_palettes import (  # pylint: disable=import-outside-toplevel
+            RADAR_PALETTES,
         )
+
+        missing = sorted(
+            pid
+            for pid, enabled in self.ENABLED_RADAR_PRODUCTS.items()
+            if enabled and RADAR_PRODUCT_CONFIGS[pid].variable not in RADAR_PALETTES
+        )
+        if missing:
+            raise ValueError(
+                f"radar products {missing} are enabled but have no palette; "
+                f"add one to RADAR_PALETTES or disable them"
+            )
 
     @staticmethod
     def _validate_cron(value: Any, name: str) -> str:
@@ -587,22 +727,30 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             ", ".join(sorted(_radar_filter.stations)) or "-",
         )
         logger.info("RADAR_INPUT_DIR: %s", self.RADAR_INPUT_DIR)
-        logger.info("GLM_FOLDER_INPUT_DIR: %s", self.GLM_FOLDER_INPUT_DIR)
+        logger.info("GOES19_GLM_INPUT_DIR: %s", self.GOES19_GLM_INPUT_DIR)
         for name, src in (
             ("RADAR", self.RADAR_INPUT),
-            ("GLM_FOLDER", self.GLM_FOLDER_INPUT),
+            ("GOES19_GLM", self.GOES19_GLM_INPUT),
             ("WRF", self.WRF_INPUT),
             ("GOES19", self.GOES19_INPUT),
+            ("ECMWF", self.ECMWF_INPUT),
+            ("GFS", self.GFS_INPUT),
         ):
+            # endpoint_url is the resolved URL the client actually dials, which
+            # differs from the configured s3_endpoint whenever the short
+            # host:port form is used — log both so misconfigurations are visible.
             logger.info(
-                "%s_INPUT: mode=%s dir=%s bucket=%s endpoint=%s prefix=%s "
-                "credentials=%s",
+                "%s_INPUT: mode=%s dir=%s bucket=%s endpoint=%s url=%s prefix=%s "
+                "region=%s addressing=%s credentials=%s",
                 name,
                 src.mode,
                 src.input_dir,
                 src.s3_bucket,
                 src.s3_endpoint,
+                src.endpoint_url,
                 src.s3_prefix,
+                src.s3_region,
+                src.s3_addressing_style,
                 "set" if src.s3_access_key else "anonymous",
             )
         logger.info("GLM_ACCUM_MINUTES: %s", self.GLM_ACCUM_MINUTES)

@@ -18,6 +18,7 @@ from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
 from clients.heavy_upload import etag_failure_reason, file_md5, validated_size
+from models.input_source_config import normalize_s3_endpoint_url
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ _PROFILE_HEAVY = "heavy"
 # are rounded up to the S3 lifecycle minimum of 1 day — the portability cost of
 # expressing expiry as standard per-prefix bucket lifecycle rules instead of
 # SeaweedFS-only per-object TTLs. S3 Filter.Prefix is a literal startswith, so
-# "tiles/band_" covers band_2/9/13 and "tiles/glm_" covers fed/toe/mfa.
+# "tiles/goes19/abi/" covers c02/c09/c13 and "tiles/goes19/glm/" covers fed/toe/mfa.
 def _build_lifecycle_rules(retention_map: dict[str, int]) -> list[dict]:
     """Build one non-overlapping S3 lifecycle rule per explicit prefix.
 
@@ -107,13 +108,17 @@ class S3Client:
         heavy_read_timeout_s: int = DEFAULT_HEAVY_READ_TIMEOUT_S,
         large_upload_concurrency: int = DEFAULT_LARGE_UPLOAD_CONCURRENCY,
         large_object_threshold_mb: int = DEFAULT_LARGE_OBJECT_THRESHOLD_MB,
+        region_name: str | None = None,
+        addressing_style: str = "path",
     ):
         """
         Initialize S3 client.
 
         Args:
             bucket_name: S3 bucket name
-            endpoint_url: S3 endpoint URL (optional, for S3-compatible services)
+            endpoint_url: Full S3 endpoint URL (optional, for S3-compatible
+                services). Callers holding a ``host:port`` string should pass it
+                through ``normalize_s3_endpoint_url`` first.
             max_concurrent_downloads: Maximum number of concurrent downloads
             access_key: S3 access key (optional, for authenticated access)
             secret_key: S3 secret key (optional, for authenticated access)
@@ -128,9 +133,19 @@ class S3Client:
                 cannot head-of-line block the many small ones.
             large_object_threshold_mb: Size at which an upload moves to the
                 large lane.
+            region_name: AWS region for endpoint resolution and SigV4 signing.
+                None lets botocore resolve it (us-east-1 by default), which is
+                right for gateways that ignore the region and for us-east-1
+                buckets, but wrong for an authenticated bucket in any other
+                region — the signature would be built for the wrong one.
+            addressing_style: "path" (default) suits every S3-compatible gateway
+                addressed as host:port; "virtual"/"auto" are for endpoints that
+                only answer on <bucket>.<host>.
         """
         self._bucket_name = bucket_name
         self._endpoint_url = endpoint_url
+        self._region_name = region_name
+        self._addressing_style = addressing_style
         self._max_concurrent_downloads = max_concurrent_downloads
         self._upload_concurrency = upload_concurrency
         self._heavy_upload_concurrency = heavy_upload_concurrency
@@ -159,6 +174,11 @@ class S3Client:
         self._client_locks: dict[str, asyncio.Lock] = {}
         self._lock_loops: dict[str, asyncio.AbstractEventLoop] = {}
 
+    @property
+    def bucket_name(self) -> str:
+        """The single bucket this client reads and writes."""
+        return self._bucket_name
+
     @classmethod
     def create_with_credentials(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         cls,
@@ -173,13 +193,16 @@ class S3Client:
         heavy_read_timeout_s: int = DEFAULT_HEAVY_READ_TIMEOUT_S,
         large_upload_concurrency: int = DEFAULT_LARGE_UPLOAD_CONCURRENCY,
         large_object_threshold_mb: int = DEFAULT_LARGE_OBJECT_THRESHOLD_MB,
+        region_name: str | None = None,
+        addressing_style: str = "path",
     ) -> "S3Client":
         """
         Factory method to create an authenticated S3 client for S3.
 
         Args:
             bucket_name: Target bucket name
-            endpoint: S3 endpoint (host:port, e.g., "s3-service:9000")
+            endpoint: S3 endpoint, either "host:port" (``secure`` picks the
+                scheme) or a complete "http(s)://host[:port][/path]" URL
             access_key: Access key (username)
             secret_key: Secret key (password)
             secure: Use HTTPS (default: False)
@@ -189,9 +212,10 @@ class S3Client:
             heavy_read_timeout_s: Response wait for a heavy PUT
             large_upload_concurrency: Max parallel at-or-above-threshold uploads
             large_object_threshold_mb: Size at which the large lane takes over
+            region_name: AWS region, or None to let botocore resolve one
+            addressing_style: "path", "virtual" or "auto"
         """
-        protocol = "https" if secure else "http"
-        endpoint_url = f"{protocol}://{endpoint}"
+        endpoint_url = normalize_s3_endpoint_url(endpoint, secure)
         return cls(
             bucket_name=bucket_name,
             endpoint_url=endpoint_url,
@@ -203,6 +227,8 @@ class S3Client:
             large_upload_concurrency=large_upload_concurrency,
             large_object_threshold_mb=large_object_threshold_mb,
             heavy_read_timeout_s=heavy_read_timeout_s,
+            region_name=region_name,
+            addressing_style=addressing_style,
         )
 
     def _get_client_kwargs(
@@ -210,11 +236,11 @@ class S3Client:
     ) -> dict:
         """Get kwargs for creating S3 client based on auth mode.
 
-        Path-style addressing and a connection pool sized to this client's
-        concurrency are applied on both branches: path-style is required for
-        S3-compatible gateways addressed as host:port (SeaweedFS, MinIO), and
-        the pool keeps concurrent operations from contending for a single
-        default connection.
+        The configured addressing style and a connection pool sized to this
+        client's concurrency are applied on both branches: path-style (the
+        default) is required for S3-compatible gateways addressed as host:port
+        (SeaweedFS, MinIO), and the pool keeps concurrent operations from
+        contending for a single default connection.
 
         The heavy profile differs only in pool size and read timeout: a
         multi-MiB PUT needs a longer response budget than the 30 s the tile lane
@@ -222,6 +248,8 @@ class S3Client:
         """
         heavy = profile == _PROFILE_HEAVY
         kwargs: dict[str, Any] = {"endpoint_url": self._endpoint_url}
+        if self._region_name:
+            kwargs["region_name"] = self._region_name
         pool = (
             # Both heavy sub-lanes share this client, so the pool covers both.
             self._heavy_upload_concurrency + self._large_upload_concurrency
@@ -229,7 +257,7 @@ class S3Client:
             else max(self._max_concurrent_downloads, self._upload_concurrency)
         )
         boto_kwargs: dict[str, Any] = {
-            "s3": {"addressing_style": "path"},
+            "s3": {"addressing_style": self._addressing_style},
             "max_pool_connections": max(1, pool),
             "connect_timeout": _CONNECT_TIMEOUT_S,
             "read_timeout": self._heavy_read_timeout_s if heavy else _READ_TIMEOUT_S,
@@ -649,7 +677,7 @@ class S3Client:
 
         Args:
             local_dir: Local directory path to upload
-            s3_prefix: S3 key prefix (e.g., "tiles/band_13/tileset_id")
+            s3_prefix: S3 key prefix (e.g., "tiles/goes19/abi/c13/tileset_id")
 
         Returns:
             Number of files uploaded
@@ -746,7 +774,7 @@ class S3Client:
         selects (see ``_lane_for``).
 
         Args:
-            key: Destination object key (e.g., "cog/band_13/image.tif").
+            key: Destination object key (e.g., "cog/goes19/abi/c13/image.tif").
             file_path: Local path of the file to upload.
 
         Returns:
@@ -827,7 +855,7 @@ class S3Client:
         Delete all objects under a given S3 prefix.
 
         Args:
-            s3_prefix: S3 key prefix to delete (e.g., "tiles/band_13/old_tileset")
+            s3_prefix: S3 key prefix to delete (e.g., "tiles/goes19/abi/c13/old_tileset")
 
         Returns:
             Number of objects deleted

@@ -83,7 +83,7 @@ class RadarProductConfig:
     Configuration for a specific radar product (variable).
 
     Attributes:
-        product_id: Identifier (e.g., "DBZH", "VRAD", "RHOHV"). Also the path
+        product_id: Identifier (e.g., "dbzh", "vrad", "rhohv"). Also the path
             segment products are published under, so it must be unique.
         field_name: PyART field name for the variable
         subvolume: Which subvolume to process ("01", "02" or "04")
@@ -91,8 +91,10 @@ class RadarProductConfig:
         s3_cog_prefix: S3 key prefix for storing COG files
         unit: Display unit for the variable
         long_name: Descriptive name
-        file_variable: Filename token this product reads, when it differs from
-            ``product_id``. Empty (the common case) means they are the same.
+        file_variable: Uppercase ODIM token this product is discovered from in
+            the H5 filename (RMA1_0315_01_DBZH_...). Pinned explicitly on every
+            product: ``product_id`` is lowercase for S3/URL use and would never
+            match the filename, and a mismatch discovers nothing *silently*.
             Set it when two products share one physical moment but different
             scan geometry — e.g. DBZH_450KM is the DBZH moment of the
             long-range subvolume 04, so it reads "DBZH" files but publishes
@@ -130,11 +132,12 @@ class RadarProductConfig:
 # Color palettes are defined in radar_palettes.py
 
 DBZH_CONFIG = RadarProductConfig(
-    product_id="DBZH",
+    product_id="dbzh",
+    file_variable="DBZH",
     field_name="reflectivity",
     subvolume="01",
-    s3_tiles_prefix="tiles/radar",
-    s3_cog_prefix="cog/radar",
+    s3_tiles_prefix="tiles/radar/sinarame",
+    s3_cog_prefix="cog/radar/sinarame",
     unit="dBZ",
     long_name="Horizontal Reflectivity",
 )
@@ -144,108 +147,71 @@ DBZH_CONFIG = RadarProductConfig(
 # instead of the ~235 km of the 15-sweep subvolume 01. Same palette and field,
 # its own product path so both coexist per radar.
 DBZH_450KM_CONFIG = RadarProductConfig(
-    product_id="DBZH_450KM",
+    product_id="dbzh-450km",
+    file_variable="DBZH",
     field_name="reflectivity",
     subvolume="04",
-    s3_tiles_prefix="tiles/radar",
-    s3_cog_prefix="cog/radar",
+    s3_tiles_prefix="tiles/radar/sinarame",
+    s3_cog_prefix="cog/radar/sinarame",
     unit="dBZ",
     long_name="Horizontal Reflectivity (450 km)",
-    file_variable="DBZH",
 )
 
-ZH_CONFIG = RadarProductConfig(
-    product_id="ZH",
-    field_name="reflectivity",
-    subvolume="01",
-    s3_tiles_prefix="tiles/radar",
-    s3_cog_prefix="cog/radar",
-    unit="dBZ",
-    long_name="Reflectivity",
-)
-
-TH_CONFIG = RadarProductConfig(
-    product_id="TH",
-    field_name="total_power",
-    subvolume="01",
-    s3_tiles_prefix="tiles/radar",
-    s3_cog_prefix="cog/radar",
-    unit="dBZ",
-    long_name="Total Power",
-)
 
 VRAD_CONFIG = RadarProductConfig(
-    product_id="VRAD",
+    product_id="vrad",
+    file_variable="VRAD",
     field_name="velocity",
     subvolume="02",  # VRAD uses volume 02
-    s3_tiles_prefix="tiles/radar",
-    s3_cog_prefix="cog/radar",
+    s3_tiles_prefix="tiles/radar/sinarame",
+    s3_cog_prefix="cog/radar/sinarame",
     unit="m/s",
     long_name="Radial Velocity",
 )
 
-WRAD_CONFIG = RadarProductConfig(
-    product_id="WRAD",
-    field_name="spectrum_width",
-    subvolume="02",
-    s3_tiles_prefix="tiles/radar",
-    s3_cog_prefix="cog/radar",
-    unit="m/s",
-    long_name="Spectrum Width",
-)
 
 RHOHV_CONFIG = RadarProductConfig(
-    product_id="RHOHV",
+    product_id="rhohv",
+    file_variable="RHOHV",
     field_name="cross_correlation_ratio",
     subvolume="01",
-    s3_tiles_prefix="tiles/radar",
-    s3_cog_prefix="cog/radar",
+    s3_tiles_prefix="tiles/radar/sinarame",
+    s3_cog_prefix="cog/radar/sinarame",
     unit="",
     long_name="Cross-correlation Coefficient",
 )
 
 ZDR_CONFIG = RadarProductConfig(
-    product_id="ZDR",
+    product_id="zdr",
+    file_variable="ZDR",
     field_name="differential_reflectivity",
     subvolume="01",
-    s3_tiles_prefix="tiles/radar",
-    s3_cog_prefix="cog/radar",
+    s3_tiles_prefix="tiles/radar/sinarame",
+    s3_cog_prefix="cog/radar/sinarame",
     unit="dB",
     long_name="Differential Reflectivity",
 )
 
 KDP_CONFIG = RadarProductConfig(
-    product_id="KDP",
+    product_id="kdp",
+    file_variable="KDP",
     field_name="specific_differential_phase",
     subvolume="01",
-    s3_tiles_prefix="tiles/radar",
-    s3_cog_prefix="cog/radar",
+    s3_tiles_prefix="tiles/radar/sinarame",
+    s3_cog_prefix="cog/radar/sinarame",
     unit="°/km",
     long_name="Specific Differential Phase",
 )
 
-PHIDP_CONFIG = RadarProductConfig(
-    product_id="PHIDP",
-    field_name="differential_phase",
-    subvolume="01",
-    s3_tiles_prefix="tiles/radar",
-    s3_cog_prefix="cog/radar",
-    unit="°",
-    long_name="Differential Phase",
-)
 
 # Registry for looking up radar product configs by ID
 RADAR_PRODUCT_CONFIGS = {
-    "DBZH": DBZH_CONFIG,
-    "DBZH_450KM": DBZH_450KM_CONFIG,
-    "ZH": ZH_CONFIG,
-    "TH": TH_CONFIG,
-    "VRAD": VRAD_CONFIG,
-    "WRAD": WRAD_CONFIG,
-    "RHOHV": RHOHV_CONFIG,
-    "ZDR": ZDR_CONFIG,
-    "KDP": KDP_CONFIG,
-    "PHIDP": PHIDP_CONFIG,
+    "dbzh": DBZH_CONFIG,
+    "dbzh-450km": DBZH_450KM_CONFIG,
+    "vrad": VRAD_CONFIG,
+    "rhohv": RHOHV_CONFIG,
+    "zdr": ZDR_CONFIG,
+    "kdp": KDP_CONFIG,
 }
 
 

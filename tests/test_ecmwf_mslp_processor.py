@@ -33,7 +33,7 @@ def _make_work_unit(forecast_time: datetime, hour_end: int) -> WorkUnit:
     end_time = forecast_time + timedelta(hours=hour_end)
     image_id = end_time.strftime("%Y%m%dT%H%MZ")
     payload = {
-        "grib_path": "grib/models/ecmwf/mean_sea_level_pressure/20260413T1200Z.grib",
+        "grib_path": "grib/ecmwf-ifs/mean-sea-level-pressure/20260413T1200Z.grib",
         "forecast_time": forecast_time.isoformat(),
         "end_time": end_time.isoformat(),
         "hour_end": hour_end,
@@ -41,9 +41,9 @@ def _make_work_unit(forecast_time: datetime, hour_end: int) -> WorkUnit:
     return WorkUnit.create(
         image_id=image_id,
         source_uri=json.dumps(payload),
-        data_source_id="ecmwf_mslp_period",
-        processor_id="ecmwf_mslp_processor",
-        output_prefix="tiles/models/ecmwf/mean_sea_level_pressure/20260413T1200Z",
+        data_source_id="ecmwf_ifs_mean_sea_level_pressure_period",
+        processor_id="ecmwf_ifs_mean_sea_level_pressure_processor",
+        output_prefix="tiles/ecmwf-ifs/mean-sea-level-pressure/20260413T1200Z",
         bounds={"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
         band_id="ecmwf_mslp",
     )
@@ -92,11 +92,11 @@ async def test_uploads_cog_and_geojson_with_expected_s3_keys(tmp_path):
 
     forecast_ts = "20260413T1200Z"
     expected_cog_key = (
-        f"cog/models/ecmwf/mean_sea_level_pressure/{forecast_ts}/"
+        f"cog/ecmwf-ifs/mean-sea-level-pressure/{forecast_ts}/"
         f"{work_unit.image_id}.tif"
     )
     expected_geojson_key = (
-        f"geojson/models/ecmwf/mean_sea_level_pressure/{forecast_ts}/"
+        f"geojson/ecmwf-ifs/mean-sea-level-pressure/{forecast_ts}/"
         f"{work_unit.image_id}.json"
     )
     assert cog_call.args[0] == expected_cog_key

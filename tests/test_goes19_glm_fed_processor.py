@@ -13,7 +13,6 @@ import xarray as xr
 from models.work_unit import WorkUnit
 from processors.glm_fed_processor import GlmFedProcessor
 
-
 SMALL_BOUNDS = {"minx": -80.0, "maxx": -78.0, "miny": -50.0, "maxy": -48.0}
 
 
@@ -43,11 +42,11 @@ def _make_work_unit(window_start: datetime) -> WorkUnit:
     return WorkUnit.create(
         image_id="20260611400000",
         source_uri=manifest,
-        data_source_id="glm_folder",
-        processor_id="glm_fed",
-        output_prefix="tiles/glm_fed",
+        data_source_id="goes19_glm",
+        processor_id="goes19_glm_fed",
+        output_prefix="tiles/goes19/glm/fed",
         bounds=SMALL_BOUNDS,
-        band_id="glm_folder_fed",
+        band_id="goes19_glm_fed",
     )
 
 

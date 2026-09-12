@@ -36,7 +36,7 @@ Local SINARAME radar    ─┘
 | **Workers** | `src/worker/` | Consume work units (prefetch=1, manual ack). Pipeline: download → georeference → science → GeoTIFF → gdal2tiles → upload → cleanup. |
 | **Subprocess isolation** | `src/worker/subprocess_processor.py` | Heavy processing in subprocess for full memory reclamation per image. |
 | **Processors** | `src/processors/` | `GoesProcessor` (template-method) → `Band2Processor`, `Band13Processor`, `Band9Processor`. `GlmFedProcessor` aggregates pre-gridded GLM windows via `glmtools` and emits FED/TOE/MFA tiles in one run. All via `ProcessorRegistry`. |
-| **Data Sources** | `src/data_sources/` | `DataSourceRegistry` with pluggable impls: `Goes19AbiDataSource` (NOAA S3 by default), `GlmFolderDataSource` (CG_GLM-L2-GLMF), `RadarDataSource` (SINARAME H5), `WrfDataSource` (WRF-ARG4K FIELD2D), ECMWF. GOES/GLM/radar/WRF read via per-source `*FileRepository` (Local or S3 impl, same folder layout) selected by `<source>_input_mode` in settings.json; S3 credentials via `<SOURCE>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars (unset = anonymous). |
+| **Data Sources** | `src/data_sources/` | `DataSourceRegistry` with pluggable impls: `Goes19AbiDataSource` (NOAA S3 by default), `Goes19GlmDataSource` (CG_GLM-L2-GLMF), `RadarDataSource` (SINARAME H5), `WrfDataSource` (WRF-ARG4K FIELD2D), ECMWF. GOES/GLM/radar/WRF read via per-source `*FileRepository` (Local or S3 impl, same folder layout) selected by `sources.<name>.input.mode` in settings.json; S3 credentials via `<SOURCE>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars, prefixes `GOES19_ABI`/`GOES19_GLM`/`RADAR_SINARAME`/`WRF_ARG4K`/`ECMWF_IFS`/`GFS` (unset = anonymous). |
 | **Services** | `src/services/processing_steps.py`, `glm_aggregation.py` | Pure functions: georeferencing, brightness temp, colorization, tiling, RGBA; GLM window aggregation + GEOS→EPSG:4326 reprojection. |
 | **Clients** | `src/clients/` | Async S3 (aioboto3 + semaphore), RabbitMQ (pika, connection pooling), SQLite progress tracker. |
 | **Config** | `src/config.py`, `settings.json` | Env vars, feature flags, geographic bounds. |
@@ -77,7 +77,7 @@ For `rio.reproject("EPSG:4326")` on geostationary data, leave `resolution=None`.
 - **Composition over inheritance**.
 - **Typed registries**: `Generic[T]`, validate on registration, decorator or explicit registration, scoped not global.
 - **Error handling**: Custom exception hierarchies, context managers for cleanup, catch specific exceptions.
-- **Testing**: Test interfaces not implementations, DI for easy mocking, mock external services, Protocol for test doubles.
+- **Testing**: Test interfaces not implementations, DI for mocking, mock external services, Protocol for test doubles.
 
 ## Resource Management
 

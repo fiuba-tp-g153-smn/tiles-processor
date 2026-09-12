@@ -15,8 +15,8 @@ from data_sources.base import DiscoveryConfig
 from data_sources.wrf import WrfDataSource
 from models.wrf_config import WRF_PRODUCT_CONFIGS, parse_wrf_filename
 
-COLMAX_CONFIG = WRF_PRODUCT_CONFIGS["Colmax"]  # skip_f000=False (F000 kept)
-PRECIP_CONFIG = WRF_PRODUCT_CONFIGS["Precipitacion1h"]  # skip_f000=True (F000 dropped)
+COLMAX_CONFIG = WRF_PRODUCT_CONFIGS["colmax"]  # skip_f000=False (F000 kept)
+PRECIP_CONFIG = WRF_PRODUCT_CONFIGS["precipitacion-1h"]  # skip_f000=True (F000 dropped)
 
 # init_tags in chronological (== lexicographic) order, oldest first.
 RUNS_OLD_TO_NEW = [
@@ -95,7 +95,7 @@ async def test_dedup_lets_older_runs_drain_backward():
     """Newest 3 runs already processed → the next-oldest runs surface (paced)."""
     files = [wrf_file(run, f) for run in RUNS_OLD_TO_NEW for f in range(3)]
     existing = {
-        image_id("Colmax", run, f) for run in RUNS_OLD_TO_NEW[-3:] for f in range(3)
+        image_id("colmax", run, f) for run in RUNS_OLD_TO_NEW[-3:] for f in range(3)
     }
     source = WrfDataSource(COLMAX_CONFIG, make_repo(files))
 
@@ -131,7 +131,7 @@ async def test_f000_included_for_non_accumulation_product():
 async def test_in_progress_steps_excluded():
     """Steps already in progress are not re-emitted."""
     files = [wrf_file("20260601_000000", f) for f in range(3)]
-    in_progress = {image_id("Colmax", "20260601_000000", 1)}
+    in_progress = {image_id("colmax", "20260601_000000", 1)}
     source = WrfDataSource(COLMAX_CONFIG, make_repo(files))
 
     images = await source.discover_images(

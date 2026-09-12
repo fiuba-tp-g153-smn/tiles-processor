@@ -26,11 +26,11 @@ def _seed(db_path):
             JobMetrics(
                 work_unit_id="w",
                 image_id=f"i{i}",
-                data_source_id="goes19_abi_band_13",
-                processor_id="goes_band_13",
-                band_id="band_13",
-                job_type="goes19_abi_band_13",
-                product_label="GOES ABI band_13 · Cloud Tops",
+                data_source_id="goes19_abi_c13",
+                processor_id="goes19_abi_c13",
+                band_id="goes19_abi_c13",
+                job_type="goes19_abi_c13",
+                product_label="GOES ABI goes19_abi_c13 · Cloud Tops",
                 image_timestamp=f"2026052132020{i}",
                 outcome="success",
                 worker_host="worker1",
@@ -46,10 +46,10 @@ def _seed(db_path):
         JobMetrics(
             work_unit_id="w",
             image_id="ix",
-            data_source_id="radar_DBZH",
-            processor_id="radar",
-            band_id="radar",
-            job_type="radar_DBZH",
+            data_source_id="radar_sinarame_dbzh",
+            processor_id="radar_sinarame",
+            band_id="radar_sinarame",
+            job_type="radar_sinarame_dbzh",
             product_label="Radar RMA12 DBZH",
             image_timestamp="20260114T170328Z",
             outcome="dlq",
@@ -147,12 +147,12 @@ def test_jobs_limit_zero_with_window_is_unbounded(client):
 def test_summary_groups_by_type(client):
     s = client.get("/api/summary").json()
     by_type = {x["job_type"]: x for x in s}
-    assert set(by_type) == {"goes19_abi_band_13", "radar_DBZH"}
-    goes = by_type["goes19_abi_band_13"]
+    assert set(by_type) == {"goes19_abi_c13", "radar_sinarame_dbzh"}
+    goes = by_type["goes19_abi_c13"]
     assert goes["counts"]["total"] == 3
     assert goes["total_s"]["max"] == 120
     assert goes["stages"]["georef"] == pytest.approx(3.2)
-    assert by_type["radar_DBZH"]["counts"]["dlq"] == 1
+    assert by_type["radar_sinarame_dbzh"]["counts"]["dlq"] == 1
 
 
 def test_summary_keeps_idle_types_when_window_empty(client):
@@ -161,21 +161,23 @@ def test_summary_keeps_idle_types_when_window_empty(client):
     # must still appear with zero counts and its real last-run time.
     s = client.get("/api/summary?hours=1").json()
     by_type = {x["job_type"]: x for x in s}
-    assert set(by_type) == {"goes19_abi_band_13", "radar_DBZH"}
-    goes = by_type["goes19_abi_band_13"]
+    assert set(by_type) == {"goes19_abi_c13", "radar_sinarame_dbzh"}
+    goes = by_type["goes19_abi_c13"]
     assert goes["counts"]["total"] == 0
     assert goes["total_s"]["avg"] is None
     assert goes["last_finished"] == "2026-06-04T02:00:44+00:00"
-    assert by_type["radar_DBZH"]["counts"]["total"] == 0
-    assert by_type["radar_DBZH"]["last_finished"] == "2026-06-04T05:00:03+00:00"
+    assert by_type["radar_sinarame_dbzh"]["counts"]["total"] == 0
+    assert (
+        by_type["radar_sinarame_dbzh"]["last_finished"] == "2026-06-04T05:00:03+00:00"
+    )
 
 
 def test_jobs_filters(client):
     assert len(client.get("/api/jobs?limit=10").json()) == 4
     dlq = client.get("/api/jobs?outcome=dlq").json()
     assert len(dlq) == 1 and dlq[0]["error_message"] == "boom"
-    radar = client.get("/api/jobs?type=radar_DBZH").json()
-    assert all(j["job_type"] == "radar_DBZH" for j in radar)
+    radar = client.get("/api/jobs?type=radar_sinarame_dbzh").json()
+    assert all(j["job_type"] == "radar_sinarame_dbzh" for j in radar)
 
 
 def test_throughput(client):
@@ -194,7 +196,7 @@ def test_timeseries(client):
         "p95_total_s",
         "stages",
     }
-    goes = [r for r in ts if r["job_type"] == "goes19_abi_band_13"]
+    goes = [r for r in ts if r["job_type"] == "goes19_abi_c13"]
     assert goes and goes[0]["stages"].get("georef") == pytest.approx(3.2)
 
 
@@ -230,13 +232,13 @@ def test_jobs_hours_window_narrows_results(client):
     assert len(client.get("/api/jobs?hours=1").json()) == 0
     assert len(client.get("/api/jobs").json()) == 4
     # The window composes with the other filters.
-    assert len(client.get("/api/jobs?hours=1&type=radar_DBZH").json()) == 0
+    assert len(client.get("/api/jobs?hours=1&type=radar_sinarame_dbzh").json()) == 0
 
 
 def test_live_degrades_when_rabbitmq_down(client, tmp_path):
     # Seed in-progress jobs in the shared progress tracker.
     tracker = ProgressTracker(tmp_path / "progress_tracker.db")
-    tracker.mark_in_progress("20260521320209", "band_13")
+    tracker.mark_in_progress("20260521320209", "goes19_abi_c13")
     tracker.mark_in_progress("RMA12_DBZH_20260114T170328Z", "radar")
 
     body = client.get("/api/live").json()

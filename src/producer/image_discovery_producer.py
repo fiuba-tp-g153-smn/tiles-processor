@@ -19,7 +19,7 @@ from data_sources import (
     DataSource,
     DataSourceRegistry,
     DiscoveryConfig,
-    GlmFolderDataSource,
+    Goes19GlmDataSource,
     RadarDataSource,
     WrfDataSource,
 )
@@ -166,28 +166,28 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         """Check if a data source is enabled in the config."""
         source_id = data_source.source_id
 
-        # Check for GOES19 ABI band sources
-        if source_id == "goes19_abi_band_13":
+        # Check for GOES-19 ABI channel sources
+        if source_id == "goes19_abi_c13":
             return self._config.ENABLE_BAND_13
-        if source_id == "goes19_abi_band_9":
+        if source_id == "goes19_abi_c09":
             return self._config.ENABLE_BAND_9
-        if source_id == "goes19_abi_band_2":
+        if source_id == "goes19_abi_c02":
             return self._config.ENABLE_BAND_2
         # Folder-based GLM (FED/TOE/MFA gated together via this single flag;
         # TOE/MFA also have their own per-product flags inside the processor).
-        if source_id == "glm_folder":
+        if source_id == "goes19_glm":
             return self._config.ENABLE_GLM_FED
         # Check for radar sources (radar_DBZH, radar_VRAD, etc.)
-        if source_id.startswith("radar_"):
-            product_id = source_id.removeprefix("radar_")
+        if source_id.startswith("radar_sinarame_"):
+            product_id = source_id.removeprefix("radar_sinarame_")
             return self._config.ENABLED_RADAR_PRODUCTS.get(product_id, False)
-        # Check for WRF sources (wrf_Colmax, wrf_Rafagas, etc.)
-        if source_id.startswith("wrf_"):
-            product_id = source_id.removeprefix("wrf_")
+        # Check for WRF sources (wrf_arg4k_colmax, wrf_arg4k_rafagas, etc.)
+        if source_id.startswith("wrf_arg4k_"):
+            product_id = source_id.removeprefix("wrf_arg4k_")
             return self._config.ENABLED_WRF_PRODUCTS.get(product_id, False)
 
         # ECMWF sources
-        if source_id == "ecmwf_tp_producer":
+        if source_id == "ecmwf_ifs_total_precipitation_producer":
             return self._config.ENABLE_ECMWF_PRECIPITATION
 
         if source_id == GFS_PRODUCER_DATA_SOURCE_ID:
@@ -215,7 +215,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             existing_tilesets = await self._get_existing_tilesets(
                 data_source.band_config.s3_tiles_prefix
             )
-        elif isinstance(data_source, GlmFolderDataSource):
+        elif isinstance(data_source, Goes19GlmDataSource):
             # GLM folder source carries its BandConfig the same way as ABI/GLM
             # AWS sources, but does not inherit from Goes19BaseDataSource.
             band_id = data_source.band_config.band_id
@@ -224,13 +224,13 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             )
         elif isinstance(data_source, RadarDataSource):
             # Radar sources use product_id as band_id
-            band_id = f"radar_{data_source.product_config.product_id}"
+            band_id = f"radar_sinarame_{data_source.product_config.product_id}"
             product_id = data_source.product_config.product_id
             # Search across all radar IDs for this product
             existing_tilesets = await self._get_radar_existing_tilesets(product_id)
         elif isinstance(data_source, WrfDataSource):
             product_id = data_source.product_config.product_id
-            band_id = f"wrf_{product_id}"
+            band_id = f"wrf_arg4k_{product_id}"
             existing_tilesets = await self._get_wrf_existing_tilesets(product_id)
         elif not data_source.uses_existing_tilesets:
             band_id = data_source.source_id
@@ -336,12 +336,12 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
     async def _get_wrf_existing_tilesets(self, product_id: str) -> Set[str]:
         """Get existing WRF tilesets for a product.
 
-        Path structure: tiles/wrf/{product_id}/{init_tag}/{fxxx}/
-        Returns image_ids like: Colmax_20260430_060000_F001
+        Path structure: tiles/wrf-arg4k/{product_id}/{init_tag}/{fxxx}/
+        Returns image_ids like: colmax_20260430_060000_F001
         """
         tilesets = set()
         try:
-            product_prefix = f"tiles/wrf/{product_id}/"
+            product_prefix = f"tiles/wrf-arg4k/{product_id}/"
             init_tag_prefixes = await self._s3_client.list_prefixes(
                 product_prefix, delimiter="/"
             )
@@ -362,31 +362,31 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         """
         Get existing radar tilesets across all radar IDs for a specific product.
 
-        Path structure: tiles/radar/{radar_id}/{product}/{elev}/{timestamp}/
+        Path structure: tiles/radar/sinarame/{radar_id}/{product}/{elev}/{timestamp}/
         Returns image_ids like: RMA1_DBZH_20260114T170328Z
         """
         tilesets = set()
         try:
-            # List radar IDs: tiles/radar/RMA1/, tiles/radar/RMA12/, etc.
+            # List radar IDs: tiles/radar/sinarame/RMA1/, tiles/radar/sinarame/RMA12/, etc.
             radar_ids = await self._s3_client.list_prefixes(
-                "tiles/radar/", delimiter="/"
+                "tiles/radar/sinarame/", delimiter="/"
             )
             for radar_id_prefix in radar_ids:
-                # radar_id_prefix = "tiles/radar/RMA1/"
+                # radar_id_prefix = "tiles/radar/sinarame/RMA1/"
                 radar_id = radar_id_prefix.rstrip("/").split("/")[-1]
-                # Build product path: tiles/radar/RMA1/DBZH/
+                # Build product path: tiles/radar/sinarame/RMA1/dbzh/
                 product_prefix = f"{radar_id_prefix}{product_id}/"
                 # List elevation prefixes in this radar/product combination
                 elevation_prefixes = await self._s3_client.list_prefixes(
                     product_prefix, delimiter="/"
                 )
                 for elevation_prefix in elevation_prefixes:
-                    # elevation_prefix = "tiles/radar/RMA1/DBZH/elev0/"
+                    # elevation_prefix = "tiles/radar/sinarame/RMA1/dbzh/elev0/"
                     timestamp_prefixes = await self._s3_client.list_prefixes(
                         elevation_prefix, delimiter="/"
                     )
                     for timestamp_prefix in timestamp_prefixes:
-                        # timestamp_prefix = "tiles/radar/RMA1/DBZH/elev0/20260114T170328Z/"
+                        # timestamp_prefix = "tiles/radar/sinarame/RMA1/dbzh/elev0/20260114T170328Z/"
                         timestamp = timestamp_prefix.rstrip("/").split("/")[-1]
                         image_id = f"{radar_id}_{product_id}_{timestamp}"
                         tilesets.add(image_id)

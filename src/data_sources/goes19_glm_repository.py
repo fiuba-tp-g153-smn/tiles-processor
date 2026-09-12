@@ -2,10 +2,11 @@
 
 Mirrors :mod:`data_sources.radar_repository`: the abstract base lets us swap
 the local-filesystem implementation for a remote-bucket one later without
-touching :class:`GlmFolderDataSource`.
+touching :class:`Goes19GlmDataSource`.
 """
 
 import asyncio
+import logging
 import os
 import shutil
 from abc import ABC, abstractmethod
@@ -15,7 +16,9 @@ from pathlib import Path
 from clients.s3_client import S3Client
 from data_sources.s3_repository_utils import filter_keys_by_glob, strip_s3_scheme
 
-GLM_FOLDER_FILENAME_GLOB = "CG_GLM-L2-GLMF-*.nc"
+logger = logging.getLogger(__name__)
+
+GOES19_GLM_FILENAME_GLOB = "CG_GLM-L2-GLMF-*.nc"
 
 
 async def _download_atomically(
@@ -41,7 +44,7 @@ async def _download_atomically(
     return dest_dir
 
 
-class GlmFolderFileRepository(ABC):
+class Goes19GlmFileRepository(ABC):
     """Interface for CG_GLM-L2-GLMF storage backends."""
 
     @abstractmethod
@@ -57,7 +60,7 @@ class GlmFolderFileRepository(ABC):
         """
 
 
-class LocalGlmFolderFileRepository(GlmFolderFileRepository):
+class LocalGoes19GlmFileRepository(Goes19GlmFileRepository):
     """Reads CG_GLM-L2-GLMF netCDF files from a local directory.
 
     Supports two layouts (same as the radar repository):
@@ -65,7 +68,7 @@ class LocalGlmFolderFileRepository(GlmFolderFileRepository):
       * Flat:   ``<input_dir>/*.nc``
       * Nested: ``<input_dir>/<any-subdir>/*.nc``
 
-    Files matching :data:`GLM_FOLDER_FILENAME_GLOB` from both layouts are
+    Files matching :data:`GOES19_GLM_FILENAME_GLOB` from both layouts are
     merged and sorted by absolute path (which sorts chronologically because
     the timestamp segment is the dominant component of the filename).
     """
@@ -75,12 +78,15 @@ class LocalGlmFolderFileRepository(GlmFolderFileRepository):
 
     async def list_files(self) -> list[str]:
         if not self._input_dir.exists():
+            logger.warning(
+                "GLM input dir does not exist, treating as empty: %s", self._input_dir
+            )
             return []
 
-        files: list[Path] = list(self._input_dir.glob(GLM_FOLDER_FILENAME_GLOB))
+        files: list[Path] = list(self._input_dir.glob(GOES19_GLM_FILENAME_GLOB))
         for subdir in self._input_dir.iterdir():
             if subdir.is_dir():
-                files.extend(subdir.glob(GLM_FOLDER_FILENAME_GLOB))
+                files.extend(subdir.glob(GOES19_GLM_FILENAME_GLOB))
 
         return [str(f.absolute()) for f in sorted(files)]
 
@@ -98,7 +104,7 @@ class LocalGlmFolderFileRepository(GlmFolderFileRepository):
         return await _download_atomically(dest_dir, _populate)
 
 
-class S3GlmFolderFileRepository(GlmFolderFileRepository):
+class S3Goes19GlmFileRepository(Goes19GlmFileRepository):
     """Reads CG_GLM-L2-GLMF netCDF files from an S3 bucket.
 
     Lists recursively under the configured prefix (a superset of the local
@@ -113,7 +119,7 @@ class S3GlmFolderFileRepository(GlmFolderFileRepository):
 
     async def list_files(self) -> list[str]:
         keys = await self._s3_client.list_files(self._prefix, file_pattern="")
-        return filter_keys_by_glob(keys, GLM_FOLDER_FILENAME_GLOB)
+        return filter_keys_by_glob(keys, GOES19_GLM_FILENAME_GLOB)
 
     async def download_to_dir(self, source_uris: list[str], dest_dir: Path) -> Path:
         async def _populate(tmp_dir: Path) -> None:
@@ -123,7 +129,8 @@ class S3GlmFolderFileRepository(GlmFolderFileRepository):
             await asyncio.gather(
                 *(
                     self._s3_client.download_to_file(
-                        strip_s3_scheme(uri), tmp_dir / Path(uri).name
+                        strip_s3_scheme(uri, self._s3_client.bucket_name),
+                        tmp_dir / Path(uri).name,
                     )
                     for uri in source_uris
                 )

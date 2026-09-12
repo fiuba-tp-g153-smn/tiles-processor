@@ -26,7 +26,7 @@ class ProcessorRegistry:
         Register a processor class.
 
         Args:
-            processor_id: Unique identifier for the processor (e.g., "goes_band_13")
+            processor_id: Unique identifier for the processor (e.g., "goes19_abi_c13")
             processor_class: The processor class to register
         """
         self._processors[processor_id] = processor_class

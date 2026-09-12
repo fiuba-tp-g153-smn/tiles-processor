@@ -85,10 +85,10 @@ def test_read_radar_reraises_unrelated_valueerror(tmp_path):
 @pytest.mark.parametrize(
     "filename,product_id",
     [
-        ("RMA1_0315_01_DBZH_20260114T170328Z.H5", "DBZH"),
+        ("RMA1_0315_01_DBZH_20260114T170328Z.H5", "dbzh"),
         # Same variable token, long-range subvolume: must land under its own
         # product path instead of overwriting the short-range DBZH tileset.
-        ("RMA1_0315_04_DBZH_20260114T170328Z.H5", "DBZH_450KM"),
+        ("RMA1_0315_04_DBZH_20260114T170328Z.H5", "dbzh-450km"),
     ],
 )
 @pytest.mark.asyncio
@@ -143,7 +143,7 @@ async def test_radar_upload_paths_split_elevation_and_timestamp(
         source_uri=str(radar_file),
         data_source_id=f"radar_{product_id}",
         processor_id="radar",
-        output_prefix="tiles/radar",
+        output_prefix="tiles/radar/sinarame",
         bounds={"minx": -70, "miny": -40, "maxx": -50, "maxy": -20},
         band_id=f"radar_{product_id}",
     )
@@ -155,14 +155,14 @@ async def test_radar_upload_paths_split_elevation_and_timestamp(
     uploaded_tiles_prefix = processor._upload_tiles.await_args.args[1]
     assert (
         uploaded_tiles_prefix
-        == f"tiles/radar/RMA1/{product_id}/elev0/20260114T170328Z"
+        == f"tiles/radar/sinarame/RMA1/{product_id}/elev0/20260114T170328Z"
     )
 
     mock_s3.upload_file.assert_awaited_once()
     uploaded_cog_key = mock_s3.upload_file.await_args.args[0]
     assert (
         uploaded_cog_key
-        == f"cog/radar/RMA1/{product_id}/elev0/20260114T170328Z.tif"
+        == f"cog/radar/sinarame/RMA1/{product_id}/elev0/20260114T170328Z.tif"
     )
 
     # Both products render the DBZH moment: the palette and PyART field must be

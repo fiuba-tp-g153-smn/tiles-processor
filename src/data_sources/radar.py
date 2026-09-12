@@ -64,12 +64,12 @@ class RadarDataSource(DataSource):
     @property
     def source_id(self) -> str:
         """Unique identifier for this data source."""
-        return f"radar_{self._product_config.product_id}"
+        return f"radar_sinarame_{self._product_config.product_id}"
 
     @property
     def processor_id(self) -> str:
         """The processor ID to use for images from this source."""
-        return "radar"
+        return "radar_sinarame"
 
     @property
     def product_config(self) -> RadarProductConfig:

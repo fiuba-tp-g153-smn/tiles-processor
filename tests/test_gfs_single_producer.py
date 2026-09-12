@@ -22,6 +22,13 @@ from models.gfs_config import (
 ENDPOINT = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
 
 
+_PRODUCT_KEYS = {
+    "mslp": "mean-sea-level-pressure",
+    "500": "geopotential-500hpa",
+    "250": "geopotential-250hpa",
+}
+
+
 def _config(tmp_path, monkeypatch, **flags) -> Config:
     """Config with only the GFS product flags under test switched on.
 
@@ -29,14 +36,15 @@ def _config(tmp_path, monkeypatch, **flags) -> Config:
     naturally); they are translated to ``sources.gfs.products``.
     """
     monkeypatch.setenv("GFS_SUBSET_ENDPOINT", ENDPOINT)
-    gfs_products = {key.removeprefix("enable_gfs_"): val for key, val in flags.items()}
+    gfs_products = {
+        _PRODUCT_KEYS[key.removeprefix("enable_gfs_")]: val
+        for key, val in flags.items()
+    }
     settings = {
         "timezone": "UTC",
         "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
         "sources": {
-            "goes19": {
-                "products": {"band_13": False, "band_9": False, "band_2": False}
-            },
+            "goes19-abi": {"products": {"c13": False, "c09": False, "c02": False}},
             "gfs": {"products": gfs_products},
         },
     }
@@ -89,7 +97,10 @@ class TestEnabledProducts:
         config = _config(
             tmp_path, monkeypatch, enable_gfs_mslp=True, enable_gfs_250=True
         )
-        assert [p.product_id for p in enabled_gfs_products(config)] == ["mslp", "250"]
+        assert [p.product_id for p in enabled_gfs_products(config)] == [
+            "mean-sea-level-pressure",
+            "geopotential-250hpa",
+        ]
 
     def test_returns_all_three_when_all_are_on(self, tmp_path, monkeypatch):
         config = _config(tmp_path, monkeypatch, **ALL_ON)
@@ -101,9 +112,9 @@ class TestEnabledProducts:
     def test_order_is_stable(self, tmp_path, monkeypatch):
         config = _config(tmp_path, monkeypatch, **ALL_ON)
         assert [p.product_id for p in enabled_gfs_products(config)] == [
-            "mslp",
-            "500",
-            "250",
+            "mean-sea-level-pressure",
+            "geopotential-500hpa",
+            "geopotential-250hpa",
         ]
 
 
@@ -117,8 +128,8 @@ class TestEndpointWiring:
             "timezone": "UTC",
             "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
             "sources": {
-                "goes19": {"products": {"band_13": False}},
-                "gfs": {"products": {"mslp": True}},
+                "goes19-abi": {"products": {"c13": False}},
+                "gfs": {"products": {"mean-sea-level-pressure": True}},
             },
         }
         path = tmp_path / "settings.json"

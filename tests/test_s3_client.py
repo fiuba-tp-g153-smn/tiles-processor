@@ -546,14 +546,16 @@ class TestS3ClientUploadFile:
         file_path = self._write_body(tmp_path)
         s3_client, boto_client = self._make_client()
 
-        uploaded = await s3_client.upload_file("cog/band_13/image.tif", file_path)
+        uploaded = await s3_client.upload_file(
+            "cog/goes19/abi/c13/image.tif", file_path
+        )
 
         assert uploaded is True
         boto_client.upload_file.assert_not_awaited()
         boto_client.put_object.assert_awaited_once()
         kwargs = boto_client.put_object.call_args.kwargs
         assert kwargs["Bucket"] == "tiles-data"
-        assert kwargs["Key"] == "cog/band_13/image.tif"
+        assert kwargs["Key"] == "cog/goes19/abi/c13/image.tif"
         assert kwargs["ContentType"] == "image/tiff"
         assert kwargs["ContentMD5"] == self.MD5_B64
 
@@ -563,7 +565,7 @@ class TestS3ClientUploadFile:
         file_path = self._write_body(tmp_path)
         s3_client, boto_client = self._make_client()
 
-        await s3_client.upload_file("cog/band_13/image.tif", file_path)
+        await s3_client.upload_file("cog/goes19/abi/c13/image.tif", file_path)
 
         body = boto_client.put_object.call_args.kwargs["Body"]
         assert not isinstance(body, (bytes, bytearray))
@@ -576,7 +578,9 @@ class TestS3ClientUploadFile:
         s3_client, _ = self._make_client(etag=f"{self.MD5_HEX}-3")
 
         with caplog.at_level(logging.ERROR):
-            uploaded = await s3_client.upload_file("cog/band_13/i.tif", file_path)
+            uploaded = await s3_client.upload_file(
+                "cog/goes19/abi/c13/i.tif", file_path
+            )
 
         assert uploaded is False
         assert "MULTIPART" in caplog.text
@@ -587,7 +591,9 @@ class TestS3ClientUploadFile:
         file_path = self._write_body(tmp_path)
         s3_client, _ = self._make_client(etag="0" * 32)
 
-        assert await s3_client.upload_file("cog/band_13/i.tif", file_path) is False
+        assert (
+            await s3_client.upload_file("cog/goes19/abi/c13/i.tif", file_path) is False
+        )
 
     @pytest.mark.asyncio
     async def test_rejects_empty_file_before_any_request(self, tmp_path):
@@ -596,7 +602,9 @@ class TestS3ClientUploadFile:
         file_path.write_bytes(b"")
         s3_client, boto_client = self._make_client()
 
-        assert await s3_client.upload_file("cog/band_13/i.tif", file_path) is False
+        assert (
+            await s3_client.upload_file("cog/goes19/abi/c13/i.tif", file_path) is False
+        )
         boto_client.put_object.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -608,7 +616,9 @@ class TestS3ClientUploadFile:
         with patch.object(
             Path, "stat", return_value=SimpleNamespace(st_size=6 * 1024**3)
         ):
-            uploaded = await s3_client.upload_file("cog/band_13/i.tif", file_path)
+            uploaded = await s3_client.upload_file(
+                "cog/goes19/abi/c13/i.tif", file_path
+            )
 
         assert uploaded is False
         boto_client.put_object.assert_not_awaited()
@@ -623,7 +633,9 @@ class TestS3ClientUploadFile:
         boto_client.put_object.side_effect = RuntimeError("boom")
 
         with caplog.at_level(logging.ERROR):
-            uploaded = await s3_client.upload_file("cog/band_13/i.tif", file_path)
+            uploaded = await s3_client.upload_file(
+                "cog/goes19/abi/c13/i.tif", file_path
+            )
 
         assert uploaded is False
         assert "Heavy upload failed" in caplog.text
@@ -646,7 +658,9 @@ class TestS3ClientUploadFile:
 
         boto_client.put_object.side_effect = sample
 
-        assert await s3_client.upload_file("cog/band_13/i.tif", file_path) is True
+        assert (
+            await s3_client.upload_file("cog/goes19/abi/c13/i.tif", file_path) is True
+        )
         # One heavy slot taken, tile lane fully idle.
         assert seen["heavy_free"] == s3_client._heavy_upload_concurrency - 1
         assert seen["tile_free"] == s3_client._upload_concurrency
@@ -819,7 +833,7 @@ class TestS3ClientUploadDirectory:
         s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
 
         with caplog.at_level(logging.DEBUG, logger="clients.s3_client"):
-            uploaded = await s3_client.upload_directory(tmp_path, "geojson/wrf/x")
+            uploaded = await s3_client.upload_directory(tmp_path, "geojson/wrf-arg4k/x")
 
         s3_records = [r for r in caplog.records if r.name == "clients.s3_client"]
         errors = [r for r in s3_records if r.levelno == logging.ERROR]
@@ -835,11 +849,11 @@ class TestS3ClientUploadDirectory:
 
 
 _SAMPLE_RETENTION = {
-    "tiles/radar": 1,
-    "cog/radar": 1,
-    "tiles/wrf": 2,
-    "grib/models/ecmwf": 1,
-    "geojson/models/ecmwf": 2,
+    "tiles/radar/sinarame": 1,
+    "cog/radar/sinarame": 1,
+    "tiles/wrf-arg4k": 2,
+    "grib/ecmwf-ifs": 1,
+    "geojson/ecmwf-ifs": 2,
 }
 
 
@@ -864,14 +878,18 @@ class TestBuildLifecycleRules:
             r["Filter"]["Prefix"]: r["Expiration"]["Days"]
             for r in _build_lifecycle_rules(_SAMPLE_RETENTION)
         }
-        assert days_by_prefix["tiles/radar"] == 1
-        assert days_by_prefix["tiles/wrf"] == 2
-        assert days_by_prefix["grib/models/ecmwf"] == 1
-        assert days_by_prefix["geojson/models/ecmwf"] == 2
+        assert days_by_prefix["tiles/radar/sinarame"] == 1
+        assert days_by_prefix["tiles/wrf-arg4k"] == 2
+        assert days_by_prefix["grib/ecmwf-ifs"] == 1
+        assert days_by_prefix["geojson/ecmwf-ifs"] == 2
 
     def test_sub_day_retention_rounds_up_to_one_and_ids_unique(self):
         rules = _build_lifecycle_rules(
-            {"tiles/radar": 0, "tiles/wrf": 2, "cog/radar": -3}
+            {
+                "tiles/radar/sinarame": 0,
+                "tiles/wrf-arg4k": 2,
+                "cog/radar/sinarame": -3,
+            }
         )
         assert all(r["Status"] == "Enabled" for r in rules)
         assert all(r["Expiration"]["Days"] >= 1 for r in rules)

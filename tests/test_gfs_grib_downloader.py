@@ -120,9 +120,9 @@ class TestProductFanOut:
         mq = FakeMq()
         await _downloader(FakeS3()).process(str(tmp_path / "x.grib2"), _step_unit(), mq)
         assert {u.band_id for u in mq.published} == {
-            "gfs_mslp",
-            "gfs_500",
-            "gfs_250",
+            "gfs_mean_sea_level_pressure",
+            "gfs_geopotential_500hpa",
+            "gfs_geopotential_250hpa",
         }
 
     @pytest.mark.asyncio
@@ -131,7 +131,7 @@ class TestProductFanOut:
         await _downloader(FakeS3(), products=[GFS_MSLP_CONFIG]).process(
             str(tmp_path / "x.grib2"), _step_unit(), mq
         )
-        assert [u.band_id for u in mq.published] == ["gfs_mslp"]
+        assert [u.band_id for u in mq.published] == ["gfs_mean_sea_level_pressure"]
 
     @pytest.mark.asyncio
     async def test_units_point_at_the_cached_grib(self, tmp_path):
@@ -156,17 +156,29 @@ class TestProductFanOut:
         mq = FakeMq()
         await _downloader(FakeS3()).process(str(tmp_path / "x.grib2"), _step_unit(), mq)
         by_band = {u.band_id: u for u in mq.published}
-        assert by_band["gfs_mslp"].data_source_id == GFS_STEP_DATA_SOURCE_ID
-        assert by_band["gfs_mslp"].processor_id == GFS_MSLP_CONFIG.processor_id
-        assert by_band["gfs_500"].processor_id == GFS_500_CONFIG.processor_id
-        assert by_band["gfs_250"].processor_id == GFS_500_CONFIG.processor_id
+        assert (
+            by_band["gfs_mean_sea_level_pressure"].data_source_id
+            == GFS_STEP_DATA_SOURCE_ID
+        )
+        assert (
+            by_band["gfs_mean_sea_level_pressure"].processor_id
+            == GFS_MSLP_CONFIG.processor_id
+        )
+        assert (
+            by_band["gfs_geopotential_500hpa"].processor_id
+            == GFS_500_CONFIG.processor_id
+        )
+        assert (
+            by_band["gfs_geopotential_250hpa"].processor_id
+            == GFS_500_CONFIG.processor_id
+        )
 
     @pytest.mark.asyncio
     async def test_output_prefix_is_namespaced_by_cycle(self, tmp_path):
         mq = FakeMq()
         await _downloader(FakeS3()).process(str(tmp_path / "x.grib2"), _step_unit(), mq)
         by_band = {u.band_id: u for u in mq.published}
-        assert by_band["gfs_500"].output_prefix == (
+        assert by_band["gfs_geopotential_500hpa"].output_prefix == (
             f"{GFS_500_CONFIG.tiles_prefix}/{CYCLE_TS}"
         )
 
@@ -179,7 +191,10 @@ class TestIdempotency:
         await _downloader(FakeS3(existing={done})).process(
             str(tmp_path / "x.grib2"), _step_unit(), mq
         )
-        assert {u.band_id for u in mq.published} == {"gfs_mslp", "gfs_250"}
+        assert {u.band_id for u in mq.published} == {
+            "gfs_mean_sea_level_pressure",
+            "gfs_geopotential_250hpa",
+        }
 
     @pytest.mark.asyncio
     async def test_enqueues_nothing_when_every_product_is_done(self, tmp_path):

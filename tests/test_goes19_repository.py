@@ -61,20 +61,52 @@ async def test_local_download_raises_for_missing_file(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_s3_list_files_delegates_with_pattern():
+async def test_s3_list_files_filters_on_basename():
+    """The band pattern must match the filename, never the enclosing prefix."""
     s3_client = AsyncMock()
-    s3_client.list_files.return_value = [f"{HOURLY_DIR}/{C13_NAME}"]
+    s3_client.list_files.return_value = [
+        f"{HOURLY_DIR}/{C13_NAME}",
+        f"{HOURLY_DIR}/OR_ABI-L1b-RadF-M6C09_G19_s1_e1_c1.nc",
+    ]
     repo = S3Goes19FileRepository(s3_client)
 
     files = await repo.list_files(HOURLY_DIR, "C13_G19")
 
-    s3_client.list_files.assert_awaited_once_with(HOURLY_DIR, file_pattern="C13_G19")
+    s3_client.list_files.assert_awaited_once_with(HOURLY_DIR, file_pattern="")
     assert files == [f"{HOURLY_DIR}/{C13_NAME}"]
+
+
+@pytest.mark.asyncio
+async def test_s3_list_files_applies_configured_prefix():
+    """A mirror may root NOAA's layout under a folder of its own."""
+    s3_client = AsyncMock()
+    s3_client.list_files.return_value = [f"mirror/goes/{HOURLY_DIR}/{C13_NAME}"]
+    repo = S3Goes19FileRepository(s3_client, prefix="mirror/goes/")
+
+    files = await repo.list_files(HOURLY_DIR, "C13_G19")
+
+    s3_client.list_files.assert_awaited_once_with(
+        f"mirror/goes/{HOURLY_DIR}", file_pattern=""
+    )
+    assert files == [f"mirror/goes/{HOURLY_DIR}/{C13_NAME}"]
+
+
+@pytest.mark.asyncio
+async def test_s3_list_files_prefix_does_not_leak_into_pattern_match():
+    """A prefix containing the band token must not match every object."""
+    s3_client = AsyncMock()
+    s3_client.list_files.return_value = [
+        f"C13_G19/{HOURLY_DIR}/OR_ABI-L1b-RadF-M6C09_G19_s1_e1_c1.nc",
+    ]
+    repo = S3Goes19FileRepository(s3_client, prefix="C13_G19/")
+
+    assert await repo.list_files(HOURLY_DIR, "C13_G19") == []
 
 
 @pytest.mark.asyncio
 async def test_s3_download_strips_scheme_and_creates_parent(tmp_path):
     s3_client = AsyncMock()
+    s3_client.bucket_name = "noaa-goes19"
     repo = S3Goes19FileRepository(s3_client)
     dest = tmp_path / "work" / "image.nc"
 

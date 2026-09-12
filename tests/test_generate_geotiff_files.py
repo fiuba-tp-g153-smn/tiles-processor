@@ -24,7 +24,7 @@ def temp_settings_file(tmp_path):
         "timezone": "UTC",
         "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
         "sources": {
-            "goes19": {"products": {"band_13": True, "band_9": True}},
+            "goes19-abi": {"products": {"c13": True, "c09": True}},
         },
     }
     settings_path = tmp_path / "settings.json"

@@ -104,7 +104,7 @@ def _make_images(band_config: BandConfig, count: int) -> list[ImageInfo]:
             ImageInfo(
                 image_id=filename,
                 source_uri=f"ABI-L1b-RadF/2025/038/12/{filename}",
-                data_source_id=f"goes19_abi_{band_config.band_id}",
+                data_source_id=band_config.band_id,
                 processor_id=f"goes_{band_config.band_id}",
                 output_prefix=band_config.s3_tiles_prefix,
             )
@@ -123,7 +123,7 @@ class TestDuplicatePrevention:
         registry = DataSourceRegistry()
         mq_client = MagicMock()
 
-        bands = ["band_2", "band_9", "band_13"]
+        bands = ["goes19_abi_c02", "goes19_abi_c09", "goes19_abi_c13"]
 
         for band_id in bands:
             band_config = BAND_CONFIGS[band_id]
@@ -156,7 +156,7 @@ class TestDuplicatePrevention:
         self, mock_config, progress_tracker
     ):
         """After a worker completes an image, the producer must not republish it."""
-        band_config = BAND_CONFIGS["band_2"]
+        band_config = BAND_CONFIGS["goes19_abi_c02"]
         images = _make_images(band_config, count=3)
 
         registry = DataSourceRegistry()
@@ -182,10 +182,10 @@ class TestDuplicatePrevention:
 
         # Simulate worker completing the first image:
         # mark_completed removes from SQLite
-        progress_tracker.mark_completed(images[0].image_id, "band_2")
+        progress_tracker.mark_completed(images[0].image_id, "goes19_abi_c02")
         # And its tiles now exist in S3
         stem = Path(images[0].image_id).stem
-        tileset_prefix = f"tiles/band_2/{stem}/"
+        tileset_prefix = f"tiles/goes19/abi/c02/{stem}/"
         producer._s3_client.list_prefixes = AsyncMock(return_value=[tileset_prefix])
 
         # Second run: images[0] covered by S3, images[1-2] still in-progress
@@ -198,7 +198,7 @@ class TestDuplicatePrevention:
         self, mock_config, progress_tracker
     ):
         """A new image arriving while others are in-progress is published once."""
-        band_config = BAND_CONFIGS["band_2"]
+        band_config = BAND_CONFIGS["goes19_abi_c02"]
         initial_images = _make_images(band_config, count=2)
 
         registry = DataSourceRegistry()
@@ -227,8 +227,8 @@ class TestDuplicatePrevention:
         new_image = ImageInfo(
             image_id="OR_ABI-L1b-RadF-M6C02_G19_s2025038NEW0.nc",
             source_uri="ABI-L1b-RadF/2025/038/12/OR_ABI-L1b-RadF-M6C02_G19_s2025038NEW0.nc",
-            data_source_id="goes19_abi_band_2",
-            processor_id="goes_band_2",
+            data_source_id="goes19_abi_c02",
+            processor_id="goes19_abi_c02",
             output_prefix=band_config.s3_tiles_prefix,
         )
         source._images = initial_images + [new_image]
@@ -265,7 +265,7 @@ class TestOrphanReclaim:
         run_migrations(tmp_path / "metrics.db", db_path)
         # ttl=0 => the orphan is immediately past the age floor.
         tracker = ProgressTracker(db_path, ttl=timedelta(seconds=0))
-        tracker.mark_in_progress("orphan", "band_13")
+        tracker.mark_in_progress("orphan", "goes19_abi_c13")
 
         mock_config.RABBITMQ_QUEUE = "tiles_work_queue"
         mock_config.RABBITMQ_RADAR_LIGHT_QUEUE = "tiles_radar_light_queue"
@@ -282,7 +282,7 @@ class TestOrphanReclaim:
         db_path = tmp_path / "progress_tracker.db"
         run_migrations(tmp_path / "metrics.db", db_path)
         tracker = ProgressTracker(db_path, ttl=timedelta(seconds=0))
-        tracker.mark_in_progress("orphan", "band_13")
+        tracker.mark_in_progress("orphan", "goes19_abi_c13")
 
         mock_config.RABBITMQ_QUEUE = "tiles_work_queue"
         mock_config.RABBITMQ_RADAR_LIGHT_QUEUE = "tiles_radar_light_queue"
@@ -324,9 +324,9 @@ class TestSourceFailureVisibility:
         """One broken source is swallowed (healthy sources still publish) but is
         surfaced by name in a WARNING, so 'broken' is distinguishable from 'quiet'."""
         registry = DataSourceRegistry()
-        healthy = BAND_CONFIGS["band_9"]
+        healthy = BAND_CONFIGS["goes19_abi_c09"]
         registry.register(FakeDataSource(healthy, _make_images(healthy, 2)))
-        registry.register(_RaisingDataSource(BAND_CONFIGS["band_13"], []))
+        registry.register(_RaisingDataSource(BAND_CONFIGS["goes19_abi_c13"], []))
 
         mq_client = MagicMock()
         producer = self._make_producer(
@@ -342,7 +342,7 @@ class TestSourceFailureVisibility:
         # The broken source is named in a WARNING (quiet != broken).
         assert any(
             "sources FAILED" in record.getMessage()
-            and "goes19_abi_band_13" in record.getMessage()
+            and "goes19_abi_c13" in record.getMessage()
             for record in caplog.records
         )
 
@@ -352,7 +352,7 @@ class TestSourceFailureVisibility:
     ):
         """A mid-batch publish failure logs how many units made it out before the
         rest were dropped for the tick (self-heal next tick)."""
-        band_config = BAND_CONFIGS["band_9"]
+        band_config = BAND_CONFIGS["goes19_abi_c09"]
         registry = DataSourceRegistry()
         registry.register(FakeDataSource(band_config, _make_images(band_config, 3)))
 

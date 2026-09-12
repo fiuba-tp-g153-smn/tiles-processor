@@ -14,11 +14,11 @@ def _work_unit():
     return WorkUnit.create(
         image_id="20260521320209",
         source_uri="s3://bucket/key",
-        data_source_id="goes19_abi_band_13",
-        processor_id="goes_band_13",
-        output_prefix="tiles/band_13",
+        data_source_id="goes19_abi_c13",
+        processor_id="goes19_abi_c13",
+        output_prefix="tiles/goes19/abi/c13",
         bounds={"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
-        band_id="band_13",
+        band_id="goes19_abi_c13",
     )
 
 
@@ -42,8 +42,8 @@ def test_build_populates_timings_and_label():
     assert metrics.process_s == 40.0
     assert metrics.stage_timings == {"georef": 3.2}
     assert metrics.total_s is not None and metrics.total_s >= 0
-    assert metrics.job_type == "goes19_abi_band_13"
-    assert "GOES ABI" in metrics.product_label
+    assert metrics.job_type == "goes19_abi_c13"
+    assert "GOES-19 ABI" in metrics.product_label
     assert metrics.worker_host == "worker-light1"  # injected worker id round-trips
 
 

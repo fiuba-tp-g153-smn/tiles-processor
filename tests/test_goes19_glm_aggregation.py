@@ -138,7 +138,7 @@ def test_aggregated_toe_overlaps_configured_lognorm_range():
         window_end=datetime(2026, 3, 2, 14, 3),
         accum_minutes=3,
     )
-    cfg = get_band_config("glm_folder_toe")
+    cfg = get_band_config("goes19_glm_toe")
     valid = aggregated["total_energy"].values
     valid = valid[~np.isnan(valid)]
     in_range = int(((valid >= cfg.vmin) & (valid <= cfg.vmax)).sum())

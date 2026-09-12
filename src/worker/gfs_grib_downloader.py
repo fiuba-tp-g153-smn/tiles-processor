@@ -28,7 +28,7 @@ class GfsGribDownloader(InlineProcessor):
 
     This is where the single-download-many-products design pays off: the
     producer fetches one GRIB subset per (cycle, step), and this processor fans
-    it out to `gfs_mslp`, `gfs_500` and `gfs_250` — all reading the same cached
+    it out to `gfs_mean_sea_level_pressure`, `gfs_geopotential_500hpa` and `_250hpa` — all reading the same cached
     object. Downloads scale with steps, not with products.
 
     Runs in the main worker process (no subprocess) because it needs the

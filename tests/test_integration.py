@@ -47,7 +47,7 @@ def temp_settings_file(tmp_path):
             "maxy": -15.0,
         },
         "sources": {
-            "goes19": {"products": {"band_13": True, "band_9": True}},
+            "goes19-abi": {"products": {"c13": True, "c09": True}},
         },
     }
     settings_path = tmp_path / "settings.json"
@@ -106,11 +106,11 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
-                data_source_id="goes19_abi_band_13",
-                processor_id="goes_band_13",
-                output_prefix="tiles/band_13",
+                data_source_id="goes19_abi_c13",
+                processor_id="goes19_abi_c13",
+                output_prefix="tiles/goes19/abi/c13",
                 bounds=config.get_bounds(),
-                band_id="band_13",
+                band_id="goes19_abi_c13",
             )
 
             # Process the message (the coroutine acks via the MQ client now)
@@ -145,11 +145,11 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
-                data_source_id="goes19_abi_band_13",
-                processor_id="goes_band_13",
-                output_prefix="tiles/band_13",
+                data_source_id="goes19_abi_c13",
+                processor_id="goes19_abi_c13",
+                output_prefix="tiles/goes19/abi/c13",
                 bounds=config.get_bounds(),
-                band_id="band_13",
+                band_id="goes19_abi_c13",
             )
 
             # Process (light unit stolen by a normal worker: came from a light queue)
@@ -187,11 +187,11 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
-                data_source_id="goes19_abi_band_13",
-                processor_id="goes_band_13",
-                output_prefix="tiles/band_13",
+                data_source_id="goes19_abi_c13",
+                processor_id="goes19_abi_c13",
+                output_prefix="tiles/goes19/abi/c13",
                 bounds=config.get_bounds(),
-                band_id="band_13",
+                band_id="goes19_abi_c13",
             )
             work_unit.retry_count = 3
             work_unit.max_retries = 3
@@ -226,11 +226,11 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="RMA11_KDP_20260114T170040Z",
                 source_uri="/data/radar/RMA11_KDP_20260114T170040Z.H5",
-                data_source_id="radar_KDP",
-                processor_id="radar",
-                output_prefix="tiles/radar",
+                data_source_id="radar_sinarame_kdp",
+                processor_id="radar_sinarame",
+                output_prefix="tiles/radar/sinarame",
                 bounds=config.get_bounds(),
-                band_id="radar_KDP",
+                band_id="radar_sinarame_kdp",
             )
 
             asyncio.run(
@@ -262,11 +262,11 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="20260217T0000Z",
                 source_uri="2026-02-17T00:00:00+00:00",
-                data_source_id="ecmwf_tp_producer",
-                processor_id="ecmwf_tp_grib_downloader",
-                output_prefix="grib/models/ecmwf",
+                data_source_id="ecmwf_ifs_total_precipitation_producer",
+                processor_id="ecmwf_ifs_total_precipitation_grib_downloader",
+                output_prefix="grib/ecmwf-ifs",
                 bounds=config.get_bounds(),
-                band_id="ecmwf_tp_producer",
+                band_id="ecmwf_ifs_total_precipitation_producer",
             )
 
             asyncio.run(worker._process_message_async(work_unit, 1, "tiles_work_queue"))
@@ -298,11 +298,11 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="RMA1_DBZH_20260114T170040Z",
                 source_uri="/data/radar/RMA1_DBZH_20260114T170040Z.H5",
-                data_source_id="radar_DBZH",
-                processor_id="radar",
-                output_prefix="tiles/radar",
+                data_source_id="radar_sinarame_dbzh",
+                processor_id="radar_sinarame",
+                output_prefix="tiles/radar/sinarame",
                 bounds=config.get_bounds(),
-                band_id="radar_DBZH",
+                band_id="radar_sinarame_dbzh",
             )
 
             with mock.patch.object(JobMetricsContext, "mark_outcome") as mark_outcome:

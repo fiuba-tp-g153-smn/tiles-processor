@@ -97,7 +97,7 @@ class GlmFedProcessor(ImageProcessor):
                 await self._process_variable(
                     aggregated,
                     var_name="flash_extent_density",
-                    band_config=get_band_config("glm_folder_fed"),
+                    band_config=get_band_config("goes19_glm_fed"),
                     geotiff_dir=dirs["fed_geotiff"],
                     tiles_dir=dirs["fed_tiles"],
                     work_unit=work_unit,
@@ -107,7 +107,7 @@ class GlmFedProcessor(ImageProcessor):
                     await self._process_variable(
                         aggregated,
                         var_name="total_energy",
-                        band_config=get_band_config("glm_folder_toe"),
+                        band_config=get_band_config("goes19_glm_toe"),
                         geotiff_dir=dirs["toe_geotiff"],
                         tiles_dir=dirs["toe_tiles"],
                         work_unit=work_unit,
@@ -117,7 +117,7 @@ class GlmFedProcessor(ImageProcessor):
                     await self._process_variable(
                         aggregated,
                         var_name="minimum_flash_area",
-                        band_config=get_band_config("glm_folder_mfa"),
+                        band_config=get_band_config("goes19_glm_mfa"),
                         geotiff_dir=dirs["mfa_geotiff"],
                         tiles_dir=dirs["mfa_tiles"],
                         work_unit=work_unit,
