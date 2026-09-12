@@ -311,7 +311,7 @@ input, product toggles, retention, and tuning live together.
       "retention_days": 1
     },
     "goes19-glm": {
-      "input": { "mode": "local", "dir": "/app/data/glm_h5" },
+      "input": { "mode": "local", "dir": "/app/data/goes19-glm" },
       "accum_minutes": 10,
       "produce_every_minutes": 10,
       "safety_lag_seconds": 30,
@@ -320,7 +320,7 @@ input, product toggles, retention, and tuning live together.
       "retention_days": 1
     },
     "radar-sinarame": {
-      "input": { "mode": "local", "dir": "/app/data/radar_h5" },
+      "input": { "mode": "local", "dir": "/app/data/radar-sinarame" },
       "stations": "all",
       "products": {
         "dbzh": true, "dbzh-450km": true, "zdr": true,
@@ -332,7 +332,7 @@ input, product toggles, retention, and tuning live together.
       "retention_days": 1
     },
     "wrf-arg4k": {
-      "input": { "mode": "local", "dir": "/app/data/wrf_nc" },
+      "input": { "mode": "local", "dir": "/app/data/wrf-arg4k" },
       "products": { "colmax": true, "granizo": true },
       "target_runs": 3,
       "light_queue": "all",

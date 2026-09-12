@@ -10,6 +10,7 @@
 
 ```bash
 make up / make down / make test / make prod / make clean
+make beta1              # beta-1 light preset (needs BOTH beta compose files)
 
 pytest tests/test_config.py -v          # single file
 pytest tests/ -k "test_health"          # pattern match
@@ -36,7 +37,7 @@ Local SINARAME radar    ─┘
 | **Workers** | `src/worker/` | Consume work units (prefetch=1, manual ack). Pipeline: download → georeference → science → GeoTIFF → gdal2tiles → upload → cleanup. |
 | **Subprocess isolation** | `src/worker/subprocess_processor.py` | Heavy processing in subprocess for full memory reclamation per image. |
 | **Processors** | `src/processors/` | `GoesProcessor` (template-method) → `Band2Processor`, `Band13Processor`, `Band9Processor`. `GlmFedProcessor` aggregates pre-gridded GLM windows via `glmtools` and emits FED/TOE/MFA tiles in one run. All via `ProcessorRegistry`. |
-| **Data Sources** | `src/data_sources/` | `DataSourceRegistry` with pluggable impls: `Goes19AbiDataSource` (NOAA S3 by default), `Goes19GlmDataSource` (CG_GLM-L2-GLMF), `RadarDataSource` (SINARAME H5), `WrfDataSource` (WRF-ARG4K FIELD2D), ECMWF. GOES/GLM/radar/WRF read via per-source `*FileRepository` (Local or S3 impl, same folder layout) selected by `sources.<name>.input.mode` in settings.json; S3 credentials via `<SOURCE>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars, prefixes `GOES19_ABI`/`GOES19_GLM`/`RADAR_SINARAME`/`WRF_ARG4K`/`ECMWF_IFS`/`GFS` (unset = anonymous). |
+| **Data Sources** | `src/data_sources/` | `DataSourceRegistry` with pluggable impls: `Goes19AbiDataSource` (NOAA S3 by default), `Goes19GlmDataSource` (CG_GLM-L2-GLMF), `RadarDataSource` (SINARAME H5), `WrfDataSource` (WRF-ARG4K FIELD2D), ECMWF. Every source reads via a per-source repository selected by `sources.<name>.input.mode`: `local` (a folder) or `s3` (a bucket, same layout). ECMWF and GFS also accept the provider they default to, `external-provider-opendata` and `external-provider-nomads`; those two modes are each scoped to one source and rejected elsewhere. Local folders are `data/<source-name>/` (`goes19-abi`, `goes19-glm`, `radar-sinarame`, `wrf-arg4k`, `ecmwf-ifs`, `gfs`) — **data-simulator writes these same paths by name, so renaming one requires the other**. S3 credentials via `<PREFIX>_S3_ACCESS_KEY`/`_SECRET_KEY`, prefixes `GOES19_ABI`/`GOES19_GLM`/`RADAR_SINARAME`/`WRF_ARG4K`/`ECMWF_IFS`/`GFS` (unset = anonymous). |
 | **Services** | `src/services/processing_steps.py`, `glm_aggregation.py` | Pure functions: georeferencing, brightness temp, colorization, tiling, RGBA; GLM window aggregation + GEOS→EPSG:4326 reprojection. |
 | **Clients** | `src/clients/` | Async S3 (aioboto3 + semaphore), RabbitMQ (pika, connection pooling), SQLite progress tracker. |
 | **Config** | `src/config.py`, `settings.json` | Env vars, feature flags, geographic bounds. |
