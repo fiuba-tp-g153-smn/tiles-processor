@@ -125,6 +125,7 @@ async def test_s3_list_files_filters_by_glob_and_sorts():
 @pytest.mark.asyncio
 async def test_s3_download_to_dir_preserves_basenames(tmp_path):
     s3_client = AsyncMock()
+    s3_client.bucket_name = "glm-input"
     repo = S3GlmFolderFileRepository(s3_client)
     dest = tmp_path / "window"
     uris = [

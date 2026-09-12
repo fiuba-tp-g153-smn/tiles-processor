@@ -3,18 +3,14 @@
 import os
 import sys
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import pytest
 
 from data_sources.base import DiscoveryConfig
-from exceptions import ForecastNotAvailableError, TransientDownloadError
-from data_sources.ecmwf_producer_source import (
-    EcmwfProducerDataSource,
-    _STEPS,
-)
+from data_sources.ecmwf_producer_source import EcmwfProducerDataSource
 from models.ecmwf_config import ECMWF_TP_CONFIG
 
 
@@ -27,22 +23,26 @@ def _config(now: datetime) -> DiscoveryConfig:
     )
 
 
-def _source(grib_cached: bool = False) -> EcmwfProducerDataSource:
-    """Source whose s3_client.head_exists reports GRIBs as missing by default."""
-    source = EcmwfProducerDataSource(product_config=ECMWF_TP_CONFIG, s3_client=None)
+def _source(
+    latest: datetime | None = None, grib_cached: bool = False
+) -> EcmwfProducerDataSource:
+    """Source whose repository reports `latest` and whose GRIBs are missing."""
+    repository = MagicMock()
+    repository.latest_available_run = AsyncMock(return_value=latest)
+    repository.fetch = AsyncMock()
     s3 = MagicMock()
     s3.head_exists = AsyncMock(return_value=grib_cached)
-    source._s3_client = s3
-    return source
+    return EcmwfProducerDataSource(
+        product_config=ECMWF_TP_CONFIG, s3_client=s3, repository=repository
+    )
 
 
 @pytest.mark.asyncio
 async def test_discover_emits_only_runs_at_or_before_latest():
     """Candidates newer than the latest published run are never enqueued."""
-    source = _source()
     now = datetime(2026, 2, 17, 13, 0, tzinfo=UTC)
     latest = datetime(2026, 2, 17, 0, 0, tzinfo=UTC)  # 17T12 candidate is unpublished
-    source._latest_available_run = MagicMock(return_value=latest)
+    source = _source(latest=latest)
 
     images = await source.discover_images(_config(now))
 
@@ -54,10 +54,9 @@ async def test_discover_emits_only_runs_at_or_before_latest():
 @pytest.mark.asyncio
 async def test_discover_skips_cached_run_via_head():
     """A published-but-already-cached run is skipped via head_exists (no LIST)."""
-    source = _source()
     now = datetime(2026, 2, 17, 13, 0, tzinfo=UTC)
     latest = datetime(2026, 2, 17, 12, 0, tzinfo=UTC)  # all 3 candidates published
-    source._latest_available_run = MagicMock(return_value=latest)
+    source = _source(latest=latest)
     cached_key = f"{ECMWF_TP_CONFIG.grib_prefix}/20260217T1200Z.grib"
     source._s3_client.head_exists = AsyncMock(side_effect=lambda key: key == cached_key)
 
@@ -70,101 +69,49 @@ async def test_discover_skips_cached_run_via_head():
 
 @pytest.mark.asyncio
 async def test_discover_emits_nothing_when_availability_unknown():
-    """If latest() can't be established, discovery is fail-safe (emits nothing)."""
-    source = _source()
+    """If the backend can't establish a latest run, discovery emits nothing."""
     now = datetime(2026, 2, 17, 13, 0, tzinfo=UTC)
-    source._latest_available_run = MagicMock(return_value=None)
 
-    assert await source.discover_images(_config(now)) == []
-
-
-def test_latest_available_run_uses_last_step_and_normalizes_to_utc():
-    """latest() is queried for the final step and its naive result is made UTC-aware."""
-    source = _source()
-    source._sources = ("ecmwf",)
-    fake_client = MagicMock()
-    fake_client.latest.return_value = datetime(2026, 2, 17, 0, 0)  # naive
-
-    with patch(
-        "data_sources.ecmwf_producer_source.Client", return_value=fake_client
-    ) as client_cls:
-        result = source._latest_available_run()
-
-    assert result == datetime(2026, 2, 17, 0, 0, tzinfo=UTC)
-    client_cls.assert_called_once_with(source="ecmwf")
-    kwargs = fake_client.latest.call_args.kwargs
-    assert kwargs["type"] == "fc"
-    assert kwargs["step"] == _STEPS[-1]
-    assert kwargs["param"] == [ECMWF_TP_CONFIG.parameter]
-
-
-def test_latest_available_run_falls_back_across_mirrors_and_returns_none():
-    """Every mirror failing (network error) returns None, after trying each in order."""
-    source = _source()
-    source._sources = ("ecmwf", "azure", "aws")
-    fake_client = MagicMock()
-    fake_client.latest.side_effect = ValueError("Cannot establish latest date")
-
-    with patch(
-        "data_sources.ecmwf_producer_source.Client", return_value=fake_client
-    ) as client_cls:
-        assert source._latest_available_run() is None
-
-    # One client per mirror was tried.
-    assert client_cls.call_count == 3
+    assert await _source(latest=None).discover_images(_config(now)) == []
 
 
 @pytest.mark.asyncio
-async def test_download_falls_back_to_next_mirror_on_transient(tmp_path):
-    """A 503 on the first mirror falls through to the next, which succeeds."""
-    source = _source()
-    source._sources = ("ecmwf", "azure")
+async def test_discover_is_backend_agnostic_about_availability():
+    """Discovery reads availability off the repository, whichever backend it is."""
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=UTC)
+    source = _source(latest=datetime(2026, 2, 17, 12, 0, tzinfo=UTC))
+
+    await source.discover_images(_config(now))
+
+    source._repository.latest_available_run.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_download_delegates_to_the_repository(tmp_path):
+    """The source forces the .grib suffix and hands the fetch to the backend."""
     forecast = datetime(2026, 2, 17, 0, 0, tzinfo=UTC)
+    source = _source()
+    target = (tmp_path / "run").with_suffix(".grib")
 
-    tried = []
+    async def fake_fetch(_forecast_time, dest):
+        dest.write_bytes(b"GRIB")
+        return dest
 
-    def fake_retrieve(mirror, _forecast_time, target):
-        tried.append(mirror)
-        if mirror == "ecmwf":
-            raise TransientDownloadError("503")
-        target.write_bytes(b"GRIB")
-
-    source._retrieve_from_mirror = fake_retrieve
+    source._repository.fetch = AsyncMock(side_effect=fake_fetch)
 
     result = await source.download(forecast.isoformat(), tmp_path / "run")
 
-    assert tried == ["ecmwf", "azure"]
-    assert result == (tmp_path / "run").with_suffix(".grib")
+    assert result == target
     assert result.read_bytes() == b"GRIB"
+    source._repository.fetch.assert_awaited_once_with(forecast, target)
 
 
 @pytest.mark.asyncio
-async def test_download_requeues_when_all_mirrors_transiently_fail(tmp_path):
-    """Every mirror 503 → TransientDownloadError (requeue, not skip)."""
-    source = _source()
-    source._sources = ("ecmwf", "azure", "aws")
-    forecast = datetime(2026, 2, 17, 0, 0, tzinfo=UTC)
+async def test_download_without_a_repository_fails_loudly(tmp_path):
+    """A half-built source must not look like a transient download failure."""
+    source = EcmwfProducerDataSource(product_config=ECMWF_TP_CONFIG, s3_client=None)
 
-    def fake_retrieve(_mirror, _forecast_time, _target):
-        raise TransientDownloadError("503")
-
-    source._retrieve_from_mirror = fake_retrieve
-
-    with pytest.raises(TransientDownloadError):
-        await source.download(forecast.isoformat(), tmp_path / "run")
-
-
-@pytest.mark.asyncio
-async def test_download_skips_when_no_mirror_has_data_yet(tmp_path):
-    """Every mirror 404 (and none transient) → ForecastNotAvailableError (skip)."""
-    source = _source()
-    source._sources = ("ecmwf", "azure")
-    forecast = datetime(2026, 2, 17, 0, 0, tzinfo=UTC)
-
-    def fake_retrieve(_mirror, _forecast_time, _target):
-        raise ForecastNotAvailableError("404")
-
-    source._retrieve_from_mirror = fake_retrieve
-
-    with pytest.raises(ForecastNotAvailableError):
-        await source.download(forecast.isoformat(), tmp_path / "run")
+    with pytest.raises(RuntimeError, match="EcmwfGribRepository"):
+        await source.download(
+            datetime(2026, 2, 17, tzinfo=UTC).isoformat(), tmp_path / "run"
+        )

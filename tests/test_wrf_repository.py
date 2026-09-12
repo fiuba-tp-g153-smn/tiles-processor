@@ -74,6 +74,7 @@ async def test_s3_list_files_filters_by_glob_and_sorts():
 @pytest.mark.asyncio
 async def test_s3_download_forces_nc_suffix_and_strips_scheme(tmp_path):
     s3_client = AsyncMock()
+    s3_client.bucket_name = "wrf-input"
     repo = S3WrfFileRepository(s3_client)
     dest = tmp_path / "work" / "output"
 

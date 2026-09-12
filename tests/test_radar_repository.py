@@ -127,9 +127,23 @@ async def test_s3_download_forces_h5_suffix_and_creates_parent(tmp_path):
 @pytest.mark.asyncio
 async def test_s3_download_strips_s3_scheme(tmp_path):
     s3_client = AsyncMock()
+    s3_client.bucket_name = "radar-input"
     repo = S3RadarFileRepository(s3_client)
 
     await repo.download("s3://radar-input/radar_h5/RMA1_file.H5", tmp_path / "out")
 
     (key, _), _ = s3_client.download_to_file.await_args
     assert key == "radar_h5/RMA1_file.H5"
+
+
+@pytest.mark.asyncio
+async def test_s3_download_rejects_uri_from_another_bucket(tmp_path):
+    """A cross-bucket URI must fail loudly, not silently read the wrong bucket."""
+    s3_client = AsyncMock()
+    s3_client.bucket_name = "radar-input"
+    repo = S3RadarFileRepository(s3_client)
+
+    with pytest.raises(ValueError, match="names bucket 'other'"):
+        await repo.download("s3://other/radar_h5/RMA1_file.H5", tmp_path / "out")
+
+    s3_client.download_to_file.assert_not_awaited()

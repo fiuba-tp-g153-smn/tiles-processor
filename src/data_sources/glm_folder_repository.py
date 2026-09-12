@@ -6,6 +6,7 @@ touching :class:`GlmFolderDataSource`.
 """
 
 import asyncio
+import logging
 import os
 import shutil
 from abc import ABC, abstractmethod
@@ -14,6 +15,8 @@ from pathlib import Path
 
 from clients.s3_client import S3Client
 from data_sources.s3_repository_utils import filter_keys_by_glob, strip_s3_scheme
+
+logger = logging.getLogger(__name__)
 
 GLM_FOLDER_FILENAME_GLOB = "CG_GLM-L2-GLMF-*.nc"
 
@@ -75,6 +78,9 @@ class LocalGlmFolderFileRepository(GlmFolderFileRepository):
 
     async def list_files(self) -> list[str]:
         if not self._input_dir.exists():
+            logger.warning(
+                "GLM input dir does not exist, treating as empty: %s", self._input_dir
+            )
             return []
 
         files: list[Path] = list(self._input_dir.glob(GLM_FOLDER_FILENAME_GLOB))
@@ -123,7 +129,8 @@ class S3GlmFolderFileRepository(GlmFolderFileRepository):
             await asyncio.gather(
                 *(
                     self._s3_client.download_to_file(
-                        strip_s3_scheme(uri), tmp_dir / Path(uri).name
+                        strip_s3_scheme(uri, self._s3_client.bucket_name),
+                        tmp_dir / Path(uri).name,
                     )
                     for uri in source_uris
                 )

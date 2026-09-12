@@ -18,7 +18,19 @@ from data_sources import (
     RadarDataSource,
     WrfDataSource,
 )
+from data_sources.ecmwf_repository import (
+    EcmwfGribRepository,
+    LocalEcmwfGribRepository,
+    OpenDataEcmwfGribRepository,
+    S3EcmwfGribRepository,
+)
+from data_sources.ecmwf_producer_source import STEPS as ECMWF_STEPS
 from data_sources.gfs_fetcher import GfsGribFetcher
+from data_sources.gfs_repository import (
+    GfsGribRepository,
+    LocalGfsGribRepository,
+    S3GfsGribRepository,
+)
 from data_sources.glm_folder_repository import (
     GlmFolderFileRepository,
     LocalGlmFolderFileRepository,
@@ -49,6 +61,7 @@ from models.gfs_config import (
     GFS_PRODUCT_CONFIGS,
     GfsProductConfig,
 )
+from models.ecmwf_config import EcmwfProductConfig
 from models.input_source_config import InputSourceConfig
 from models.radar_config import RADAR_PRODUCT_CONFIGS
 from models.wrf_config import WRF_PRODUCT_CONFIGS
@@ -57,16 +70,21 @@ logger = logging.getLogger(__name__)
 
 
 def _create_input_s3_client(src: InputSourceConfig) -> S3Client:
-    """Build an S3 client for one source's input bucket (anonymous if no creds)."""
-    endpoint_url = None
-    if src.s3_endpoint:
-        protocol = "https" if src.s3_secure else "http"
-        endpoint_url = f"{protocol}://{src.s3_endpoint}"
+    """Build an S3 client for one source's input bucket (anonymous if no creds).
+
+    ``endpoint_url`` is already normalized by the config layer, so a bucket may
+    live on the public AWS endpoint (no endpoint configured), on a gateway
+    written as ``host:port``, or on one written as a full ``http(s)://`` URL.
+    """
+    if not src.s3_bucket:
+        raise ValueError(f"input mode '{src.mode}' needs an s3_bucket")
     return S3Client(
         bucket_name=src.s3_bucket,
-        endpoint_url=endpoint_url,
+        endpoint_url=src.endpoint_url,
         access_key=src.s3_access_key,
         secret_key=src.s3_secret_key,
+        region_name=src.s3_region,
+        addressing_style=src.s3_addressing_style,
     )
 
 
@@ -98,7 +116,37 @@ def _create_goes19_repository(config: Optional[Config]) -> Goes19FileRepository:
     src = config.GOES19_INPUT
     if not src.is_s3:
         return LocalGoes19FileRepository(Path(src.input_dir))
-    return S3Goes19FileRepository(_create_input_s3_client(src))
+    return S3Goes19FileRepository(_create_input_s3_client(src), prefix=src.s3_prefix)
+
+
+def _create_ecmwf_repository(
+    config: Config, product_config: EcmwfProductConfig
+) -> EcmwfGribRepository:
+    """Pick the backend one ECMWF product's GRIBs are read from.
+
+    The two file modes share one input root across both products; each
+    repository scopes itself to its own product folder below it.
+    """
+    src = config.ECMWF_INPUT
+    if src.is_local:
+        return LocalEcmwfGribRepository(Path(src.input_dir), product_config)
+    if src.is_s3:
+        return S3EcmwfGribRepository(
+            _create_input_s3_client(src), product_config, prefix=src.s3_prefix
+        )
+    return OpenDataEcmwfGribRepository(
+        product_config, config.ECMWF_OPENDATA_SOURCES, ECMWF_STEPS
+    )
+
+
+def _create_gfs_repository(config: Config) -> GfsGribRepository:
+    """Pick the backend GFS forecast steps are read from."""
+    src = config.GFS_INPUT
+    if src.is_local:
+        return LocalGfsGribRepository(Path(src.input_dir))
+    if src.is_s3:
+        return S3GfsGribRepository(_create_input_s3_client(src), prefix=src.s3_prefix)
+    return GfsGribFetcher(config.GFS_ACCESS, config.get_bounds())
 
 
 def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRegistry:
@@ -149,10 +197,10 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     # Register radar data sources for each product
     if config is not None:
         repository = _create_radar_repository(config)
-        for _product_id, product_config in RADAR_PRODUCT_CONFIGS.items():
+        for _product_id, radar_config in RADAR_PRODUCT_CONFIGS.items():
             registry.register(
                 RadarDataSource(
-                    product_config,
+                    radar_config,
                     repository,
                     config.RADAR_STATION_FILTER,
                     target_images=config.RADAR_TARGET_IMAGES,
@@ -162,11 +210,11 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     # Register WRF data sources for each enabled product
     if config is not None:
         wrf_repository = _create_wrf_repository(config)
-        for product_id, product_config in WRF_PRODUCT_CONFIGS.items():
+        for product_id, wrf_config in WRF_PRODUCT_CONFIGS.items():
             if config.ENABLED_WRF_PRODUCTS.get(product_id, False):
                 registry.register(
                     WrfDataSource(
-                        product_config,
+                        wrf_config,
                         wrf_repository,
                         target_runs=config.WRF_TARGET_RUNS,
                     )
@@ -177,7 +225,9 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         ecmwf_s3 = create_s3_client(config)
         registry.register(
             EcmwfProducerDataSource(
-                ECMWF_TP_CONFIG, ecmwf_s3, config.ECMWF_OPENDATA_SOURCES
+                ECMWF_TP_CONFIG,
+                ecmwf_s3,
+                _create_ecmwf_repository(config, ECMWF_TP_CONFIG),
             )
         )
         registry.register(EcmwfPeriodDataSource(ECMWF_TP_CONFIG, ecmwf_s3))
@@ -186,7 +236,9 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         ecmwf_mslp_s3 = create_s3_client(config)
         registry.register(
             EcmwfProducerDataSource(
-                ECMWF_MSLP_CONFIG, ecmwf_mslp_s3, config.ECMWF_OPENDATA_SOURCES
+                ECMWF_MSLP_CONFIG,
+                ecmwf_mslp_s3,
+                _create_ecmwf_repository(config, ECMWF_MSLP_CONFIG),
             )
         )
         registry.register(EcmwfPeriodDataSource(ECMWF_MSLP_CONFIG, ecmwf_mslp_s3))
@@ -196,7 +248,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         gfs_s3 = create_s3_client(config)
         registry.register(
             GfsProducerDataSource(
-                fetcher=GfsGribFetcher(config.GFS_ACCESS, config.get_bounds()),
+                repository=_create_gfs_repository(config),
                 s3_client=gfs_s3,
                 cycles_to_maintain=config.GFS_CYCLES_TO_MAINTAIN,
                 max_steps_per_tick=config.GFS_MAX_STEPS_PER_TICK,
