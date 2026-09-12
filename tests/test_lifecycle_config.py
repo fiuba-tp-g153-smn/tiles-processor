@@ -22,12 +22,12 @@ def test_int_form_applies_uniformly_across_a_sources_prefixes():
 
 def test_object_form_overrides_one_kind_and_defaults_the_rest():
     got = resolve_retention_map(
-        {"ecmwf": {"retention_days": {"default": 2, "grib": 1}}}
+        {"ecmwf-ifs": {"retention_days": {"default": 2, "grib": 1}}}
     )
-    assert got["tiles/models/ecmwf"] == 2
-    assert got["cog/models/ecmwf"] == 2
-    assert got["geojson/models/ecmwf"] == 2
-    assert got["grib/models/ecmwf"] == 1
+    assert got["tiles/ecmwf-ifs"] == 2
+    assert got["cog/ecmwf-ifs"] == 2
+    assert got["geojson/ecmwf-ifs"] == 2
+    assert got["grib/ecmwf-ifs"] == 1
 
 
 def test_absent_source_falls_back_to_default():

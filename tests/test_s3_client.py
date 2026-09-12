@@ -852,8 +852,8 @@ _SAMPLE_RETENTION = {
     "tiles/radar/sinarame/sinarame": 1,
     "cog/radar/sinarame": 1,
     "tiles/wrf-arg4k": 2,
-    "grib/models/ecmwf": 1,
-    "geojson/models/ecmwf": 2,
+    "grib/ecmwf-ifs": 1,
+    "geojson/ecmwf-ifs": 2,
 }
 
 
@@ -880,8 +880,8 @@ class TestBuildLifecycleRules:
         }
         assert days_by_prefix["tiles/radar/sinarame/sinarame"] == 1
         assert days_by_prefix["tiles/wrf-arg4k"] == 2
-        assert days_by_prefix["grib/models/ecmwf"] == 1
-        assert days_by_prefix["geojson/models/ecmwf"] == 2
+        assert days_by_prefix["grib/ecmwf-ifs"] == 1
+        assert days_by_prefix["geojson/ecmwf-ifs"] == 2
 
     def test_sub_day_retention_rounds_up_to_one_and_ids_unique(self):
         rules = _build_lifecycle_rules(

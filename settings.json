@@ -72,7 +72,7 @@
       "light_queue": "all",
       "retention_days": 2
     },
-    "ecmwf": {
+    "ecmwf-ifs": {
       "products": {
         "precipitation": true,
         "mean_sea_level_pressure": true
@@ -85,7 +85,7 @@
       "retention_days": { "default": 2, "grib": 1 }
     },
     "gfs": {
-      "products": { "mslp": true, "500": true, "250": true },
+      "products": { "mslp": true, "500hpa": true, "250hpa": true },
       "cycles_to_maintain": 3,
       "max_steps_per_tick": 12,
       "availability_probe_hours": { "from": 3, "to": 8 },

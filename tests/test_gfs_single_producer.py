@@ -22,6 +22,9 @@ from models.gfs_config import (
 ENDPOINT = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
 
 
+_PRODUCT_KEYS = {"mslp": "mslp", "500": "500hpa", "250": "250hpa"}
+
+
 def _config(tmp_path, monkeypatch, **flags) -> Config:
     """Config with only the GFS product flags under test switched on.
 
@@ -29,7 +32,10 @@ def _config(tmp_path, monkeypatch, **flags) -> Config:
     naturally); they are translated to ``sources.gfs.products``.
     """
     monkeypatch.setenv("GFS_SUBSET_ENDPOINT", ENDPOINT)
-    gfs_products = {key.removeprefix("enable_gfs_"): val for key, val in flags.items()}
+    gfs_products = {
+        _PRODUCT_KEYS[key.removeprefix("enable_gfs_")]: val
+        for key, val in flags.items()
+    }
     settings = {
         "timezone": "UTC",
         "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
@@ -87,7 +93,10 @@ class TestEnabledProducts:
         config = _config(
             tmp_path, monkeypatch, enable_gfs_mslp=True, enable_gfs_250=True
         )
-        assert [p.product_id for p in enabled_gfs_products(config)] == ["mslp", "250"]
+        assert [p.product_id for p in enabled_gfs_products(config)] == [
+            "mslp",
+            "250hpa",
+        ]
 
     def test_returns_all_three_when_all_are_on(self, tmp_path, monkeypatch):
         config = _config(tmp_path, monkeypatch, **ALL_ON)
@@ -100,8 +109,8 @@ class TestEnabledProducts:
         config = _config(tmp_path, monkeypatch, **ALL_ON)
         assert [p.product_id for p in enabled_gfs_products(config)] == [
             "mslp",
-            "500",
-            "250",
+            "500hpa",
+            "250hpa",
         ]
 
 

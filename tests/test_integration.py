@@ -262,11 +262,11 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="20260217T0000Z",
                 source_uri="2026-02-17T00:00:00+00:00",
-                data_source_id="ecmwf_tp_producer",
-                processor_id="ecmwf_tp_grib_downloader",
-                output_prefix="grib/models/ecmwf",
+                data_source_id="ecmwf_ifs_tp_producer",
+                processor_id="ecmwf_ifs_tp_grib_downloader",
+                output_prefix="grib/ecmwf-ifs",
                 bounds=config.get_bounds(),
-                band_id="ecmwf_tp_producer",
+                band_id="ecmwf_ifs_tp_producer",
             )
 
             asyncio.run(worker._process_message_async(work_unit, 1, "tiles_work_queue"))

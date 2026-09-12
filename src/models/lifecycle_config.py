@@ -21,17 +21,17 @@ SOURCE_LIFECYCLE_PREFIXES: dict[str, dict[str, str]] = {
         "cog": "cog/wrf-arg4k",
         "geojson": "geojson/wrf-arg4k",
     },
-    "ecmwf": {
-        "tiles": "tiles/models/ecmwf",
-        "cog": "cog/models/ecmwf",
-        "geojson": "geojson/models/ecmwf",
-        "grib": "grib/models/ecmwf",
+    "ecmwf-ifs": {
+        "tiles": "tiles/ecmwf-ifs",
+        "cog": "cog/ecmwf-ifs",
+        "geojson": "geojson/ecmwf-ifs",
+        "grib": "grib/ecmwf-ifs",
     },
     "gfs": {
-        "tiles": "tiles/models/gfs",
-        "cog": "cog/models/gfs",
-        "geojson": "geojson/models/gfs",
-        "grib": "grib/models/gfs",
+        "tiles": "tiles/gfs",
+        "cog": "cog/gfs",
+        "geojson": "geojson/gfs",
+        "grib": "grib/gfs",
     },
 }
 

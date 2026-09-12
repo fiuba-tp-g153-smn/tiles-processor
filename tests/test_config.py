@@ -396,7 +396,7 @@ class TestConfig:
         assert config.ECMWF_INPUT.mode == "opendata"
         assert config.GFS_INPUT.mode == "nomads"
 
-    @pytest.mark.parametrize("source,mode", [("ecmwf", "local"), ("gfs", "local")])
+    @pytest.mark.parametrize("source,mode", [("ecmwf-ifs", "local"), ("gfs", "local")])
     def test_ecmwf_and_gfs_accept_the_file_modes(
         self, tmp_path, env_vars, source, mode
     ):
@@ -405,23 +405,23 @@ class TestConfig:
             tmp_path, env_vars, source, {"mode": mode, "dir": f"/tmp/{source}"}
         )
 
-        parsed = config.ECMWF_INPUT if source == "ecmwf" else config.GFS_INPUT
+        parsed = config.ECMWF_INPUT if source.startswith("ecmwf") else config.GFS_INPUT
         assert parsed.is_local
         assert parsed.input_dir == f"/tmp/{source}"
 
-    @pytest.mark.parametrize("source", ["ecmwf", "gfs"])
+    @pytest.mark.parametrize("source", ["ecmwf-ifs", "gfs"])
     def test_ecmwf_and_gfs_accept_s3_mode(self, tmp_path, env_vars, source):
         config = self._config_with_input(
             tmp_path,
             env_vars,
             source,
-            {"mode": "s3", "s3_bucket": f"s3://models/grib/models/{source}"},
+            {"mode": "s3", "s3_bucket": f"s3://models/grib/{source}"},
         )
 
-        parsed = config.ECMWF_INPUT if source == "ecmwf" else config.GFS_INPUT
+        parsed = config.ECMWF_INPUT if source.startswith("ecmwf") else config.GFS_INPUT
         assert parsed.is_s3
         assert parsed.s3_bucket == "models"
-        assert parsed.s3_prefix == f"grib/models/{source}/"
+        assert parsed.s3_prefix == f"grib/{source}/"
 
     def test_upstream_mode_is_scoped_to_its_own_source(self, tmp_path, env_vars):
         """ "opendata" is meaningless for radar and must be rejected there."""
@@ -541,7 +541,7 @@ class TestConfig:
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
-                "ecmwf": {
+                "ecmwf-ifs": {
                     "products": {"mean_sea_level_pressure": True},
                     "mslp": {
                         "isobar_simplify_tolerance": 0.5,
@@ -739,7 +739,7 @@ class TestConfig:
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
                 "radar-sinarame": {"retention_days": 3},
-                "ecmwf": {"retention_days": {"default": 2, "grib": 1}},
+                "ecmwf-ifs": {"retention_days": {"default": 2, "grib": 1}},
             },
         }
         settings_path = tmp_path / "settings.json"
@@ -748,10 +748,10 @@ class TestConfig:
             retention = Config(settings_path=settings_path).TILE_LIFECYCLE_RETENTION
             assert retention["tiles/radar/sinarame"] == 3
             assert retention["cog/radar/sinarame"] == 3
-            assert retention["grib/models/ecmwf"] == 1
-            assert retention["tiles/models/ecmwf"] == 2
+            assert retention["grib/ecmwf-ifs"] == 1
+            assert retention["tiles/ecmwf-ifs"] == 2
             # A source with no retention_days falls back to the default (1 day).
-            assert retention["tiles/models/gfs"] == 1
+            assert retention["tiles/gfs"] == 1
 
     def test_radar_stations_invalid_shape_fails_fast(self, tmp_path, env_vars):
         """An object with both whitelist and blacklist is rejected at startup."""

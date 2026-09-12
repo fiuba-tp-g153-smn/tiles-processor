@@ -31,8 +31,8 @@ STEPS = [3, 6, 144]
 
 def test_product_directory_matches_the_cache_key_tail():
     """The input layout mirrors the cache so one can be synced into the other."""
-    assert product_directory(ECMWF_TP_CONFIG) == "total_precipitation"
-    assert product_directory(ECMWF_MSLP_CONFIG) == "mean_sea_level_pressure"
+    assert product_directory(ECMWF_TP_CONFIG) == "tp"
+    assert product_directory(ECMWF_MSLP_CONFIG) == "mslp"
 
 
 def test_parse_run_timestamp_round_trips_and_rejects_junk():
@@ -125,27 +125,27 @@ def _s3_client() -> MagicMock:
 async def test_s3_latest_available_run_lists_the_product_prefix():
     client = _s3_client()
     client.list_files.return_value = [
-        "grib/models/ecmwf/total_precipitation/20260216T1200Z.grib",
-        "grib/models/ecmwf/total_precipitation/20260217T0000Z.grib",
+        "grib/ecmwf-ifs/tp/20260216T1200Z.grib",
+        "grib/ecmwf-ifs/tp/20260217T0000Z.grib",
     ]
-    repo = S3EcmwfGribRepository(client, ECMWF_TP_CONFIG, prefix="grib/models/ecmwf/")
+    repo = S3EcmwfGribRepository(client, ECMWF_TP_CONFIG, prefix="grib/ecmwf-ifs/")
 
     assert await repo.latest_available_run() == RUN
     client.list_files.assert_awaited_once_with(
-        "grib/models/ecmwf/total_precipitation/", file_pattern=".grib"
+        "grib/ecmwf-ifs/tp/", file_pattern=".grib"
     )
 
 
 @pytest.mark.asyncio
 async def test_s3_fetch_downloads_the_run_key(tmp_path):
     client = _s3_client()
-    repo = S3EcmwfGribRepository(client, ECMWF_TP_CONFIG, prefix="grib/models/ecmwf")
+    repo = S3EcmwfGribRepository(client, ECMWF_TP_CONFIG, prefix="grib/ecmwf-ifs")
     target = tmp_path / "run.grib"
 
     await repo.fetch(RUN, target)
 
     client.download_to_file.assert_awaited_once_with(
-        "grib/models/ecmwf/total_precipitation/20260217T0000Z.grib", target
+        "grib/ecmwf-ifs/tp/20260217T0000Z.grib", target
     )
 
 

@@ -133,13 +133,11 @@ def _s3_client(payload: bytes = b"") -> MagicMock:
 @pytest.mark.asyncio
 async def test_s3_fetch_downloads_the_step_key(tmp_path):
     client = _s3_client(_valid_grib())
-    repo = S3GfsGribRepository(client, prefix="grib/models/gfs/")
+    repo = S3GfsGribRepository(client, prefix="grib/gfs/")
 
     result = await repo.fetch(CYCLE, STEP, tmp_path / "step")
 
-    client.download_to_file.assert_awaited_once_with(
-        f"grib/models/gfs/{RELATIVE}", result
-    )
+    client.download_to_file.assert_awaited_once_with(f"grib/gfs/{RELATIVE}", result)
     assert result == (tmp_path / "step").with_suffix(".grib2")
 
 
@@ -165,6 +163,6 @@ async def test_s3_fetch_validates_the_payload(tmp_path):
 
 
 def test_s3_source_label_names_bucket_and_prefix():
-    repo = S3GfsGribRepository(_s3_client(), prefix="grib/models/gfs/")
+    repo = S3GfsGribRepository(_s3_client(), prefix="grib/gfs/")
 
-    assert repo.source_label == "s3://gfs-input/grib/models/gfs/"
+    assert repo.source_label == "s3://gfs-input/grib/gfs/"

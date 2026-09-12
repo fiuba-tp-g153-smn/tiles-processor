@@ -64,7 +64,7 @@ class TestForecastSteps:
 
 class TestProductConfigs:
     def test_three_products(self):
-        assert set(GFS_PRODUCT_CONFIGS) == {"mslp", "500", "250"}
+        assert set(GFS_PRODUCT_CONFIGS) == {"mslp", "500hpa", "250hpa"}
 
     def test_band_ids_are_distinct(self):
         band_ids = {cfg.band_id for cfg in GFS_PRODUCT_CONFIGS.values()}

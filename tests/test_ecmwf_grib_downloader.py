@@ -18,11 +18,11 @@ def _work_unit() -> WorkUnit:
     return WorkUnit.create(
         image_id="20260217T0000Z",
         source_uri="2026-02-17T00:00:00+00:00",
-        data_source_id="ecmwf_tp_producer",
-        processor_id="ecmwf_tp_grib_downloader",
-        output_prefix="grib/models/ecmwf",
+        data_source_id="ecmwf_ifs_tp_producer",
+        processor_id="ecmwf_ifs_tp_grib_downloader",
+        output_prefix="grib/ecmwf-ifs",
         bounds={},
-        band_id="ecmwf_tp_producer",
+        band_id="ecmwf_ifs_tp_producer",
     )
 
 

@@ -53,7 +53,7 @@ def _work_unit(product) -> WorkUnit:
         image_id=IMAGE_ID,
         source_uri=json.dumps(
             {
-                "grib_path": "grib/models/gfs/x.grib2",
+                "grib_path": "grib/gfs/x.grib2",
                 "cycle": CYCLE_ISO,
                 "step_hours": 3,
                 "product_id": product.product_id,
@@ -99,8 +99,8 @@ class TestPalettes:
             int(color[1:], 16)
 
     def test_lookup_by_product(self):
-        assert wind_palette("500") == (WIND_500_THRESHOLDS, WIND_500_COLORS)
-        assert wind_palette("250") == (WIND_250_THRESHOLDS, WIND_250_COLORS)
+        assert wind_palette("500hpa") == (WIND_500_THRESHOLDS, WIND_500_COLORS)
+        assert wind_palette("250hpa") == (WIND_250_THRESHOLDS, WIND_250_COLORS)
 
     def test_unknown_product_raises(self):
         with pytest.raises(ValueError, match="No wind palette"):

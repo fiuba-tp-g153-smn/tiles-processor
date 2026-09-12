@@ -40,7 +40,7 @@ def _work_unit() -> WorkUnit:
         image_id=IMAGE_ID,
         source_uri=json.dumps(
             {
-                "grib_path": "grib/models/gfs/x.grib2",
+                "grib_path": "grib/gfs/x.grib2",
                 "cycle": CYCLE_ISO,
                 "step_hours": 3,
                 "product_id": "mslp",

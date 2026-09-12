@@ -174,7 +174,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         _glm = _sources.get("goes19-glm", {})
         _radar = _sources.get("radar-sinarame", {})
         _wrf = _sources.get("wrf-arg4k", {})
-        _ecmwf = _sources.get("ecmwf", {})
+        _ecmwf = _sources.get("ecmwf-ifs", {})
         _gfs = _sources.get("gfs", {})
 
         # --- GOES-19 ABI ---
@@ -292,8 +292,8 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # --- GFS ---
         _gfs_products = _gfs.get("products", {})
         self.ENABLE_GFS_MSLP: bool = _gfs_products.get("mslp", False)
-        self.ENABLE_GFS_500: bool = _gfs_products.get("500", False)
-        self.ENABLE_GFS_250: bool = _gfs_products.get("250", False)
+        self.ENABLE_GFS_500: bool = _gfs_products.get("500hpa", False)
+        self.ENABLE_GFS_250: bool = _gfs_products.get("250hpa", False)
         self.GFS_ACCESS: GfsAccessConfig = self._parse_gfs_access(_gfs)
         self.GFS_CYCLES_TO_MAINTAIN: int = int(_gfs.get("cycles_to_maintain", 3))
         self.GFS_MAX_STEPS_PER_TICK: int = int(_gfs.get("max_steps_per_tick", 12))
@@ -347,7 +347,8 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         self.ECMWF_INPUT: InputSourceConfig = self._parse_input_source(
             _ecmwf,
-            "ecmwf",
+            "ecmwf-ifs",
+            env_prefix="ECMWF_IFS",
             default_dir=str(Path(self.DATA_DIR) / "ecmwf_grib"),
             default_mode=INPUT_MODE_OPENDATA,
             extra_modes=(INPUT_MODE_OPENDATA,),

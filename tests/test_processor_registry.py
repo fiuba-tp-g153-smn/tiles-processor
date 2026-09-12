@@ -59,13 +59,13 @@ class TestGfsProducts:
         `GFS_500_CONFIG.processor_id` and nothing else for the upper levels, so
         250 hPa works purely because the two ids are equal.
         """
-        assert GFS_PRODUCT_CONFIGS["250"].processor_id == (
-            GFS_PRODUCT_CONFIGS["500"].processor_id
+        assert GFS_PRODUCT_CONFIGS["250hpa"].processor_id == (
+            GFS_PRODUCT_CONFIGS["500hpa"].processor_id
         )
 
     def test_mslp_does_not_share_the_upper_level_processor(self):
         assert GFS_PRODUCT_CONFIGS["mslp"].processor_id != (
-            GFS_PRODUCT_CONFIGS["500"].processor_id
+            GFS_PRODUCT_CONFIGS["500hpa"].processor_id
         )
 
 

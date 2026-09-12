@@ -12,7 +12,7 @@ cache can be synced into an input location unchanged::
 
 where ``<product_dir>`` is the last segment of the product's ``grib_prefix``
 (``total_precipitation``, ``mean_sea_level_pressure``), i.e. ``<root>`` is the
-``grib/models/ecmwf`` level.
+``grib/ecmwf-ifs`` level.
 """
 
 import asyncio

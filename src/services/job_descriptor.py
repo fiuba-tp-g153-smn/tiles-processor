@@ -55,8 +55,8 @@ def _label_and_timestamp(
             return ("GLM Lightning (FED/TOE/MFA)", image_id)
         if data_source_id.startswith("wrf_arg4k_"):
             return _describe_wrf(data_source_id, image_id)
-        if data_source_id.startswith("ecmwf_"):
-            return (f"ECMWF {data_source_id.removeprefix('ecmwf_')}", image_id)
+        if data_source_id.startswith("ecmwf_ifs_"):
+            return (f"ECMWF {data_source_id.removeprefix('ecmwf_ifs_')}", image_id)
     except (ValueError, IndexError, KeyError):
         pass
     return (data_source_id, image_id)

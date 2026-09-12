@@ -9,7 +9,7 @@ cache can be synced into an input location unchanged::
 
     <root>/<YYYYMMDDTHHmmZ>/<YYYYMMDDTHHmmZ>_f<step>.grib2
 
-i.e. ``<root>`` is the ``grib/models/gfs`` level.
+i.e. ``<root>`` is the ``grib/gfs`` level.
 """
 
 import asyncio

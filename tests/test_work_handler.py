@@ -217,7 +217,7 @@ async def test_handle_passes_collector_to_inline_processor(tmp_path):
         progress_tracker=MagicMock(),
         data_source_registry=MagicMock(),
         mq_client=MagicMock(),
-        inline_processors={"ecmwf_tp_grib_downloader": inline},
+        inline_processors={"ecmwf_ifs_tp_grib_downloader": inline},
     )
 
     data_source = MagicMock()
@@ -228,11 +228,11 @@ async def test_handle_passes_collector_to_inline_processor(tmp_path):
     work_unit = WorkUnit.create(
         image_id="20260217T0000Z",
         source_uri="2026-02-17T00:00:00+00:00",
-        data_source_id="ecmwf_tp_producer",
-        processor_id="ecmwf_tp_grib_downloader",
-        output_prefix="grib/models/ecmwf",
+        data_source_id="ecmwf_ifs_tp_producer",
+        processor_id="ecmwf_ifs_tp_grib_downloader",
+        output_prefix="grib/ecmwf-ifs",
         bounds={"minx": 0.0, "miny": 0.0, "maxx": 1.0, "maxy": 1.0},
-        band_id="ecmwf_tp_producer",
+        band_id="ecmwf_ifs_tp_producer",
     )
     collector = MagicMock()
 

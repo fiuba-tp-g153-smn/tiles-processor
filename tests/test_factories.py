@@ -53,7 +53,7 @@ class TestCreateDataSourceRegistry:
         config.GLM_TARGET_WINDOWS = None
         config.ENABLE_ECMWF_PRECIPITATION = tp
         config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE = mslp
-        config.ECMWF_OPENDATA_SOURCES = ("ecmwf", "azure", "aws")
+        config.ECMWF_OPENDATA_SOURCES = ("ecmwf-ifs", "azure", "aws")
         config.ENABLE_GFS_MSLP = False
         config.ENABLE_GFS_500 = False
         config.ENABLE_GFS_250 = False
@@ -301,7 +301,7 @@ class TestCreateDataSourceRegistry:
             mode="s3",
             input_dir="/tmp/gfs",
             s3_bucket="models",
-            s3_prefix="grib/models/gfs/",
+            s3_prefix="grib/gfs/",
         )
         with patch("factories.create_s3_client", return_value=MagicMock()), patch(
             "factories.S3Client"
@@ -310,7 +310,7 @@ class TestCreateDataSourceRegistry:
 
         repository = registry.get("gfs_producer")._repository
         assert isinstance(repository, S3GfsGribRepository)
-        assert repository._prefix == "grib/models/gfs/"
+        assert repository._prefix == "grib/gfs/"
 
     def test_goes19_defaults_to_noaa_s3_without_config(self):
         registry = create_data_source_registry(config=None)
