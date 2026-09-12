@@ -15,7 +15,7 @@ from typing import Any
 SOURCE_LIFECYCLE_PREFIXES: dict[str, dict[str, str]] = {
     "goes19-abi": {"tiles": "tiles/goes19/abi", "cog": "cog/goes19/abi"},
     "goes19-glm": {"tiles": "tiles/goes19/glm", "cog": "cog/goes19/glm"},
-    "radar": {"tiles": "tiles/radar", "cog": "cog/radar"},
+    "radar-sinarame": {"tiles": "tiles/radar/sinarame", "cog": "cog/radar/sinarame"},
     "wrf": {"tiles": "tiles/wrf", "cog": "cog/wrf", "geojson": "geojson/wrf"},
     "ecmwf": {
         "tiles": "tiles/models/ecmwf",

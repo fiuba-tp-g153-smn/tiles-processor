@@ -55,11 +55,17 @@ def _unit(data_source_id: str, processor_id: str) -> WorkUnit:
 
 @pytest.mark.parametrize(
     "data_source_id",
-    ["radar_DBZH", "radar_VRAD", "radar_ZDR", "radar_RHOHV", "radar_KDP"],
+    [
+        "radar_sinarame_dbzh",
+        "radar_sinarame_vrad",
+        "radar_sinarame_zdr",
+        "radar_sinarame_rhohv",
+        "radar_sinarame_kdp",
+    ],
 )
 def test_radar_units_go_to_radar_light_queue(data_source_id):
     router = _router()
-    assert router.route(_unit(data_source_id, "radar")) == RADAR_LIGHT
+    assert router.route(_unit(data_source_id, "radar_sinarame")) == RADAR_LIGHT
 
 
 @pytest.mark.parametrize("product_id", sorted(ALL_WRF_PRODUCTS))
@@ -71,7 +77,7 @@ def test_configured_wrf_units_go_to_wrf_light_queue(product_id):
 def test_three_way_split():
     """Radar, configured WRF and heavy units each land on their own queue."""
     router = _router()
-    assert router.route(_unit("radar_DBZH", "radar")) == RADAR_LIGHT
+    assert router.route(_unit("radar_sinarame_dbzh", "radar_sinarame")) == RADAR_LIGHT
     assert router.route(_unit("wrf_Colmax", "wrf")) == WRF_LIGHT
     assert router.route(_unit("goes19_glm", "goes19_glm_fed")) == NORMAL
 
@@ -99,4 +105,4 @@ def test_wrf_product_absent_from_config_goes_to_normal_queue():
 
 def test_radar_stays_normal_when_all_radar_light_disabled():
     router = _router(all_radar_light=False)
-    assert router.route(_unit("radar_DBZH", "radar")) == NORMAL
+    assert router.route(_unit("radar_sinarame_dbzh", "radar_sinarame")) == NORMAL

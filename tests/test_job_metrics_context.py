@@ -43,7 +43,7 @@ def test_build_populates_timings_and_label():
     assert metrics.stage_timings == {"georef": 3.2}
     assert metrics.total_s is not None and metrics.total_s >= 0
     assert metrics.job_type == "goes19_abi_band_13"
-    assert "GOES ABI" in metrics.product_label
+    assert "GOES-19 ABI" in metrics.product_label
     assert metrics.worker_host == "worker-light1"  # injected worker id round-trips
 
 

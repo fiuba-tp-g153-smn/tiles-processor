@@ -204,7 +204,7 @@ class LiveStatus(BaseModel):
                 "in_progress": [
                     {
                         "image_id": "RMA12_DBZH_20260114T170328Z",
-                        "band_id": "radar",
+                        "band_id": "radar_sinarame",
                         "status": "PROCESSING",
                         "created_at": "2026-06-04T12:01:00+00:00",
                         "updated_at": "2026-06-04T12:01:05+00:00",

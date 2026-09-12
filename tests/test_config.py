@@ -175,7 +175,7 @@ class TestConfig:
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
-                "radar": {
+                "radar-sinarame": {
                     "input": {
                         "mode": "s3",
                         "s3_bucket": "radar-input",
@@ -247,7 +247,7 @@ class TestConfig:
         config = self._config_with_input(
             tmp_path,
             env_vars,
-            "radar",
+            "radar-sinarame",
             {
                 "mode": "s3",
                 "s3_bucket": "radar-input",
@@ -260,7 +260,10 @@ class TestConfig:
 
     def test_endpoint_unset_means_the_aws_default(self, tmp_path, env_vars):
         config = self._config_with_input(
-            tmp_path, env_vars, "radar", {"mode": "s3", "s3_bucket": "radar-input"}
+            tmp_path,
+            env_vars,
+            "radar-sinarame",
+            {"mode": "s3", "s3_bucket": "radar-input"},
         )
 
         assert config.RADAR_INPUT.endpoint_url is None
@@ -272,11 +275,13 @@ class TestConfig:
         self, tmp_path, env_vars, endpoint
     ):
         """A malformed endpoint must not survive until the first request."""
-        with pytest.raises(ValueError, match="sources.radar.input.s3_endpoint"):
+        with pytest.raises(
+            ValueError, match="sources.radar-sinarame.input.s3_endpoint"
+        ):
             self._config_with_input(
                 tmp_path,
                 env_vars,
-                "radar",
+                "radar-sinarame",
                 {
                     "mode": "s3",
                     "s3_bucket": "radar-input",
@@ -292,7 +297,7 @@ class TestConfig:
             self._config_with_input(
                 tmp_path,
                 env_vars,
-                "radar",
+                "radar-sinarame",
                 {
                     "mode": "s3",
                     "s3_bucket": "radar-input",
@@ -332,7 +337,7 @@ class TestConfig:
         config = self._config_with_input(
             tmp_path,
             env_vars,
-            "radar",
+            "radar-sinarame",
             {"mode": "s3", "s3_bucket": "radar-input", "s3_prefix": "/radar_h5"},
         )
 
@@ -342,7 +347,7 @@ class TestConfig:
         config = self._config_with_input(
             tmp_path,
             env_vars,
-            "radar",
+            "radar-sinarame",
             {
                 "mode": "s3",
                 "s3_bucket": "radar-input",
@@ -357,7 +362,10 @@ class TestConfig:
     def test_addressing_style_defaults_to_path(self, tmp_path, env_vars):
         """Path style is what every host:port gateway needs."""
         config = self._config_with_input(
-            tmp_path, env_vars, "radar", {"mode": "s3", "s3_bucket": "radar-input"}
+            tmp_path,
+            env_vars,
+            "radar-sinarame",
+            {"mode": "s3", "s3_bucket": "radar-input"},
         )
 
         assert config.RADAR_INPUT.s3_addressing_style == "path"
@@ -367,7 +375,7 @@ class TestConfig:
             self._config_with_input(
                 tmp_path,
                 env_vars,
-                "radar",
+                "radar-sinarame",
                 {
                     "mode": "s3",
                     "s3_bucket": "radar-input",
@@ -378,7 +386,7 @@ class TestConfig:
     def test_ecmwf_and_gfs_default_to_their_upstream_apis(self, tmp_path, env_vars):
         """The two API-backed sources keep their production default."""
         config = self._config_with_input(
-            tmp_path, env_vars, "radar", {"mode": "local", "dir": "/tmp/radar"}
+            tmp_path, env_vars, "radar-sinarame", {"mode": "local", "dir": "/tmp/radar"}
         )
 
         assert config.ECMWF_INPUT.mode == "opendata"
@@ -413,21 +421,23 @@ class TestConfig:
 
     def test_upstream_mode_is_scoped_to_its_own_source(self, tmp_path, env_vars):
         """ "opendata" is meaningless for radar and must be rejected there."""
-        with pytest.raises(ValueError, match="sources.radar.input.mode"):
-            self._config_with_input(tmp_path, env_vars, "radar", {"mode": "opendata"})
+        with pytest.raises(ValueError, match="sources.radar-sinarame.input.mode"):
+            self._config_with_input(
+                tmp_path, env_vars, "radar-sinarame", {"mode": "opendata"}
+            )
 
     def test_input_source_rejects_invalid_mode(self, tmp_path, env_vars):
         """An unknown input mode fails fast, naming the JSON path."""
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"radar": {"input": {"mode": "ftp"}}},
+            "sources": {"radar-sinarame": {"input": {"mode": "ftp"}}},
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
 
         with mock.patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises(ValueError, match="sources.radar.input.mode"):
+            with pytest.raises(ValueError, match="sources.radar-sinarame.input.mode"):
                 Config(settings_path=settings_path)
 
     def test_input_source_s3_mode_requires_bucket(self, tmp_path, env_vars):
@@ -502,16 +512,20 @@ class TestConfig:
         self, temp_settings_file, env_vars
     ):
         """Only one of access/secret key set fails fast instead of going anonymous."""
-        env = {**env_vars, "RADAR_S3_ACCESS_KEY": "ak"}
+        env = {**env_vars, "RADAR_SINARAME_S3_ACCESS_KEY": "ak"}
         with mock.patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match="RADAR_S3_ACCESS_KEY"):
+            with pytest.raises(ValueError, match="RADAR_SINARAME_S3_ACCESS_KEY"):
                 Config(settings_path=temp_settings_file)
 
     def test_input_source_empty_env_credentials_are_anonymous(
         self, temp_settings_file, env_vars
     ):
         """Compose-supplied empty credential strings normalize to anonymous."""
-        env = {**env_vars, "GOES19_ABI_S3_ACCESS_KEY": "", "GOES19_ABI_S3_SECRET_KEY": ""}
+        env = {
+            **env_vars,
+            "GOES19_ABI_S3_ACCESS_KEY": "",
+            "GOES19_ABI_S3_SECRET_KEY": "",
+        }
         with mock.patch.dict(os.environ, env, clear=True):
             config = Config(settings_path=temp_settings_file)
             assert config.GOES19_INPUT.s3_access_key is None
@@ -549,7 +563,7 @@ class TestConfig:
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
         }
         if radar_stations is not None:
-            settings["sources"] = {"radar": {"stations": radar_stations}}
+            settings["sources"] = {"radar-sinarame": {"stations": radar_stations}}
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
         return settings_path
@@ -628,7 +642,7 @@ class TestConfig:
             "sources": {
                 "goes19-abi": {"target_images": 30, "max_hours_back": 8},
                 "goes19-glm": {"safety_lag_seconds": 45, "target_windows": 12},
-                "radar": {"target_images": 6},
+                "radar-sinarame": {"target_images": 6},
                 "wrf": {"target_runs": 5},
             },
         }
@@ -657,7 +671,7 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"radar": {"target_images": 0}},
+            "sources": {"radar-sinarame": {"target_images": 0}},
         }
         path = tmp_path / "settings.json"
         path.write_text(json.dumps(settings))
@@ -670,7 +684,7 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"radar": {"zoom_levels": "5-10"}},
+            "sources": {"radar-sinarame": {"zoom_levels": "5-10"}},
         }
         path = tmp_path / "settings.json"
         path.write_text(json.dumps(settings))
@@ -720,7 +734,7 @@ class TestConfig:
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
-                "radar": {"retention_days": 3},
+                "radar-sinarame": {"retention_days": 3},
                 "ecmwf": {"retention_days": {"default": 2, "grib": 1}},
             },
         }
@@ -728,8 +742,8 @@ class TestConfig:
         settings_path.write_text(json.dumps(settings))
         with mock.patch.dict(os.environ, env_vars, clear=True):
             retention = Config(settings_path=settings_path).TILE_LIFECYCLE_RETENTION
-            assert retention["tiles/radar"] == 3
-            assert retention["cog/radar"] == 3
+            assert retention["tiles/radar/sinarame"] == 3
+            assert retention["cog/radar/sinarame"] == 3
             assert retention["grib/models/ecmwf"] == 1
             assert retention["tiles/models/ecmwf"] == 2
             # A source with no retention_days falls back to the default (1 day).

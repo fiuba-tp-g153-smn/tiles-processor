@@ -172,7 +172,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         _sources: Dict[str, Any] = settings.get("sources", {})
         _goes19 = _sources.get("goes19-abi", {})
         _glm = _sources.get("goes19-glm", {})
-        _radar = _sources.get("radar", {})
+        _radar = _sources.get("radar-sinarame", {})
         _wrf = _sources.get("wrf", {})
         _ecmwf = _sources.get("ecmwf", {})
         _gfs = _sources.get("gfs", {})
@@ -320,7 +320,10 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # Mode/dir/bucket/endpoint/prefix come from sources.<name>.input;
         # credentials from {ENV_PREFIX}_S3_ACCESS_KEY/_SECRET_KEY env vars. ---
         self.RADAR_INPUT: InputSourceConfig = self._parse_input_source(
-            _radar, "radar", default_dir=str(Path(self.DATA_DIR) / "radar_h5")
+            _radar,
+            "radar-sinarame",
+            env_prefix="RADAR_SINARAME",
+            default_dir=str(Path(self.DATA_DIR) / "radar_h5"),
         )
         self.GLM_FOLDER_INPUT: InputSourceConfig = self._parse_input_source(
             _glm,

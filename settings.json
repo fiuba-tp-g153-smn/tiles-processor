@@ -32,20 +32,20 @@
       "zoom_levels": "3-7",
       "retention_days": 1
     },
-    "radar": {
+    "radar-sinarame": {
       "input": { "mode": "local", "dir": "/app/data/radar_h5" },
       "stations": "all",
       "products": {
-        "DBZH": true,
-        "DBZH_450KM": true,
-        "ZDR": true,
-        "RHOHV": true,
-        "KDP": true,
-        "VRAD": true,
-        "ZH": false,
-        "TH": false,
-        "WRAD": false,
-        "PHIDP": false
+        "dbzh": true,
+        "dbzh-450km": true,
+        "zdr": true,
+        "rhohv": true,
+        "kdp": true,
+        "vrad": true,
+        "zh": false,
+        "th": false,
+        "wrad": false,
+        "phidp": false
       },
       "target_images": 12,
       "zoom_levels": "4-9",

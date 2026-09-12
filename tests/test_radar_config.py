@@ -81,11 +81,11 @@ def test_rejects_non_string_station_entries():
         RadarStationFilter.from_settings({"blacklist": ["RMA1", 3]})
 
 
-def test_variable_defaults_to_product_id():
+def test_variable_is_the_uppercase_odim_token():
     # Only products whose filename token differs from their id set file_variable.
-    assert RADAR_PRODUCT_CONFIGS["DBZH"].variable == "DBZH"
-    assert RADAR_PRODUCT_CONFIGS["VRAD"].variable == "VRAD"
-    assert RADAR_PRODUCT_CONFIGS["DBZH_450KM"].variable == "DBZH"
+    assert RADAR_PRODUCT_CONFIGS["dbzh"].variable == "DBZH"
+    assert RADAR_PRODUCT_CONFIGS["vrad"].variable == "VRAD"
+    assert RADAR_PRODUCT_CONFIGS["dbzh-450km"].variable == "DBZH"
 
 
 def test_variable_subvolume_pairs_are_unique():
@@ -98,16 +98,14 @@ def test_variable_subvolume_pairs_are_unique():
 @pytest.mark.parametrize(
     "filename,expected",
     [
-        ("RMA1_0315_01_DBZH_20260114T170000Z.H5", "DBZH"),
-        ("RMA1_0315_04_DBZH_20260114T170010Z.H5", "DBZH_450KM"),
-        ("RMA1_0315_02_VRAD_20260114T170000Z.H5", "VRAD"),
+        ("RMA1_0315_01_DBZH_20260114T170000Z.H5", "dbzh"),
+        ("RMA1_0315_04_DBZH_20260114T170010Z.H5", "dbzh-450km"),
+        ("RMA1_0315_02_VRAD_20260114T170000Z.H5", "vrad"),
     ],
 )
 def test_resolves_product_from_variable_and_subvolume(filename, expected):
     parsed = parse_radar_filename(filename)
-    config = get_radar_product_config_for_file(
-        parsed["variable"], parsed["subvolume"]
-    )
+    config = get_radar_product_config_for_file(parsed["variable"], parsed["subvolume"])
     assert config.product_id == expected
 
 

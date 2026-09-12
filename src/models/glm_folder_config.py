@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Final
 
-
 _TS_TOKEN_LEN: Final[int] = 14  # YYYY+JJJ+HH+MM+SS+D
 
 

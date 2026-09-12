@@ -7,18 +7,18 @@ from services.job_descriptor import describe_job
 
 
 def test_goes_band_13_label_and_timestamp():
-    desc = describe_job("goes19_abi_band_13", "20260521320209", "goes19_abi_c13")
-    assert desc.job_type == "goes19_abi_band_13"
-    assert "GOES ABI" in desc.product_label
+    desc = describe_job("goes19_abi_c13", "20260521320209", "goes19_abi_c13")
+    assert desc.job_type == "goes19_abi_c13"
+    assert "GOES-19 ABI" in desc.product_label
     assert "Cloud Tops" in desc.product_label
     assert desc.image_timestamp == "20260521320209"
 
 
 def test_radar_rma12_dbzh_label_and_timestamp():
-    desc = describe_job("radar_DBZH", "RMA12_DBZH_20260114T170328Z", "radar")
-    assert desc.job_type == "radar_DBZH"
+    desc = describe_job("radar_sinarame_dbzh", "RMA12_dbzh_20260114T170328Z", "radar")
+    assert desc.job_type == "radar_sinarame_dbzh"
     assert "RMA12" in desc.product_label
-    assert "DBZH" in desc.product_label
+    assert "dbzh" in desc.product_label
     assert "Horizontal Reflectivity" in desc.product_label
     assert desc.image_timestamp == "20260114T170328Z"
 
@@ -27,10 +27,10 @@ def test_radar_product_with_underscore_keeps_timestamp():
     # DBZH_450KM has an underscore in the product id, so the timestamp must be
     # read off the end of the image_id rather than by field position.
     desc = describe_job(
-        "radar_DBZH_450KM", "RMA1_DBZH_450KM_20260114T170328Z", "radar"
+        "radar_sinarame_dbzh-450km", "RMA1_dbzh-450km_20260114T170328Z", "radar"
     )
     assert "RMA1" in desc.product_label
-    assert "DBZH_450KM" in desc.product_label
+    assert "dbzh-450km" in desc.product_label
     assert "450 km" in desc.product_label
     assert desc.image_timestamp == "20260114T170328Z"
 
@@ -64,6 +64,6 @@ def test_unknown_source_falls_back_to_raw_values():
 
 def test_malformed_radar_image_id_does_not_raise():
     # image_id without the expected 3 underscore-separated parts
-    desc = describe_job("radar_DBZH", "weird", "radar")
-    assert desc.job_type == "radar_DBZH"
+    desc = describe_job("radar_sinarame_dbzh", "weird", "radar")
+    assert desc.job_type == "radar_sinarame_dbzh"
     assert isinstance(desc.product_label, str)

@@ -49,18 +49,18 @@ def test_rejects_unknown_override_kind():
 
 def test_rejects_zero_or_negative_days():
     with pytest.raises(ValueError, match=">= 1"):
-        resolve_retention_map({"radar": {"retention_days": 0}})
+        resolve_retention_map({"radar-sinarame": {"retention_days": 0}})
 
 
 def test_rejects_non_integer_days():
     with pytest.raises(ValueError, match=">= 1"):
-        resolve_retention_map({"radar": {"retention_days": 1.5}})
+        resolve_retention_map({"radar-sinarame": {"retention_days": 1.5}})
 
 
 def test_rejects_boolean_days():
     # bool is an int subclass; it must not be accepted as a day count.
     with pytest.raises(ValueError, match=">= 1"):
-        resolve_retention_map({"radar": {"retention_days": True}})
+        resolve_retention_map({"radar-sinarame": {"retention_days": True}})
 
 
 def test_every_written_prefix_is_covered_by_a_lifecycle_rule():

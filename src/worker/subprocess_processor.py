@@ -69,7 +69,7 @@ def create_processor_registry():
     registry.register("goes19_glm_fed", GlmFedProcessor)
 
     # Register Radar processor
-    registry.register("radar", RadarProcessor)
+    registry.register("radar_sinarame", RadarProcessor)
 
     # Register ECMWF processors (subprocess for scientific processing)
     registry.register(ECMWF_TP_CONFIG.processor_id, EcmwfTotalPrecipitationProcessor)

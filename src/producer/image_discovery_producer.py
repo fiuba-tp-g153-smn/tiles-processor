@@ -178,8 +178,8 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         if source_id == "goes19_glm":
             return self._config.ENABLE_GLM_FED
         # Check for radar sources (radar_DBZH, radar_VRAD, etc.)
-        if source_id.startswith("radar_"):
-            product_id = source_id.removeprefix("radar_")
+        if source_id.startswith("radar_sinarame_"):
+            product_id = source_id.removeprefix("radar_sinarame_")
             return self._config.ENABLED_RADAR_PRODUCTS.get(product_id, False)
         # Check for WRF sources (wrf_Colmax, wrf_Rafagas, etc.)
         if source_id.startswith("wrf_"):
@@ -224,7 +224,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             )
         elif isinstance(data_source, RadarDataSource):
             # Radar sources use product_id as band_id
-            band_id = f"radar_{data_source.product_config.product_id}"
+            band_id = f"radar_sinarame_{data_source.product_config.product_id}"
             product_id = data_source.product_config.product_id
             # Search across all radar IDs for this product
             existing_tilesets = await self._get_radar_existing_tilesets(product_id)
@@ -362,31 +362,31 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         """
         Get existing radar tilesets across all radar IDs for a specific product.
 
-        Path structure: tiles/radar/{radar_id}/{product}/{elev}/{timestamp}/
+        Path structure: tiles/radar/sinarame/{radar_id}/{product}/{elev}/{timestamp}/
         Returns image_ids like: RMA1_DBZH_20260114T170328Z
         """
         tilesets = set()
         try:
-            # List radar IDs: tiles/radar/RMA1/, tiles/radar/RMA12/, etc.
+            # List radar IDs: tiles/radar/sinarame/RMA1/, tiles/radar/sinarame/RMA12/, etc.
             radar_ids = await self._s3_client.list_prefixes(
-                "tiles/radar/", delimiter="/"
+                "tiles/radar/sinarame/", delimiter="/"
             )
             for radar_id_prefix in radar_ids:
                 # radar_id_prefix = "tiles/radar/RMA1/"
                 radar_id = radar_id_prefix.rstrip("/").split("/")[-1]
-                # Build product path: tiles/radar/RMA1/DBZH/
+                # Build product path: tiles/radar/sinarame/RMA1/dbzh/
                 product_prefix = f"{radar_id_prefix}{product_id}/"
                 # List elevation prefixes in this radar/product combination
                 elevation_prefixes = await self._s3_client.list_prefixes(
                     product_prefix, delimiter="/"
                 )
                 for elevation_prefix in elevation_prefixes:
-                    # elevation_prefix = "tiles/radar/RMA1/DBZH/elev0/"
+                    # elevation_prefix = "tiles/radar/sinarame/RMA1/dbzh/elev0/"
                     timestamp_prefixes = await self._s3_client.list_prefixes(
                         elevation_prefix, delimiter="/"
                     )
                     for timestamp_prefix in timestamp_prefixes:
-                        # timestamp_prefix = "tiles/radar/RMA1/DBZH/elev0/20260114T170328Z/"
+                        # timestamp_prefix = "tiles/radar/sinarame/RMA1/dbzh/elev0/20260114T170328Z/"
                         timestamp = timestamp_prefix.rstrip("/").split("/")[-1]
                         image_id = f"{radar_id}_{product_id}_{timestamp}"
                         tilesets.add(image_id)

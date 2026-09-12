@@ -13,7 +13,6 @@ import xarray as xr
 from models.work_unit import WorkUnit
 from processors.glm_fed_processor import GlmFedProcessor
 
-
 SMALL_BOUNDS = {"minx": -80.0, "maxx": -78.0, "miny": -50.0, "maxy": -48.0}
 
 

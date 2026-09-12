@@ -117,7 +117,7 @@ class TestCreateDataSourceRegistry:
         config = self._build_config(tp=False, mslp=False)
         registry = create_data_source_registry(config)
 
-        radar_source = registry.get("radar_DBZH")
+        radar_source = registry.get("radar_sinarame_dbzh")
         assert isinstance(radar_source._repository, LocalRadarFileRepository)
 
     def test_radar_s3_mode_builds_s3_repository(self):
@@ -132,7 +132,7 @@ class TestCreateDataSourceRegistry:
         with patch("factories.S3Client") as mock_s3_cls:
             registry = create_data_source_registry(config)
 
-        radar_source = registry.get("radar_DBZH")
+        radar_source = registry.get("radar_sinarame_dbzh")
         assert isinstance(radar_source._repository, S3RadarFileRepository)
         _, kwargs = mock_s3_cls.call_args
         assert kwargs["bucket_name"] == "radar-input"

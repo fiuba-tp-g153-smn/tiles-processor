@@ -226,11 +226,11 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="RMA11_KDP_20260114T170040Z",
                 source_uri="/data/radar/RMA11_KDP_20260114T170040Z.H5",
-                data_source_id="radar_KDP",
-                processor_id="radar",
-                output_prefix="tiles/radar",
+                data_source_id="radar_sinarame_kdp",
+                processor_id="radar_sinarame",
+                output_prefix="tiles/radar/sinarame/sinarame",
                 bounds=config.get_bounds(),
-                band_id="radar_KDP",
+                band_id="radar_sinarame_kdp",
             )
 
             asyncio.run(
@@ -298,11 +298,11 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="RMA1_DBZH_20260114T170040Z",
                 source_uri="/data/radar/RMA1_DBZH_20260114T170040Z.H5",
-                data_source_id="radar_DBZH",
-                processor_id="radar",
-                output_prefix="tiles/radar",
+                data_source_id="radar_sinarame_dbzh",
+                processor_id="radar_sinarame",
+                output_prefix="tiles/radar/sinarame/sinarame",
                 bounds=config.get_bounds(),
-                band_id="radar_DBZH",
+                band_id="radar_sinarame_dbzh",
             )
 
             with mock.patch.object(JobMetricsContext, "mark_outcome") as mark_outcome:

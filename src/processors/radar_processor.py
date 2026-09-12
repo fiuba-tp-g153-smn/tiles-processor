@@ -273,11 +273,13 @@ class RadarProcessor(ImageProcessor):
 
         return radar
 
-    def _get_field_name(self, radar, product_id: str) -> str:
+    def _get_field_name(self, radar, variable_id: str) -> str:
         """
-        Resolve the PyART field name for the requested product.
+        Resolve the PyART field name for the requested moment.
 
-        Maps the product ID to the actual moment in the scan. Raises
+        Takes the uppercase ODIM moment (DBZH, ZDR, ...), not the lowercase
+        product id: callers pass ``product_config.variable``. Maps it to the
+        actual moment in the scan. Raises
         UnprocessableInputError when the scan does not carry that moment (e.g. a
         single-pol volume asked for ZDR): falling back to an arbitrary field would
         render the wrong physical variable under this product's palette and upload
@@ -299,9 +301,9 @@ class RadarProcessor(ImageProcessor):
         available_fields = list(radar.fields.keys())
 
         # Return the mapped moment for this product if the scan carries it.
-        for candidate in field_mappings.get(product_id, ()):
+        for candidate in field_mappings.get(variable_id, ()):
             if candidate in available_fields:
-                logger.info("[RADAR] Mapped %s → %s", product_id, candidate)
+                logger.info("[RADAR] Mapped %s → %s", variable_id, candidate)
                 return candidate
 
         # The scan does not carry this product's moment (e.g. a single-pol volume
@@ -309,7 +311,7 @@ class RadarProcessor(ImageProcessor):
         # the wrong physical variable under this product's palette and upload it
         # under this product's prefix. Skip the unit instead (ack, no retry).
         raise UnprocessableInputError(
-            f"radar scan has no field for product {product_id!r} "
+            f"radar scan has no field for product {variable_id!r} "
             f"(available: {available_fields or 'none'})"
         )
 
