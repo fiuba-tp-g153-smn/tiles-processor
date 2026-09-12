@@ -157,27 +157,6 @@ DBZH_450KM_CONFIG = RadarProductConfig(
     long_name="Horizontal Reflectivity (450 km)",
 )
 
-ZH_CONFIG = RadarProductConfig(
-    product_id="zh",
-    file_variable="ZH",
-    field_name="reflectivity",
-    subvolume="01",
-    s3_tiles_prefix="tiles/radar/sinarame",
-    s3_cog_prefix="cog/radar/sinarame",
-    unit="dBZ",
-    long_name="Reflectivity",
-)
-
-TH_CONFIG = RadarProductConfig(
-    product_id="th",
-    file_variable="TH",
-    field_name="total_power",
-    subvolume="01",
-    s3_tiles_prefix="tiles/radar/sinarame",
-    s3_cog_prefix="cog/radar/sinarame",
-    unit="dBZ",
-    long_name="Total Power",
-)
 
 VRAD_CONFIG = RadarProductConfig(
     product_id="vrad",
@@ -190,16 +169,6 @@ VRAD_CONFIG = RadarProductConfig(
     long_name="Radial Velocity",
 )
 
-WRAD_CONFIG = RadarProductConfig(
-    product_id="wrad",
-    file_variable="WRAD",
-    field_name="spectrum_width",
-    subvolume="02",
-    s3_tiles_prefix="tiles/radar/sinarame",
-    s3_cog_prefix="cog/radar/sinarame",
-    unit="m/s",
-    long_name="Spectrum Width",
-)
 
 RHOHV_CONFIG = RadarProductConfig(
     product_id="rhohv",
@@ -234,29 +203,15 @@ KDP_CONFIG = RadarProductConfig(
     long_name="Specific Differential Phase",
 )
 
-PHIDP_CONFIG = RadarProductConfig(
-    product_id="phidp",
-    file_variable="PHIDP",
-    field_name="differential_phase",
-    subvolume="01",
-    s3_tiles_prefix="tiles/radar/sinarame",
-    s3_cog_prefix="cog/radar/sinarame",
-    unit="°",
-    long_name="Differential Phase",
-)
 
 # Registry for looking up radar product configs by ID
 RADAR_PRODUCT_CONFIGS = {
     "dbzh": DBZH_CONFIG,
     "dbzh-450km": DBZH_450KM_CONFIG,
-    "zh": ZH_CONFIG,
-    "th": TH_CONFIG,
     "vrad": VRAD_CONFIG,
-    "wrad": WRAD_CONFIG,
     "rhohv": RHOHV_CONFIG,
     "zdr": ZDR_CONFIG,
     "kdp": KDP_CONFIG,
-    "phidp": PHIDP_CONFIG,
 }
 
 

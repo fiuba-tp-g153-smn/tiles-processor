@@ -40,10 +40,7 @@
         "zdr": true,
         "rhohv": true,
         "kdp": true,
-        "vrad": true,
-        "zh": false,
-        "th": false,
-        "wrad": false
+        "vrad": true
       },
       "stations": "all",
       "target_images": 12,

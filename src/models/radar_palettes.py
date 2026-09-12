@@ -51,7 +51,7 @@ class PaletteConfig:
 
 
 # ============================================================================
-# REFLECTIVITY (DBZH / ZH / TH) - paleta_vmsr
+# REFLECTIVITY (DBZH) - paleta_vmsr
 # ============================================================================
 
 DBZH_PALETTE = PaletteConfig(
@@ -1068,50 +1068,6 @@ KDP_PALETTE = PaletteConfig(
 # SPECTRUM WIDTH (WRAD) - paleta_wrad
 # ============================================================================
 
-WRAD_PALETTE = PaletteConfig(
-    hex_colors=(
-        "#201F20",
-        "#333232",
-        "#413F40",
-        "#535153",
-        "#666465",
-        "#787678",
-        "#8B888A",
-        "#9E9A9D",
-        "#B0ACAF",
-        "#EDD202",
-        "#EDA202",
-        "#ED7C01",
-        "#ED5F01",
-        "#ED4301",
-        "#DF2700",
-        "#CC1C00",
-        "#B91100",
-        "#A60600",
-    ),
-    bounds=(
-        1.0,
-        1.5,
-        2.0,
-        2.5,
-        3.0,
-        3.5,
-        4.0,
-        4.5,
-        5.0,
-        5.5,
-        6.0,
-        6.5,
-        7.0,
-        7.5,
-        8.0,
-        8.5,
-        9.0,
-        9.5,
-    ),
-    use_boundary_norm=True,
-)
-
 
 # ============================================================================
 # PALETTE REGISTRY
@@ -1119,13 +1075,10 @@ WRAD_PALETTE = PaletteConfig(
 
 RADAR_PALETTES = {
     "DBZH": DBZH_PALETTE,
-    "ZH": DBZH_PALETTE,
-    "TH": DBZH_PALETTE,
     "VRAD": VRAD_PALETTE,
     "RHOHV": RHOHV_PALETTE,
     "ZDR": ZDR_PALETTE,
     "KDP": KDP_PALETTE,
-    "WRAD": WRAD_PALETTE,
 }
 
 

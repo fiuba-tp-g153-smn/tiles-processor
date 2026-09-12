@@ -130,20 +130,34 @@ def test_every_radar_product_config_declares_a_palette_or_stays_off():
         for pid, cfg in RADAR_PRODUCT_CONFIGS.items()
         if cfg.variable not in RADAR_PALETTES
     )
-    assert unrenderable == ["phidp"], (
-        f"radar products without a palette changed: {unrenderable}. Adding one "
-        f"is good (shrink this list); adding a product without one is not."
+    assert unrenderable == [], (
+        f"radar products without a palette: {unrenderable}. Every product in "
+        f"the registry is a flippable settings toggle, so one without a palette "
+        f"is a switch that raises on every file it sees."
     )
 
 
 def test_enabling_a_product_without_a_palette_fails_at_startup(tmp_path, monkeypatch):
-    """The failure must land once at boot, not once per file forever."""
+    """The failure must land once at boot, not once per file forever.
+
+    Every product currently has a palette, so the scenario is constructed by
+    removing one: get_palette is called before the sweep loop, so without this
+    check a palette-less product raises for every file it ever sees.
+    """
     import json
+
+    import models.radar_palettes as palettes
+
+    monkeypatch.setitem(
+        palettes.__dict__,
+        "RADAR_PALETTES",
+        {k: v for k, v in palettes.RADAR_PALETTES.items() if k != "DBZH"},
+    )
 
     settings = {
         "timezone": "UTC",
         "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-        "sources": {"radar-sinarame": {"products": {"phidp": True}}},
+        "sources": {"radar-sinarame": {"products": {"dbzh": True}}},
     }
     path = tmp_path / "settings.json"
     path.write_text(json.dumps(settings))

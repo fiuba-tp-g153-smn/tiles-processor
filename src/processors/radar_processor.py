@@ -288,14 +288,10 @@ class RadarProcessor(ImageProcessor):
         # Common field name mappings
         field_mappings = {
             "DBZH": ["reflectivity", "reflectivity_horizontal", "total_power"],
-            "ZH": ["reflectivity", "reflectivity_horizontal"],
-            "TH": ["total_power", "reflectivity"],
             "VRAD": ["velocity"],
-            "WRAD": ["spectrum_width"],
             "RHOHV": ["cross_correlation_ratio"],
             "ZDR": ["differential_reflectivity"],
             "KDP": ["specific_differential_phase"],
-            "PHIDP": ["differential_phase"],
         }
 
         available_fields = list(radar.fields.keys())
