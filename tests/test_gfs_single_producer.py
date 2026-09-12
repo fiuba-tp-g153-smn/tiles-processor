@@ -22,7 +22,11 @@ from models.gfs_config import (
 ENDPOINT = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
 
 
-_PRODUCT_KEYS = {"mslp": "mslp", "500": "500hpa", "250": "250hpa"}
+_PRODUCT_KEYS = {
+    "mslp": "mean-sea-level-pressure",
+    "500": "geopotential-500hpa",
+    "250": "geopotential-250hpa",
+}
 
 
 def _config(tmp_path, monkeypatch, **flags) -> Config:
@@ -94,8 +98,8 @@ class TestEnabledProducts:
             tmp_path, monkeypatch, enable_gfs_mslp=True, enable_gfs_250=True
         )
         assert [p.product_id for p in enabled_gfs_products(config)] == [
-            "mslp",
-            "250hpa",
+            "mean-sea-level-pressure",
+            "geopotential-250hpa",
         ]
 
     def test_returns_all_three_when_all_are_on(self, tmp_path, monkeypatch):
@@ -108,9 +112,9 @@ class TestEnabledProducts:
     def test_order_is_stable(self, tmp_path, monkeypatch):
         config = _config(tmp_path, monkeypatch, **ALL_ON)
         assert [p.product_id for p in enabled_gfs_products(config)] == [
-            "mslp",
-            "500hpa",
-            "250hpa",
+            "mean-sea-level-pressure",
+            "geopotential-500hpa",
+            "geopotential-250hpa",
         ]
 
 
@@ -125,7 +129,7 @@ class TestEndpointWiring:
             "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
             "sources": {
                 "goes19-abi": {"products": {"c13": False}},
-                "gfs": {"products": {"mslp": True}},
+                "gfs": {"products": {"mean-sea-level-pressure": True}},
             },
         }
         path = tmp_path / "settings.json"

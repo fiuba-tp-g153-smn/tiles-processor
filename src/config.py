@@ -256,12 +256,12 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # --- ECMWF ---
         _ecmwf_products = _ecmwf.get("products", {})
         self.ENABLE_ECMWF_PRECIPITATION: bool = _ecmwf_products.get(
-            "precipitation", False
+            "total-precipitation", False
         )
         self.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE: bool = _ecmwf_products.get(
-            "mean_sea_level_pressure", False
+            "mean-sea-level-pressure", False
         )
-        _ecmwf_mslp = _ecmwf.get("mslp", {})
+        _ecmwf_mslp = _ecmwf.get("mean-sea-level-pressure", {})
         self.ECMWF_MSLP_ISOBAR_SIMPLIFY_TOLERANCE: float = float(
             _ecmwf_mslp.get("isobar_simplify_tolerance", 0.1)
         )
@@ -284,9 +284,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
 
         # --- GFS ---
         _gfs_products = _gfs.get("products", {})
-        self.ENABLE_GFS_MSLP: bool = _gfs_products.get("mslp", False)
-        self.ENABLE_GFS_500: bool = _gfs_products.get("500hpa", False)
-        self.ENABLE_GFS_250: bool = _gfs_products.get("250hpa", False)
+        self.ENABLE_GFS_MSLP: bool = _gfs_products.get("mean-sea-level-pressure", False)
+        self.ENABLE_GFS_500: bool = _gfs_products.get("geopotential-500hpa", False)
+        self.ENABLE_GFS_250: bool = _gfs_products.get("geopotential-250hpa", False)
         self.GFS_ACCESS: GfsAccessConfig = self._parse_gfs_access(_gfs)
         self.GFS_CYCLES_TO_MAINTAIN: int = int(_gfs.get("cycles_to_maintain", 3))
         self.GFS_MAX_STEPS_PER_TICK: int = int(_gfs.get("max_steps_per_tick", 12))

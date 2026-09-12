@@ -52,8 +52,10 @@ def test_goes19_glm_label():
 
 
 def test_ecmwf_label():
-    desc = describe_job("ecmwf_ifs_tp_period", "tp_20260114_12UTC_006", "ecmwf_tp")
-    assert desc.job_type == "ecmwf_ifs_tp_period"
+    desc = describe_job(
+        "ecmwf_ifs_total_precipitation_period", "tp_20260114_12UTC_006", "ecmwf_tp"
+    )
+    assert desc.job_type == "ecmwf_ifs_total_precipitation_period"
     assert "ECMWF" in desc.product_label
 
 

@@ -542,8 +542,8 @@ class TestConfig:
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
                 "ecmwf-ifs": {
-                    "products": {"mean_sea_level_pressure": True},
-                    "mslp": {
+                    "products": {"mean-sea-level-pressure": True},
+                    "mean-sea-level-pressure": {
                         "isobar_simplify_tolerance": 0.5,
                         "smoothing_sigma": 2.5,
                     },

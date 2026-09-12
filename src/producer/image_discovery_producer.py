@@ -187,7 +187,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             return self._config.ENABLED_WRF_PRODUCTS.get(product_id, False)
 
         # ECMWF sources
-        if source_id == "ecmwf_ifs_tp_producer":
+        if source_id == "ecmwf_ifs_total_precipitation_producer":
             return self._config.ENABLE_ECMWF_PRECIPITATION
 
         if source_id == GFS_PRODUCER_DATA_SOURCE_ID:

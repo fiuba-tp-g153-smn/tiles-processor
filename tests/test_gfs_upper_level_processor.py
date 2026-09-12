@@ -99,8 +99,14 @@ class TestPalettes:
             int(color[1:], 16)
 
     def test_lookup_by_product(self):
-        assert wind_palette("500hpa") == (WIND_500_THRESHOLDS, WIND_500_COLORS)
-        assert wind_palette("250hpa") == (WIND_250_THRESHOLDS, WIND_250_COLORS)
+        assert wind_palette("geopotential-500hpa") == (
+            WIND_500_THRESHOLDS,
+            WIND_500_COLORS,
+        )
+        assert wind_palette("geopotential-250hpa") == (
+            WIND_250_THRESHOLDS,
+            WIND_250_COLORS,
+        )
 
     def test_unknown_product_raises(self):
         with pytest.raises(ValueError, match="No wind palette"):
@@ -462,8 +468,8 @@ class TestPipeline:
         """500 and 250 share a processor, so a leak here is a real risk."""
         await processor.process(str(FIXTURE), _work_unit(GFS_500_CONFIG))
         keys = [c.args[0] for c in processor._s3_client.upload_file.call_args_list]
-        assert all("500hpa" in k for k in keys)
-        assert not any("250hpa" in k for k in keys)
+        assert all("geopotential-500hpa" in k for k in keys)
+        assert not any("geopotential-250hpa" in k for k in keys)
 
     @pytest.mark.asyncio
     async def test_tiles_are_namespaced_by_cycle_and_step(self, processor):

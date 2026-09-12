@@ -140,13 +140,13 @@ class TestGfsProducts:
         `GFS_500_CONFIG.processor_id` and nothing else for the upper levels, so
         250 hPa works purely because the two ids are equal.
         """
-        assert GFS_PRODUCT_CONFIGS["250hpa"].processor_id == (
-            GFS_PRODUCT_CONFIGS["500hpa"].processor_id
+        assert GFS_PRODUCT_CONFIGS["geopotential-250hpa"].processor_id == (
+            GFS_PRODUCT_CONFIGS["geopotential-500hpa"].processor_id
         )
 
     def test_mslp_does_not_share_the_upper_level_processor(self):
-        assert GFS_PRODUCT_CONFIGS["mslp"].processor_id != (
-            GFS_PRODUCT_CONFIGS["500hpa"].processor_id
+        assert GFS_PRODUCT_CONFIGS["mean-sea-level-pressure"].processor_id != (
+            GFS_PRODUCT_CONFIGS["geopotential-500hpa"].processor_id
         )
 
 
@@ -202,7 +202,7 @@ class TestRegistryContract:
 
     def test_stores_classes_not_instances(self, registry):
         """Lazy instantiation: building every processor per work unit is costly."""
-        assert isinstance(registry.get("gfs_mslp"), type)
+        assert isinstance(registry.get("gfs_mean_sea_level_pressure"), type)
 
     def test_inline_processor_ids_are_not_in_the_subprocess_registry(self, registry):
         """Inline processors run in the worker process and are wired separately.

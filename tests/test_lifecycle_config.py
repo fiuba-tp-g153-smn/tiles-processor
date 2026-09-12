@@ -149,7 +149,7 @@ def test_settings_product_keys_are_all_known(settings_name):
         "goes19-glm": {"fed", "toe", "mfa"},
         "radar-sinarame": set(RADAR_PRODUCT_CONFIGS),
         "wrf-arg4k": set(WRF_PRODUCT_CONFIGS),
-        "ecmwf-ifs": {"precipitation", "mean_sea_level_pressure"},
+        "ecmwf-ifs": {"total-precipitation", "mean-sea-level-pressure"},
         "gfs": set(GFS_PRODUCT_CONFIGS),
     }
     assert BAND_CONFIGS, "band configs must exist for this guard to mean anything"

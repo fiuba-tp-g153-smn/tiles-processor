@@ -53,8 +53,8 @@ WIND_250_COLORS: tuple[str, ...] = (
 )
 
 _BY_PRODUCT: dict[str, tuple[tuple[float, ...], tuple[str, ...]]] = {
-    "500hpa": (WIND_500_THRESHOLDS, WIND_500_COLORS),
-    "250hpa": (WIND_250_THRESHOLDS, WIND_250_COLORS),
+    "geopotential-500hpa": (WIND_500_THRESHOLDS, WIND_500_COLORS),
+    "geopotential-250hpa": (WIND_250_THRESHOLDS, WIND_250_COLORS),
 }
 
 

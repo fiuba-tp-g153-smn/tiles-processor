@@ -88,7 +88,10 @@ def test_three_way_split():
         ("goes19_abi_band_2", "goes_band_2"),
         ("goes19_abi_band_13", "goes_band_13"),
         ("goes19_glm", "goes19_glm_fed"),
-        ("ecmwf_ifs_tp_producer", "ecmwf_ifs_tp_processor"),
+        (
+            "ecmwf_ifs_total_precipitation_producer",
+            "ecmwf_ifs_total_precipitation_processor",
+        ),
     ],
 )
 def test_heavy_units_go_to_normal_queue(data_source_id, processor_id):

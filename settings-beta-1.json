@@ -70,14 +70,14 @@
     },
     "ecmwf-ifs": {
       "input": { "mode": "opendata" },
-      "products": { "precipitation": true, "mean_sea_level_pressure": false },
-      "mslp": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 },
+      "products": { "total-precipitation": true, "mean-sea-level-pressure": false },
+      "mean-sea-level-pressure": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 },
       "zoom_levels": "3-7",
       "retention_days": { "default": 2, "grib": 1 }
     },
     "gfs": {
       "input": { "mode": "nomads" },
-      "products": { "mslp": true, "500hpa": false, "250hpa": false },
+      "products": { "mean-sea-level-pressure": true, "geopotential-500hpa": false, "geopotential-250hpa": false },
       "cycles_to_maintain": 3,
       "max_steps_per_tick": 12,
       "availability_probe_hours": { "from": 3, "to": 8 },

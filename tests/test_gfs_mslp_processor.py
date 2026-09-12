@@ -43,7 +43,7 @@ def _work_unit() -> WorkUnit:
                 "grib_path": "grib/gfs/x.grib2",
                 "cycle": CYCLE_ISO,
                 "step_hours": 3,
-                "product_id": "mslp",
+                "product_id": "mean-sea-level-pressure",
             }
         ),
         data_source_id="gfs_step",

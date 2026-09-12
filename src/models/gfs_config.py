@@ -115,8 +115,10 @@ POINT_QUERY_GEOPOTENTIAL = "geopotential"
 class GfsProductConfig:
     """Immutable configuration for one GFS-derived product."""
 
-    product_id: str  # "mslp" | "500hpa" | "250hpa"
-    band_id: str  # WorkUnit band_id, e.g. "gfs_500"
+    product_id: (
+        str  # "mean-sea-level-pressure" | "geopotential-500hpa" | "geopotential-250hpa"
+    )
+    band_id: str  # WorkUnit band_id, e.g. "gfs_geopotential_500hpa"
     processor_id: str
     cog_prefix: str
     tiles_prefix: str
@@ -129,33 +131,33 @@ class GfsProductConfig:
 
 
 GFS_MSLP_CONFIG = GfsProductConfig(
-    product_id="mslp",
-    band_id="gfs_mslp",
-    processor_id="gfs_mslp",
-    cog_prefix="cog/gfs/mslp",
-    tiles_prefix="tiles/gfs/mslp",
-    geojson_prefix="geojson/gfs/mslp",
+    product_id="mean-sea-level-pressure",
+    band_id="gfs_mean_sea_level_pressure",
+    processor_id="gfs_mean_sea_level_pressure",
+    cog_prefix="cog/gfs/mean-sea-level-pressure",
+    tiles_prefix="tiles/gfs/mean-sea-level-pressure",
+    geojson_prefix="geojson/gfs/mean-sea-level-pressure",
     log_prefix="GFS-MSLP",
 )
 
 GFS_500_CONFIG = GfsProductConfig(
-    product_id="500hpa",
-    band_id="gfs_500",
+    product_id="geopotential-500hpa",
+    band_id="gfs_geopotential_500hpa",
     processor_id="gfs_upper_level",
-    cog_prefix="cog/gfs/500hpa",
-    tiles_prefix="tiles/gfs/500hpa",
-    geojson_prefix="geojson/gfs/500hpa",
+    cog_prefix="cog/gfs/geopotential-500hpa",
+    tiles_prefix="tiles/gfs/geopotential-500hpa",
+    geojson_prefix="geojson/gfs/geopotential-500hpa",
     log_prefix="GFS-500",
     level_hpa=500,
 )
 
 GFS_250_CONFIG = GfsProductConfig(
-    product_id="250hpa",
-    band_id="gfs_250",
+    product_id="geopotential-250hpa",
+    band_id="gfs_geopotential_250hpa",
     processor_id="gfs_upper_level",
-    cog_prefix="cog/gfs/250hpa",
-    tiles_prefix="tiles/gfs/250hpa",
-    geojson_prefix="geojson/gfs/250hpa",
+    cog_prefix="cog/gfs/geopotential-250hpa",
+    tiles_prefix="tiles/gfs/geopotential-250hpa",
+    geojson_prefix="geojson/gfs/geopotential-250hpa",
     log_prefix="GFS-250",
     level_hpa=250,
 )
