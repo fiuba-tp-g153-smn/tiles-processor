@@ -227,11 +227,13 @@ tiles-data/                              # Bucket name (configurable)
 ## Commands
 
 ```bash
-make up      # Start dev environment (bind mounts, hot reload)
-make down    # Stop all services
-make test    # Run tests with coverage
-make prod    # Production build and start
-make clean   # Remove Docker volumes
+make up         # Start dev environment (bind mounts, hot reload)
+make beta1      # Start the beta-1 light preset (fewer workers, settings-beta-1.json)
+make down       # Stop all services, every compose file
+make beta1-down # Stop just the beta-1 stack
+make test       # Run tests with coverage
+make prod       # Production build and start
+make clean      # Remove Docker volumes
 
 pytest tests/test_config.py -v     # Single test file
 pytest tests/ -k "test_health"     # Pattern match
