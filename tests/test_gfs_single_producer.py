@@ -34,8 +34,8 @@ def _config(tmp_path, monkeypatch, **flags) -> Config:
         "timezone": "UTC",
         "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
         "sources": {
-            "goes19": {
-                "products": {"band_13": False, "band_9": False, "band_2": False}
+            "goes19-abi": {
+                "products": {"c13": False, "c09": False, "c02": False}
             },
             "gfs": {"products": gfs_products},
         },
@@ -117,7 +117,7 @@ class TestEndpointWiring:
             "timezone": "UTC",
             "bounds": {"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
             "sources": {
-                "goes19": {"products": {"band_13": False}},
+                "goes19-abi": {"products": {"c13": False}},
                 "gfs": {"products": {"mslp": True}},
             },
         }

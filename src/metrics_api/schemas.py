@@ -18,9 +18,9 @@ _JOB_EXAMPLE: dict[str, Any] = {
     "image_id": "OR_ABI-L1b-RadF-M6C13_G19_s20260041200.nc",
     "data_source_id": "goes19_abi_band_13",
     "processor_id": "goes_band_13",
-    "band_id": "band_13",
+    "band_id": "goes19_abi_c13",
     "job_type": "goes19_abi_band_13",
-    "product_label": "GOES ABI band_13 · Cloud Tops",
+    "product_label": "GOES-19 ABI c13 · Cloud Tops",
     "image_timestamp": "20260041200",
     "outcome": "success",
     "worker_host": "worker1",
@@ -72,7 +72,7 @@ class JobTypeSummary(BaseModel):
         "json_schema_extra": {
             "example": {
                 "job_type": "goes19_abi_band_13",
-                "product_label": "GOES ABI band_13 · Cloud Tops",
+                "product_label": "GOES-19 ABI c13 · Cloud Tops",
                 "counts": {
                     "success": 40,
                     "error": 1,

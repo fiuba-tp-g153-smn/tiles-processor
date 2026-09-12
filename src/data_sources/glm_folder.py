@@ -73,11 +73,11 @@ class GlmFolderDataSource(DataSource):
 
     @property
     def source_id(self) -> str:
-        return "glm_folder"
+        return "goes19_glm"
 
     @property
     def processor_id(self) -> str:
-        return "glm_fed"
+        return "goes19_glm_fed"
 
     @property
     def band_config(self) -> BandConfig:

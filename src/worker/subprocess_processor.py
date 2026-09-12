@@ -66,7 +66,7 @@ def create_processor_registry():
     registry.register("goes_band_2", Band2Processor)
 
     # Register GLM processor (lightning products)
-    registry.register("glm_fed", GlmFedProcessor)
+    registry.register("goes19_glm_fed", GlmFedProcessor)
 
     # Register Radar processor
     registry.register("radar", RadarProcessor)

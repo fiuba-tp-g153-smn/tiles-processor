@@ -27,23 +27,23 @@ def _status(tracker: ProgressTracker, image_id: str) -> str | None:
 def test_status_transitions(tmp_path):
     tracker = ProgressTracker(tmp_path / "p.db")
 
-    tracker.mark_in_progress("img1", "band_13")
+    tracker.mark_in_progress("img1", "goes19_abi_c13")
     assert _status(tracker, "img1") == "IN_PROGRESS"
 
-    tracker.mark_processing("img1", "band_13")
+    tracker.mark_processing("img1", "goes19_abi_c13")
     assert _status(tracker, "img1") == "PROCESSING"
 
-    tracker.mark_completed("img1", "band_13")
+    tracker.mark_completed("img1", "goes19_abi_c13")
     assert tracker.list_in_progress() == []
 
 
 def test_get_in_progress_images_filters_by_band(tmp_path):
     tracker = ProgressTracker(tmp_path / "p.db")
-    tracker.mark_in_progress("a", "band_13")
-    tracker.mark_in_progress("b", "band_9")
+    tracker.mark_in_progress("a", "goes19_abi_c13")
+    tracker.mark_in_progress("b", "goes19_abi_c09")
 
-    assert tracker.get_in_progress_images("band_13") == {"a"}
-    assert tracker.get_in_progress_images("band_9") == {"b"}
+    assert tracker.get_in_progress_images("goes19_abi_c13") == {"a"}
+    assert tracker.get_in_progress_images("goes19_abi_c09") == {"b"}
 
 
 def test_timestamps_stored_as_iso8601_strings(tmp_path):
@@ -51,7 +51,7 @@ def test_timestamps_stored_as_iso8601_strings(tmp_path):
     from datetime import datetime
 
     tracker = ProgressTracker(tmp_path / "p.db")
-    tracker.mark_in_progress("img1", "band_13")
+    tracker.mark_in_progress("img1", "goes19_abi_c13")
 
     row = tracker.list_in_progress()[0]
     for field in ("created_at", "updated_at"):
@@ -65,61 +65,61 @@ def test_timestamps_stored_as_iso8601_strings(tmp_path):
 def test_cleanup_reclaims_stale_processing(tmp_path):
     # ttl=0 => any PROCESSING row is immediately past its deadline.
     tracker = ProgressTracker(tmp_path / "p.db", ttl=timedelta(seconds=0))
-    tracker.mark_in_progress("img1", "band_13")
-    tracker.mark_processing("img1", "band_13")
+    tracker.mark_in_progress("img1", "goes19_abi_c13")
+    tracker.mark_processing("img1", "goes19_abi_c13")
 
     tracker.cleanup_stale()
-    assert tracker.get_in_progress_images("band_13") == set()
+    assert tracker.get_in_progress_images("goes19_abi_c13") == set()
 
 
 def test_cleanup_spares_fresh_processing(tmp_path):
     # A wide TTL keeps a just-marked PROCESSING row alive.
     tracker = ProgressTracker(tmp_path / "p.db", ttl=timedelta(hours=1))
-    tracker.mark_in_progress("img1", "band_13")
-    tracker.mark_processing("img1", "band_13")
+    tracker.mark_in_progress("img1", "goes19_abi_c13")
+    tracker.mark_processing("img1", "goes19_abi_c13")
 
     tracker.cleanup_stale()
-    assert tracker.get_in_progress_images("band_13") == {"img1"}
+    assert tracker.get_in_progress_images("goes19_abi_c13") == {"img1"}
 
 
 def test_cleanup_spares_in_progress_even_when_old(tmp_path):
     # cleanup_stale only reclaims PROCESSING; IN_PROGRESS is left to the
     # queue-gated reclaim_orphan_in_progress.
     tracker = ProgressTracker(tmp_path / "p.db", ttl=timedelta(seconds=0))
-    tracker.mark_in_progress("img1", "band_13")
+    tracker.mark_in_progress("img1", "goes19_abi_c13")
 
     tracker.cleanup_stale()
-    assert tracker.get_in_progress_images("band_13") == {"img1"}
+    assert tracker.get_in_progress_images("goes19_abi_c13") == {"img1"}
 
 
 def test_reclaim_orphan_in_progress_deletes_stale(tmp_path):
     # Called only when the work queue is empty: a stale IN_PROGRESS row is an
     # orphan (lost/purged message) and is reclaimed.
     tracker = ProgressTracker(tmp_path / "p.db")
-    tracker.mark_in_progress("img1", "band_13")
+    tracker.mark_in_progress("img1", "goes19_abi_c13")
 
     assert tracker.reclaim_orphan_in_progress(timedelta(seconds=0)) == 1
-    assert tracker.get_in_progress_images("band_13") == set()
+    assert tracker.get_in_progress_images("goes19_abi_c13") == set()
 
 
 def test_reclaim_orphan_in_progress_spares_fresh(tmp_path):
     # A just-queued row is younger than the age floor -> kept (guards the brief
     # receive -> mark_processing window).
     tracker = ProgressTracker(tmp_path / "p.db")
-    tracker.mark_in_progress("img1", "band_13")
+    tracker.mark_in_progress("img1", "goes19_abi_c13")
 
     assert tracker.reclaim_orphan_in_progress(timedelta(hours=1)) == 0
-    assert tracker.get_in_progress_images("band_13") == {"img1"}
+    assert tracker.get_in_progress_images("goes19_abi_c13") == {"img1"}
 
 
 def test_reclaim_orphan_never_touches_processing(tmp_path):
     # A PROCESSING row (a worker is on it) is never an orphan — left to cleanup_stale.
     tracker = ProgressTracker(tmp_path / "p.db")
-    tracker.mark_in_progress("img1", "band_13")
-    tracker.mark_processing("img1", "band_13")
+    tracker.mark_in_progress("img1", "goes19_abi_c13")
+    tracker.mark_processing("img1", "goes19_abi_c13")
 
     assert tracker.reclaim_orphan_in_progress(timedelta(seconds=0)) == 0
-    assert tracker.get_in_progress_images("band_13") == {"img1"}
+    assert tracker.get_in_progress_images("goes19_abi_c13") == {"img1"}
 
 
 def test_reads_do_not_mutate_state(tmp_path):
@@ -129,15 +129,15 @@ def test_reads_do_not_mutate_state(tmp_path):
     only the explicit cleanup_stale() does.
     """
     tracker = ProgressTracker(tmp_path / "p.db", ttl=timedelta(seconds=0))
-    tracker.mark_in_progress("img1", "band_13")
-    tracker.mark_processing("img1", "band_13")
+    tracker.mark_in_progress("img1", "goes19_abi_c13")
+    tracker.mark_processing("img1", "goes19_abi_c13")
 
-    assert tracker.get_in_progress_images("band_13") == {"img1"}
-    assert tracker.get_in_progress_images("band_13") == {"img1"}
+    assert tracker.get_in_progress_images("goes19_abi_c13") == {"img1"}
+    assert tracker.get_in_progress_images("goes19_abi_c13") == {"img1"}
     assert len(tracker.list_in_progress()) == 1
 
     tracker.cleanup_stale()  # only this removes it
-    assert tracker.get_in_progress_images("band_13") == set()
+    assert tracker.get_in_progress_images("goes19_abi_c13") == set()
 
 
 def test_concurrent_marks_do_not_collide(tmp_path):
@@ -157,8 +157,8 @@ def test_concurrent_marks_do_not_collide(tmp_path):
         try:
             for i in range(per_writer):
                 image_id = f"w{worker_idx}-img{i}"
-                tracker.mark_in_progress(image_id, "band_13")
-                tracker.mark_processing(image_id, "band_13")
+                tracker.mark_in_progress(image_id, "goes19_abi_c13")
+                tracker.mark_processing(image_id, "goes19_abi_c13")
         except Exception as exc:  # pragma: no cover - failure path
             errors.append(exc)
 
@@ -169,6 +169,6 @@ def test_concurrent_marks_do_not_collide(tmp_path):
         thread.join()
 
     assert not errors
-    assert len(ProgressTracker(db_path).get_in_progress_images("band_13")) == (
+    assert len(ProgressTracker(db_path).get_in_progress_images("goes19_abi_c13")) == (
         writers * per_writer
     )

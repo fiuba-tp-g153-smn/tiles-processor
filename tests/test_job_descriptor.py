@@ -7,7 +7,7 @@ from services.job_descriptor import describe_job
 
 
 def test_goes_band_13_label_and_timestamp():
-    desc = describe_job("goes19_abi_band_13", "20260521320209", "band_13")
+    desc = describe_job("goes19_abi_band_13", "20260521320209", "goes19_abi_c13")
     assert desc.job_type == "goes19_abi_band_13"
     assert "GOES ABI" in desc.product_label
     assert "Cloud Tops" in desc.product_label
@@ -43,8 +43,8 @@ def test_wrf_colmax_label_strips_product_prefix():
 
 
 def test_glm_folder_label():
-    desc = describe_job("glm_folder", "20260521320209", "glm_folder_fed")
-    assert desc.job_type == "glm_folder"
+    desc = describe_job("goes19_glm", "20260521320209", "goes19_glm_fed")
+    assert desc.job_type == "goes19_glm"
     assert "GLM" in desc.product_label
     assert desc.image_timestamp == "20260521320209"
 

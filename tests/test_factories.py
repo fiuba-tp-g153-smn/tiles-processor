@@ -146,7 +146,7 @@ class TestCreateDataSourceRegistry:
         with patch("factories.S3Client"):
             registry = create_data_source_registry(config)
 
-        glm_source = registry.get("glm_folder")
+        glm_source = registry.get("goes19_glm")
         assert isinstance(glm_source._repository, S3GlmFolderFileRepository)
 
     def test_goes19_local_mode_builds_local_repository(self):
@@ -154,7 +154,7 @@ class TestCreateDataSourceRegistry:
         config.GOES19_INPUT = InputSourceConfig(mode="local", input_dir="/tmp/goes19")
         registry = create_data_source_registry(config)
 
-        abi_source = registry.get("goes19_abi_band_13")
+        abi_source = registry.get("goes19_abi_c13")
         assert isinstance(abi_source._repository, LocalGoes19FileRepository)
 
     def test_goes19_s3_mode_passes_endpoint_and_prefix(self):
@@ -170,7 +170,7 @@ class TestCreateDataSourceRegistry:
         with patch("factories.S3Client") as mock_s3_cls:
             registry = create_data_source_registry(config)
 
-        abi_source = registry.get("goes19_abi_band_13")
+        abi_source = registry.get("goes19_abi_c13")
         assert isinstance(abi_source._repository, S3Goes19FileRepository)
         assert abi_source._repository._prefix == "mirror/goes/"
         _, kwargs = mock_s3_cls.call_args
@@ -199,7 +199,7 @@ class TestCreateDataSourceRegistry:
         registry = create_data_source_registry(config)
 
         assert isinstance(
-            registry.get("glm_folder")._repository, LocalGlmFolderFileRepository
+            registry.get("goes19_glm")._repository, LocalGlmFolderFileRepository
         )
 
     def test_wrf_local_mode_builds_local_repository(self):
@@ -315,5 +315,5 @@ class TestCreateDataSourceRegistry:
     def test_goes19_defaults_to_noaa_s3_without_config(self):
         registry = create_data_source_registry(config=None)
 
-        abi_source = registry.get("goes19_abi_band_13")
+        abi_source = registry.get("goes19_abi_c13")
         assert isinstance(abi_source._repository, S3Goes19FileRepository)

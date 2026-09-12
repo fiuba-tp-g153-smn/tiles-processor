@@ -20,8 +20,8 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "sources": {
-                "goes19": {
-                    "products": {"band_13": True, "band_9": False},
+                "goes19-abi": {
+                    "products": {"c13": True, "c09": False},
                 },
             },
             "bounds": {
@@ -306,7 +306,7 @@ class TestConfig:
         config = self._config_with_input(
             tmp_path,
             env_vars,
-            "goes19",
+            "goes19-abi",
             {"mode": "s3", "s3_bucket": "s3://my-mirror/goes19/raw"},
         )
 
@@ -319,7 +319,7 @@ class TestConfig:
             self._config_with_input(
                 tmp_path,
                 env_vars,
-                "goes19",
+                "goes19-abi",
                 {
                     "mode": "s3",
                     "s3_bucket": "s3://my-mirror/goes19",
@@ -435,7 +435,7 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"glm": {"input": {"mode": "s3"}}},
+            "sources": {"goes19-glm": {"input": {"mode": "s3"}}},
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
@@ -511,7 +511,7 @@ class TestConfig:
         self, temp_settings_file, env_vars
     ):
         """Compose-supplied empty credential strings normalize to anonymous."""
-        env = {**env_vars, "GOES19_S3_ACCESS_KEY": "", "GOES19_S3_SECRET_KEY": ""}
+        env = {**env_vars, "GOES19_ABI_S3_ACCESS_KEY": "", "GOES19_ABI_S3_SECRET_KEY": ""}
         with mock.patch.dict(os.environ, env, clear=True):
             config = Config(settings_path=temp_settings_file)
             assert config.GOES19_INPUT.s3_access_key is None
@@ -626,8 +626,8 @@ class TestConfig:
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
-                "goes19": {"target_images": 30, "max_hours_back": 8},
-                "glm": {"safety_lag_seconds": 45, "target_windows": 12},
+                "goes19-abi": {"target_images": 30, "max_hours_back": 8},
+                "goes19-glm": {"safety_lag_seconds": 45, "target_windows": 12},
                 "radar": {"target_images": 6},
                 "wrf": {"target_runs": 5},
             },
@@ -694,7 +694,7 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"goes19": {"zoom_levels": "7-3"}},
+            "sources": {"goes19-abi": {"zoom_levels": "7-3"}},
         }
         path = tmp_path / "settings.json"
         path.write_text(json.dumps(settings))
@@ -707,7 +707,7 @@ class TestConfig:
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"goes19": {"max_hours_back": 0}},
+            "sources": {"goes19-abi": {"max_hours_back": 0}},
         }
         path = tmp_path / "settings.json"
         path.write_text(json.dumps(settings))

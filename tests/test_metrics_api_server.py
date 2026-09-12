@@ -28,9 +28,9 @@ def _seed(db_path):
                 image_id=f"i{i}",
                 data_source_id="goes19_abi_band_13",
                 processor_id="goes_band_13",
-                band_id="band_13",
+                band_id="goes19_abi_c13",
                 job_type="goes19_abi_band_13",
-                product_label="GOES ABI band_13 · Cloud Tops",
+                product_label="GOES ABI goes19_abi_c13 · Cloud Tops",
                 image_timestamp=f"2026052132020{i}",
                 outcome="success",
                 worker_host="worker1",
@@ -236,7 +236,7 @@ def test_jobs_hours_window_narrows_results(client):
 def test_live_degrades_when_rabbitmq_down(client, tmp_path):
     # Seed in-progress jobs in the shared progress tracker.
     tracker = ProgressTracker(tmp_path / "progress_tracker.db")
-    tracker.mark_in_progress("20260521320209", "band_13")
+    tracker.mark_in_progress("20260521320209", "goes19_abi_c13")
     tracker.mark_in_progress("RMA12_DBZH_20260114T170328Z", "radar")
 
     body = client.get("/api/live").json()

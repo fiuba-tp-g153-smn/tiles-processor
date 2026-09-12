@@ -16,9 +16,9 @@ def _work_unit():
         source_uri="s3://bucket/key",
         data_source_id="goes19_abi_band_13",
         processor_id="goes_band_13",
-        output_prefix="tiles/band_13",
+        output_prefix="tiles/goes19/abi/c13",
         bounds={"minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0},
-        band_id="band_13",
+        band_id="goes19_abi_c13",
     )
 
 

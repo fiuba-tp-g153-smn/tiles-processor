@@ -61,7 +61,7 @@ _PROFILE_HEAVY = "heavy"
 # are rounded up to the S3 lifecycle minimum of 1 day — the portability cost of
 # expressing expiry as standard per-prefix bucket lifecycle rules instead of
 # SeaweedFS-only per-object TTLs. S3 Filter.Prefix is a literal startswith, so
-# "tiles/band_" covers band_2/9/13 and "tiles/glm_" covers fed/toe/mfa.
+# "tiles/goes19/abi/" covers c02/c09/c13 and "tiles/goes19/glm/" covers fed/toe/mfa.
 def _build_lifecycle_rules(retention_map: dict[str, int]) -> list[dict]:
     """Build one non-overlapping S3 lifecycle rule per explicit prefix.
 
@@ -677,7 +677,7 @@ class S3Client:
 
         Args:
             local_dir: Local directory path to upload
-            s3_prefix: S3 key prefix (e.g., "tiles/band_13/tileset_id")
+            s3_prefix: S3 key prefix (e.g., "tiles/goes19/abi/c13/tileset_id")
 
         Returns:
             Number of files uploaded
@@ -774,7 +774,7 @@ class S3Client:
         selects (see ``_lane_for``).
 
         Args:
-            key: Destination object key (e.g., "cog/band_13/image.tif").
+            key: Destination object key (e.g., "cog/goes19/abi/c13/image.tif").
             file_path: Local path of the file to upload.
 
         Returns:
@@ -855,7 +855,7 @@ class S3Client:
         Delete all objects under a given S3 prefix.
 
         Args:
-            s3_prefix: S3 key prefix to delete (e.g., "tiles/band_13/old_tileset")
+            s3_prefix: S3 key prefix to delete (e.g., "tiles/goes19/abi/c13/old_tileset")
 
         Returns:
             Number of objects deleted

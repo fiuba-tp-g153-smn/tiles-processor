@@ -47,7 +47,7 @@ def temp_settings_file(tmp_path):
             "maxy": -15.0,
         },
         "sources": {
-            "goes19": {"products": {"band_13": True, "band_9": True}},
+            "goes19-abi": {"products": {"c13": True, "c09": True}},
         },
     }
     settings_path = tmp_path / "settings.json"
@@ -108,9 +108,9 @@ class TestWorkerIntegration:
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
                 data_source_id="goes19_abi_band_13",
                 processor_id="goes_band_13",
-                output_prefix="tiles/band_13",
+                output_prefix="tiles/goes19/abi/c13",
                 bounds=config.get_bounds(),
-                band_id="band_13",
+                band_id="goes19_abi_c13",
             )
 
             # Process the message (the coroutine acks via the MQ client now)
@@ -147,9 +147,9 @@ class TestWorkerIntegration:
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
                 data_source_id="goes19_abi_band_13",
                 processor_id="goes_band_13",
-                output_prefix="tiles/band_13",
+                output_prefix="tiles/goes19/abi/c13",
                 bounds=config.get_bounds(),
-                band_id="band_13",
+                band_id="goes19_abi_c13",
             )
 
             # Process (light unit stolen by a normal worker: came from a light queue)
@@ -189,9 +189,9 @@ class TestWorkerIntegration:
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
                 data_source_id="goes19_abi_band_13",
                 processor_id="goes_band_13",
-                output_prefix="tiles/band_13",
+                output_prefix="tiles/goes19/abi/c13",
                 bounds=config.get_bounds(),
-                band_id="band_13",
+                band_id="goes19_abi_c13",
             )
             work_unit.retry_count = 3
             work_unit.max_retries = 3

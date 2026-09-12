@@ -13,8 +13,8 @@ from typing import Any
 # Output S3 key-prefix stems each source writes, grouped by output kind. Every
 # uploader writes under one of these; changing them is a code change.
 SOURCE_LIFECYCLE_PREFIXES: dict[str, dict[str, str]] = {
-    "goes19": {"tiles": "tiles/band_", "cog": "cog/band_"},
-    "glm": {"tiles": "tiles/glm_", "cog": "cog/glm_"},
+    "goes19-abi": {"tiles": "tiles/goes19/abi", "cog": "cog/goes19/abi"},
+    "goes19-glm": {"tiles": "tiles/goes19/glm", "cog": "cog/goes19/glm"},
     "radar": {"tiles": "tiles/radar", "cog": "cog/radar"},
     "wrf": {"tiles": "tiles/wrf", "cog": "cog/wrf", "geojson": "geojson/wrf"},
     "ecmwf": {

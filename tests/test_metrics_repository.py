@@ -23,14 +23,14 @@ def _make_metrics(
     outcome: str = JobOutcome.SUCCESS.value,
     finished_at: str = "2026-06-04T00:00:44+00:00",
     job_type: str = "goes19_abi_band_13",
-    product_label: str = "GOES ABI band_13 · Cloud Tops",
+    product_label: str = "GOES ABI goes19_abi_c13 · Cloud Tops",
 ):
     return JobMetrics(
         work_unit_id="wu-1",
         image_id=image_id,
         data_source_id=job_type,
         processor_id="goes_band_13",
-        band_id="band_13",
+        band_id="goes19_abi_c13",
         job_type=job_type,
         product_label=product_label,
         image_timestamp=image_id,

@@ -175,7 +175,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             return self._config.ENABLE_BAND_2
         # Folder-based GLM (FED/TOE/MFA gated together via this single flag;
         # TOE/MFA also have their own per-product flags inside the processor).
-        if source_id == "glm_folder":
+        if source_id == "goes19_glm":
             return self._config.ENABLE_GLM_FED
         # Check for radar sources (radar_DBZH, radar_VRAD, etc.)
         if source_id.startswith("radar_"):

@@ -159,9 +159,9 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     # folder-based GLM pipeline registers exactly one source below, which emits
     # FED/TOE/MFA tiles in the same processor run.
     combined_products = {
-        "glm_folder_fed",
-        "glm_folder_toe",
-        "glm_folder_mfa",
+        "goes19_glm_fed",
+        "goes19_glm_toe",
+        "goes19_glm_mfa",
     }
 
     goes19_repo = _create_goes19_repository(config)
@@ -170,7 +170,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
     for _band_id, band_config in BAND_CONFIGS.items():
         if band_config.band_id in combined_products:
             continue
-        # Only ABI bands remain (band_13, band_9, band_2, ...).
+        # Only ABI channels remain (goes19_abi_c13, _c09, _c02, ...).
         registry.register(
             Goes19AbiDataSource(
                 band_config,
@@ -185,7 +185,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         glm_repo = _create_glm_folder_repository(config)
         registry.register(
             GlmFolderDataSource(
-                get_band_config("glm_folder_fed"),
+                get_band_config("goes19_glm_fed"),
                 glm_repo,
                 accum_minutes=config.GLM_ACCUM_MINUTES,
                 produce_every_minutes=config.GLM_PRODUCE_EVERY_MINUTES,

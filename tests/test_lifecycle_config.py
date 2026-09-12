@@ -61,3 +61,31 @@ def test_rejects_boolean_days():
     # bool is an int subclass; it must not be accepted as a day count.
     with pytest.raises(ValueError, match=">= 1"):
         resolve_retention_map({"radar": {"retention_days": True}})
+
+
+def test_every_written_prefix_is_covered_by_a_lifecycle_rule():
+    """No uploader may write under a prefix that no expiration rule matches.
+
+    SeaweedFS stamps a volume TTL from the matching lifecycle rule on the
+    PutObject path only. An object written under an uncovered prefix is stored
+    with no expiry and never returns its volume slots, which is what exhausted
+    the cluster's 900 slots in Sept 2026. A prefix rename that forgets this map
+    reintroduces exactly that, silently.
+    """
+    import json
+    from pathlib import Path
+
+    from models.band_config import BAND_CONFIGS
+    from models.lifecycle_config import resolve_retention_map
+
+    settings = json.loads((Path(__file__).parent.parent / "settings.json").read_text())
+    rules = resolve_retention_map(settings["sources"])
+
+    written = {c.s3_tiles_prefix for c in BAND_CONFIGS.values()}
+    written |= {c.s3_cog_prefix for c in BAND_CONFIGS.values()}
+
+    uncovered = sorted(w for w in written if not any(w.startswith(p) for p in rules))
+    assert not uncovered, (
+        f"these prefixes are written but match no lifecycle rule, so objects "
+        f"under them would never expire: {uncovered}"
+    )

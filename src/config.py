@@ -170,8 +170,8 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # Each data source's full config lives under "sources.<name>": its input
         # repository, product toggles, and any per-source tuning, co-located.
         _sources: Dict[str, Any] = settings.get("sources", {})
-        _goes19 = _sources.get("goes19", {})
-        _glm = _sources.get("glm", {})
+        _goes19 = _sources.get("goes19-abi", {})
+        _glm = _sources.get("goes19-glm", {})
         _radar = _sources.get("radar", {})
         _wrf = _sources.get("wrf", {})
         _ecmwf = _sources.get("ecmwf", {})
@@ -181,9 +181,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         # Discovery knobs are None when unset -> the data source keeps its own
         # class-constant default (see factories.py). Same pattern for glm/radar/wrf.
         _goes19_products = _goes19.get("products", {})
-        self.ENABLE_BAND_13: bool = _goes19_products.get("band_13", True)
-        self.ENABLE_BAND_9: bool = _goes19_products.get("band_9", True)
-        self.ENABLE_BAND_2: bool = _goes19_products.get("band_2", False)
+        self.ENABLE_BAND_13: bool = _goes19_products.get("c13", True)
+        self.ENABLE_BAND_9: bool = _goes19_products.get("c09", True)
+        self.ENABLE_BAND_2: bool = _goes19_products.get("c02", False)
         self.GOES_TARGET_IMAGES: int | None = self._opt_int(
             _goes19.get("target_images"), "sources.goes19.target_images"
         )
@@ -324,8 +324,8 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         self.GLM_FOLDER_INPUT: InputSourceConfig = self._parse_input_source(
             _glm,
-            "glm",
-            env_prefix="GLM_FOLDER",
+            "goes19-glm",
+            env_prefix="GOES19_GLM",
             default_dir=str(Path(self.DATA_DIR) / "glm_h5"),
         )
         self.WRF_INPUT: InputSourceConfig = self._parse_input_source(
@@ -333,7 +333,8 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         self.GOES19_INPUT: InputSourceConfig = self._parse_input_source(
             _goes19,
-            "goes19",
+            "goes19-abi",
+            env_prefix="GOES19_ABI",
             default_dir=str(Path(self.DATA_DIR) / "goes19"),
             default_mode=INPUT_MODE_S3,
             default_bucket="noaa-goes19",

@@ -12,13 +12,13 @@ from data_sources.glm_folder_repository import GlmFolderFileRepository
 from models.band_config import BandConfig
 
 GLM_FED_CONFIG = BandConfig(
-    band_id="glm_fed",
+    band_id="goes19_glm_fed",
     file_pattern="CG_GLM-L2-GLMF",
     vmin=0.0,
     vmax=128.0,
     palette_name="GLM_FED_PALETTE",
-    s3_tiles_prefix="tiles/glm_fed",
-    s3_cog_prefix="cog/glm_fed",
+    s3_tiles_prefix="tiles/goes19/glm/fed",
+    s3_cog_prefix="cog/goes19/glm/fed",
     product_name="Flash_Extent_Density",
 )
 
@@ -101,9 +101,9 @@ async def test_emits_one_image_per_complete_window():
 
     assert len(images) == 1
     info = images[0]
-    assert info.processor_id == "glm_fed"
-    assert info.data_source_id == "glm_folder"
-    assert info.output_prefix == "tiles/glm_fed"
+    assert info.processor_id == "goes19_glm_fed"
+    assert info.data_source_id == "goes19_glm"
+    assert info.output_prefix == "tiles/goes19/glm/fed"
     assert info.image_id == "20260611400000"
 
     manifest = json.loads(info.source_uri)

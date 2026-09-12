@@ -51,7 +51,7 @@ def _label_and_timestamp(
             return _describe_goes(band_id, image_id)
         if data_source_id.startswith("radar_"):
             return _describe_radar(data_source_id, image_id)
-        if data_source_id.startswith("glm_folder"):
+        if data_source_id.startswith("goes19_glm"):
             return ("GLM Lightning (FED/TOE/MFA)", image_id)
         if data_source_id.startswith("wrf_"):
             return _describe_wrf(data_source_id, image_id)

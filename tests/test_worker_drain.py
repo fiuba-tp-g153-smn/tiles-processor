@@ -36,7 +36,7 @@ def _unit(image_id: str) -> WorkUnit:
         processor_id="goes_band_13",
         output_prefix="tiles/x",
         bounds={"minx": 0.0, "miny": 0.0, "maxx": 1.0, "maxy": 1.0},
-        band_id="band_13",
+        band_id="goes19_abi_c13",
     )
 
 

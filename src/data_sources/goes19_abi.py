@@ -20,7 +20,7 @@ class Goes19AbiDataSource(Goes19BaseDataSource):
     - Discovers images from the ABI-L1b-RadF product path
     - Downloads NetCDF files via the injected repository (NOAA's public S3
       bucket by default, or a local folder with the same layout)
-    - Supports different bands (band_13, band_9, band_2, etc.)
+    - Supports different ABI channels (goes19_abi_c13, _c09, _c02, etc.)
     """
 
     # Discovery parameters (defaults; overridable via settings.json).
@@ -55,7 +55,9 @@ class Goes19AbiDataSource(Goes19BaseDataSource):
     @property
     def source_id(self) -> str:
         """Unique identifier for this data source."""
-        return f"goes19_abi_{self._band_config.band_id}"
+        # band_id is already fully qualified (goes19_abi_c13), so the
+        # source id is the band id: no prefix to prepend.
+        return self._band_config.band_id
 
     @property
     def processor_id(self) -> str:

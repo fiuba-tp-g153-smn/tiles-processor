@@ -14,15 +14,15 @@
     "discovery_cron": "*/5 * * * *"
   },
   "sources": {
-    "goes19": {
-      "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
-      "products": { "band_13": true, "band_9": true, "band_2": true },
+    "goes19-abi": {
+      "input": { "mode": "s3", "s3_bucket": "s3://noaa-goes19" },
+      "products": { "c13": true, "c09": true, "c02": true },
       "target_images": 24,
       "max_hours_back": 5,
       "zoom_levels": "3-7",
       "retention_days": 1
     },
-    "glm": {
+    "goes19-glm": {
       "input": { "mode": "local", "dir": "/app/data/glm_h5" },
       "accum_minutes": 10,
       "produce_every_minutes": 10,
@@ -41,7 +41,11 @@
         "ZDR": true,
         "RHOHV": true,
         "KDP": true,
-        "VRAD": true
+        "VRAD": true,
+        "ZH": false,
+        "TH": false,
+        "WRAD": false,
+        "PHIDP": false
       },
       "target_images": 12,
       "zoom_levels": "4-9",

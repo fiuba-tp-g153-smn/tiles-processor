@@ -44,10 +44,10 @@ def _make_work_unit(window_start: datetime) -> WorkUnit:
         image_id="20260611400000",
         source_uri=manifest,
         data_source_id="glm_folder",
-        processor_id="glm_fed",
-        output_prefix="tiles/glm_fed",
+        processor_id="goes19_glm_fed",
+        output_prefix="tiles/goes19/glm/fed",
         bounds=SMALL_BOUNDS,
-        band_id="glm_folder_fed",
+        band_id="goes19_glm_fed",
     )
 
 

@@ -74,9 +74,9 @@ def test_viridis_r_palette_starts_yellow_ends_purple():
 @pytest.mark.parametrize(
     "band_id, expected_vmin, expected_vmax, expected_palette, expected_s3",
     [
-        ("glm_folder_fed", 1.0, 128.0, "GLM_FOLDER_FED_PALETTE", "tiles/glm_fed"),
-        ("glm_folder_toe", 0.01, 1500.0, "GLM_FOLDER_TOE_PALETTE", "tiles/glm_toe"),
-        ("glm_folder_mfa", 64.0, 2500.0, "GLM_FOLDER_MFA_PALETTE", "tiles/glm_mfa"),
+        ("goes19_glm_fed", 1.0, 128.0, "GLM_FOLDER_FED_PALETTE", "tiles/goes19/glm/fed"),
+        ("goes19_glm_toe", 0.01, 1500.0, "GLM_FOLDER_TOE_PALETTE", "tiles/goes19/glm/toe"),
+        ("goes19_glm_mfa", 64.0, 2500.0, "GLM_FOLDER_MFA_PALETTE", "tiles/goes19/glm/mfa"),
     ],
 )
 def test_glm_folder_band_configs_registered(
