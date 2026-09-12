@@ -32,8 +32,8 @@ Distributed Python system for processing GOES-19 satellite data from NOAA S3 —
 - **Band 2 (Visible Red).** Channel 2 (0.64 µm), high-resolution visible imagery (500 m native).
 - **GLM Flash Extent Density (FED).** 10-minute lightning activity maps from 20-second L2-LCFA files.
 - **GLM Time of Event (TOE)** and **Multi-Flash Aggregation (MFA).** Further GLM-derived products.
-- **Radar.** Dual-pol products (DBZH, ZDR, RHOHV, KDP, VRAD) from local H5 files, plus
-  **DBZH_450KM** — the same 0.55° reflectivity read from the long-range subvolume 04
+- **Radar.** Dual-pol products (`dbzh`, `zdr`, `rhohv`, `kdp`, `vrad`) from local H5 files, plus
+  **`dbzh-450km`** — the same 0.55° reflectivity read from the long-range subvolume 04
   (~445 km reach, single sweep) and published as its own product.
 
 **Queue.** The producer publishes `WorkUnit` messages to RabbitMQ; each worker takes
@@ -45,8 +45,8 @@ memory is reclaimed in full between jobs.
 **Deduplication.** The producer checks S3 before publishing — already-processed
 tilesets are never re-queued.
 
-**Tile retention.** S3 lifecycle TTL configured per bucket (`tile_retention_days` in
-`settings.json`).
+**Tile retention.** One S3 bucket lifecycle rule per output prefix, from
+`sources.<name>.retention_days` in `settings.json`.
 
 **Feature toggles.** Individual products enabled/disabled in `settings.json`.
 
@@ -122,7 +122,7 @@ tilesets are never re-queued.
 | Temporal Res. | ~10 min                          | ~10 min                     | ~10 min                       | 10 min (aggregated)                 |
 | Native Res.   | 2 km (5424×5424 Full Disk)       | 10 km (1808×1808 Full Disk) | 500 m (21696×21696 Full Disk) | ~2 km (0.02° grid)                  |
 | Input Files   | 1 NetCDF per product             | 1 NetCDF per product        | 1 NetCDF per product          | ~30 NetCDF files per product        |
-| Output Dir    | `band_13/`                       | `band_9/`                   | `band_2/`                     | `glm_fed/`                          |
+| Output Dir    | `goes19/abi/c13/`                | `goes19/abi/c09/`           | `goes19/abi/c02/`             | `goes19/glm/fed/`                   |
 
 ### GLM Flash Extent Density (FED) Processing
 
@@ -192,31 +192,31 @@ OR_ABI-L1b-RadF-M6C13_G19_s20250141230210_e20250141239518_c20250141239557.nc
 ```
 
 - **Local**: No local retention — all temporary files (raw NetCDF, GeoTIFFs, tiles) are deleted after upload.
-- **S3**: Retention controlled by `tile_retention_days` in `settings.json` (default: 30 days). S3 lifecycle TTL is applied via SeaweedFS filer TTL header on upload.
+- **S3**: Retention controlled by `sources.<name>.retention_days` in `settings.json` (default: 1 day). Applied at worker boot as one S3 bucket lifecycle expiration rule per output prefix (`models/lifecycle_config.py`).
 
 ## S3 Storage Layout
 
 ```
 tiles-data/                              # Bucket name (configurable)
 ├── tiles/
-│   ├── band_13/
+│   ├── goes19/abi/c13/
 │   │   └── {tileset_id}_tiles/          # One directory per processed image
 │   │       └── {z}/{x}/{y}.webp         # XYZ tile structure (z=3-7)
-│   ├── band_9/
+│   ├── goes19/abi/c09/
 │   │   └── {tileset_id}_tiles/
 │   │       └── {z}/{x}/{y}.webp
-│   ├── band_2/
+│   ├── goes19/abi/c02/
 │   │   └── {tileset_id}_tiles/
 │   │       └── {z}/{x}/{y}.webp
-│   ├── glm_fed/
+│   ├── goes19/glm/fed/
 │   │   └── GLM_FED_s{YYYYJJJHHMMSS}_tiles/  # 10-minute window tilesets
 │   │       └── {z}/{x}/{y}.webp
-│   └── radar/
-│       └── {radar_id}/{variable}/elev{N}/{timestamp}/
+│   └── radar/sinarame/
+│       └── {radar_id}/{product_id}/elev{N}/{timestamp}/
 │           └── {z}/{x}/{y}.webp
 └── cog/
-  ├── {band_id}/{image_id}.tif
-  └── radar/{radar_id}/{variable}/elev{N}/{timestamp}.tif
+  ├── goes19/{abi/c13|abi/c09|abi/c02|glm/fed|glm/toe|glm/mfa}/{image_id}.tif
+  └── radar/sinarame/{radar_id}/{product_id}/elev{N}/{timestamp}.tif
 ```
 
 **Tileset naming:**
@@ -301,14 +301,14 @@ input, product toggles, retention, and tuning live together.
   "metrics": { "enabled": true, "max_rows": 1000000 },
   "scheduler": { "discovery_cron": "*/5 * * * *" },
   "sources": {
-    "goes19": {
+    "goes19-abi": {
       "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
-      "products": { "band_13": true, "band_9": true, "band_2": true },
+      "products": { "c13": true, "c09": true, "c02": true },
       "target_images": 24,
       "max_hours_back": 5,
       "retention_days": 1
     },
-    "glm": {
+    "goes19-glm": {
       "input": { "mode": "local", "dir": "/app/data/glm_h5" },
       "accum_minutes": 10,
       "produce_every_minutes": 10,
@@ -317,26 +317,26 @@ input, product toggles, retention, and tuning live together.
       "products": { "fed": true, "toe": true, "mfa": true },
       "retention_days": 1
     },
-    "radar": {
+    "radar-sinarame": {
       "input": { "mode": "local", "dir": "/app/data/radar_h5" },
       "stations": "all",
       "products": {
-        "DBZH": true, "DBZH_450KM": true, "ZDR": true,
-        "RHOHV": true, "KDP": true, "VRAD": true
+        "dbzh": true, "dbzh-450km": true, "zdr": true,
+        "rhohv": true, "kdp": true, "vrad": true
       },
       "target_images": 12,
       "zoom_levels": "4-9",
       "light_queue": "all",
       "retention_days": 1
     },
-    "wrf": {
+    "wrf-arg4k": {
       "input": { "mode": "local", "dir": "/app/data/wrf_nc" },
-      "products": { "Colmax": true, "Granizo": true },
+      "products": { "colmax": true, "granizo": true },
       "target_runs": 3,
       "light_queue": "all",
       "retention_days": 2
     },
-    "ecmwf": {
+    "ecmwf-ifs": {
       "input": { "mode": "opendata" },
       "products": { "precipitation": true, "mean_sea_level_pressure": true },
       "mslp": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 },
@@ -344,7 +344,7 @@ input, product toggles, retention, and tuning live together.
     },
     "gfs": {
       "input": { "mode": "nomads" },
-      "products": { "mslp": true, "500": true, "250": true },
+      "products": { "mslp": true, "500hpa": true, "250hpa": true },
       "cycles_to_maintain": 3,
       "max_steps_per_tick": 12,
       "availability_probe_hours": { "from": 3, "to": 8 },
@@ -379,29 +379,31 @@ input, product toggles, retention, and tuning live together.
     `virtual` or `auto` for endpoints that only answer on `<bucket>.<host>`.
   - Credentials come from `<NAME>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars (unset =
     anonymous; setting only one of the pair fails at startup). The names are
-    `GOES19_`, `RADAR_`, `GLM_FOLDER_`, `WRF_`, `ECMWF_` and `GFS_`.
+    `GOES19_ABI_`, `RADAR_SINARAME_`, `GOES19_GLM_`, `WRF_ARG4K_`, `ECMWF_IFS_` and
+    `GFS_`.
 
   The folder and bucket layouts are identical per source, so one can be synced
   into the other unchanged:
 
   | Source | Layout below the root (`dir` or `s3_prefix`) |
   |---|---|
-  | `goes19` | `ABI-L1b-RadF/YYYY/JJJ/HH/OR_ABI-...nc` |
-  | `radar` | `*.H5`, or `<subdir>/*.H5` |
-  | `glm` | `CG_GLM-L2-GLMF-*.nc`, or `<subdir>/CG_GLM-...nc` |
-  | `wrf` | `WRF_ARG4K.FCST_L0_FIELD2D.*.nc`, or `<subdir>/...nc` |
-  | `ecmwf` | `<product>/<YYYYMMDDTHHmmZ>.grib` (`<product>` = `total_precipitation`, `mean_sea_level_pressure`) |
+  | `goes19-abi` | `ABI-L1b-RadF/YYYY/JJJ/HH/OR_ABI-...nc` |
+  | `radar-sinarame` | `*.H5`, or `<subdir>/*.H5` |
+  | `goes19-glm` | `CG_GLM-L2-GLMF-*.nc`, or `<subdir>/CG_GLM-...nc` |
+  | `wrf-arg4k` | `WRF_ARG4K.FCST_L0_FIELD2D.*.nc`, or `<subdir>/...nc` |
+  | `ecmwf-ifs` | `<product>/<YYYYMMDDTHHmmZ>.grib` (`<product>` = `tp`, `mslp`) |
   | `gfs` | `<cycle>/<cycle>_f<step>.grib2` (cycle as `YYYYMMDDTHHmmZ`) |
 
   The ECMWF and GFS layouts are the same shape as the tile bucket's own GRIB
-  cache (`grib/models/ecmwf`, `grib/models/gfs`), so a cache prefix can be used
+  cache (`grib/ecmwf-ifs`, `grib/gfs`), so a cache prefix can be used
   as an input prefix directly. GRIBs read from a folder or bucket are validated
   exactly as the HTTP path validates them.
 - **`sources.<name>.products`**: Enable/disable individual products without a rebuild.
 - **Per-source discovery/cadence knobs** (all optional — omitting one keeps the
-  source's built-in default): `goes19.target_images` / `goes19.max_hours_back`,
-  `radar.target_images`, `wrf.target_runs`, `glm.safety_lag_seconds` /
-  `glm.target_windows`. They cap how much each source publishes per tick and how
+  source's built-in default): `goes19-abi.target_images` /
+  `goes19-abi.max_hours_back`, `radar-sinarame.target_images`,
+  `wrf-arg4k.target_runs`, `goes19-glm.safety_lag_seconds` /
+  `goes19-glm.target_windows`. They cap how much each source publishes per tick and how
   far back discovery looks. Counts must be integers ≥ 1; `max_hours_back` /
   `safety_lag_seconds` may be 0.
 - **`sources.<name>.zoom_levels`**: gdal2tiles zoom range as a `"MIN-MAX"` string
@@ -415,8 +417,8 @@ input, product toggles, retention, and tuning live together.
   specific output kind, e.g. `{ "default": 2, "grib": 1 }`. The output-prefix
   wiring lives in code (`models/lifecycle_config.py`); only the day counts are
   configured here.
-- **`sources.radar.stations`**: Which radar stations (RMA1, RMA2, …) to process,
-  combined with `radar.products` as an **AND** (a station×product pair runs only
+- **`sources.radar-sinarame.stations`**: Which radar stations (RMA1, RMA2, …) to process,
+  combined with `radar-sinarame.products` as an **AND** (a station×product pair runs only
   if both allow it). Four shapes, defaulting to `"all"`:
 
   ```jsonc
@@ -428,14 +430,14 @@ input, product toggles, retention, and tuning live together.
 
   Station IDs match the first token of each radar filename (`RMA1_0315_01_DBZH_…H5`).
   A blacklist covers new stations automatically; an ambiguous value fails fast at startup.
-- **`sources.radar.products.DBZH_450KM`**: The long-range reflectivity product. It reads
-  the *same* `DBZH` filename token as `DBZH`, told apart by the subvolume (`04` vs `01`),
-  and publishes under `tiles/radar/{radar}/DBZH_450KM/`. Subvolume 04 carries a single
+- **`sources.radar-sinarame.products.dbzh-450km`**: The long-range reflectivity product. It
+  reads the *same* `DBZH` filename token as `dbzh`, told apart by the subvolume (`04` vs `01`),
+  and publishes under `tiles/radar/sinarame/{radar}/dbzh-450km/`. Subvolume 04 carries a single
   0.55° sweep of 1235 × 360 m gates (~445 km) against subvolume 01's 15 sweeps of 652
   gates (~235 km), so only `elev0` is produced for it.
-- **`sources.<radar|wrf>.light_queue`**: Route these units to the lightweight
-  worker queue. `"all"` / `"none"`, plus WRF accepts an explicit product list
-  (e.g. `["Colmax", "Granizo"]`); radar is all-or-nothing.
+- **`sources.<radar-sinarame|wrf-arg4k>.light_queue`**: Route these units to the
+  lightweight worker queue. `"all"` / `"none"`, plus WRF accepts an explicit product
+  list (e.g. `["colmax", "granizo"]`); radar is all-or-nothing.
 
 ## Generating Secure Credentials
 
