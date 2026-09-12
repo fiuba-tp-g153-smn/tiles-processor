@@ -69,14 +69,14 @@
       "retention_days": 2
     },
     "ecmwf-ifs": {
-      "input": { "mode": "opendata" },
+      "input": { "mode": "external-provider-opendata" },
       "products": { "total-precipitation": true, "mean-sea-level-pressure": false },
       "mean-sea-level-pressure": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 },
       "zoom_levels": "3-7",
       "retention_days": { "default": 2, "grib": 1 }
     },
     "gfs": {
-      "input": { "mode": "nomads" },
+      "input": { "mode": "external-provider-nomads" },
       "products": { "mean-sea-level-pressure": true, "geopotential-500hpa": false, "geopotential-250hpa": false },
       "cycles_to_maintain": 3,
       "max_steps_per_tick": 12,

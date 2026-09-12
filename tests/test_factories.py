@@ -69,8 +69,12 @@ class TestCreateDataSourceRegistry:
         config.GOES19_INPUT = InputSourceConfig(
             mode="s3", input_dir="/tmp/goes19", s3_bucket="noaa-goes19"
         )
-        config.ECMWF_INPUT = InputSourceConfig(mode="opendata", input_dir="/tmp/ecmwf")
-        config.GFS_INPUT = InputSourceConfig(mode="nomads", input_dir="/tmp/gfs")
+        config.ECMWF_INPUT = InputSourceConfig(
+            mode="external-provider-opendata", input_dir="/tmp/ecmwf"
+        )
+        config.GFS_INPUT = InputSourceConfig(
+            mode="external-provider-nomads", input_dir="/tmp/gfs"
+        )
         return config
 
     @staticmethod

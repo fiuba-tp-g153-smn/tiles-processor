@@ -337,13 +337,13 @@ input, product toggles, retention, and tuning live together.
       "retention_days": 2
     },
     "ecmwf-ifs": {
-      "input": { "mode": "opendata" },
+      "input": { "mode": "external-provider-opendata" },
       "products": { "total-precipitation": true, "mean-sea-level-pressure": true },
       "mean-sea-level-pressure": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 },
       "retention_days": { "default": 2, "grib": 1 }
     },
     "gfs": {
-      "input": { "mode": "nomads" },
+      "input": { "mode": "external-provider-nomads" },
       "products": { "mean-sea-level-pressure": true, "geopotential-500hpa": true, "geopotential-250hpa": true },
       "cycles_to_maintain": 3,
       "max_steps_per_tick": 12,
@@ -361,7 +361,7 @@ input, product toggles, retention, and tuning live together.
 - **`sources.<name>.input`**: where the source reads its raw files from. Every
   source supports `mode: "local"` (a folder) and `mode: "s3"` (a bucket with the
   same layout); `ecmwf-ifs` and `gfs` additionally accept the upstream API they
-  default to (`"opendata"` and `"nomads"` respectively).
+  default to (`"external-provider-opendata"` and `"external-provider-nomads"` respectively).
   - `dir` — the root folder, for `local`.
   - `s3_bucket` — a bare bucket name, or a whole location as `s3://bucket/prefix`
     (which fills the prefix; setting `s3_prefix` as well is then an error).

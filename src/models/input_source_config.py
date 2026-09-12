@@ -6,10 +6,12 @@ from urllib.parse import urlparse
 
 INPUT_MODE_LOCAL = "local"
 INPUT_MODE_S3 = "s3"
-# Upstream-API modes: a source that fetches from its own provider rather than
-# from a file layout. Each is valid for exactly one source.
-INPUT_MODE_OPENDATA = "opendata"  # ECMWF Open Data mirrors
-INPUT_MODE_NOMADS = "nomads"  # NOAA NOMADS grib_filter CGI
+# External-provider modes: the source fetches from the data provider's own
+# distribution service rather than from a file layout you control. The prefix
+# separates them from local/s3 at a glance, since those two name a place and
+# these name whose service is being called. Each is valid for exactly one source.
+INPUT_MODE_OPENDATA = "external-provider-opendata"  # ECMWF Open Data mirrors
+INPUT_MODE_NOMADS = "external-provider-nomads"  # NOAA NOMADS grib_filter CGI
 
 S3_URI_SCHEME = "s3://"
 URL_SCHEMES = ("http", "https")

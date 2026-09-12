@@ -393,8 +393,8 @@ class TestConfig:
             tmp_path, env_vars, "radar-sinarame", {"mode": "local", "dir": "/tmp/radar"}
         )
 
-        assert config.ECMWF_INPUT.mode == "opendata"
-        assert config.GFS_INPUT.mode == "nomads"
+        assert config.ECMWF_INPUT.mode == "external-provider-opendata"
+        assert config.GFS_INPUT.mode == "external-provider-nomads"
 
     @pytest.mark.parametrize("source,mode", [("ecmwf-ifs", "local"), ("gfs", "local")])
     def test_ecmwf_and_gfs_accept_the_file_modes(
@@ -424,10 +424,13 @@ class TestConfig:
         assert parsed.s3_prefix == f"grib/{source}/"
 
     def test_upstream_mode_is_scoped_to_its_own_source(self, tmp_path, env_vars):
-        """ "opendata" is meaningless for radar and must be rejected there."""
+        """An external-provider mode is meaningless for radar; reject it there."""
         with pytest.raises(ValueError, match="sources.radar-sinarame.input.mode"):
             self._config_with_input(
-                tmp_path, env_vars, "radar-sinarame", {"mode": "opendata"}
+                tmp_path,
+                env_vars,
+                "radar-sinarame",
+                {"mode": "external-provider-opendata"},
             )
 
     def test_input_source_rejects_invalid_mode(self, tmp_path, env_vars):
