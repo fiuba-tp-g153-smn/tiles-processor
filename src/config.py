@@ -21,7 +21,8 @@ from models.input_source_config import (
     split_s3_bucket_uri,
 )
 from models.lifecycle_config import resolve_retention_map
-from models.radar_config import RadarStationFilter
+from models.radar_config import RADAR_PRODUCT_CONFIGS, RadarStationFilter
+from models.wrf_config import WRF_PRODUCT_CONFIGS
 from models.zoom_config import ZoomLevels, parse_zoom_levels
 
 
@@ -212,7 +213,10 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
 
         # --- Radar (SINARAME) ---
-        _radar_product_ids = ["DBZH", "DBZH_450KM", "ZDR", "RHOHV", "KDP", "VRAD"]
+        # Derived from the product registry, never repeated here: a literal list
+        # silently drifts out of step with a product rename, and every lookup
+        # then returns the False default instead of failing.
+        _radar_product_ids = list(RADAR_PRODUCT_CONFIGS)
         _radar_products = _radar.get("products", {})
         self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
             pid: _radar_products.get(pid, False) for pid in _radar_product_ids
@@ -233,20 +237,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
 
         # --- WRF (WRF-ARG4K FIELD2D) ---
         _wrf_products = _wrf.get("products", {})
+        # Same as radar: read the ids off the registry, not a second copy.
         self.ENABLED_WRF_PRODUCTS: dict[str, bool] = {
-            pid: _wrf_products.get(pid, False)
-            for pid in [
-                "Colmax",
-                "Rafagas",
-                "Campo900hPa",
-                "Precipitacion1h",
-                "MUCAPE",
-                "AguaPrecipitable",
-                "JetCapasBajas",
-                "CortanteNivelesBajos",
-                "CAPE_BRN",
-                "Granizo",
-            ]
+            pid: _wrf_products.get(pid, False) for pid in WRF_PRODUCT_CONFIGS
         }
         self.WRF_TARGET_RUNS: int | None = self._opt_int(
             _wrf.get("target_runs"), "sources.wrf.target_runs"

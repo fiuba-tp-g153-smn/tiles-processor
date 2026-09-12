@@ -166,12 +166,12 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         """Check if a data source is enabled in the config."""
         source_id = data_source.source_id
 
-        # Check for GOES19 ABI band sources
-        if source_id == "goes19_abi_band_13":
+        # Check for GOES-19 ABI channel sources
+        if source_id == "goes19_abi_c13":
             return self._config.ENABLE_BAND_13
-        if source_id == "goes19_abi_band_9":
+        if source_id == "goes19_abi_c09":
             return self._config.ENABLE_BAND_9
-        if source_id == "goes19_abi_band_2":
+        if source_id == "goes19_abi_c02":
             return self._config.ENABLE_BAND_2
         # Folder-based GLM (FED/TOE/MFA gated together via this single flag;
         # TOE/MFA also have their own per-product flags inside the processor).
@@ -372,7 +372,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
                 "tiles/radar/sinarame/", delimiter="/"
             )
             for radar_id_prefix in radar_ids:
-                # radar_id_prefix = "tiles/radar/RMA1/"
+                # radar_id_prefix = "tiles/radar/sinarame/RMA1/"
                 radar_id = radar_id_prefix.rstrip("/").split("/")[-1]
                 # Build product path: tiles/radar/sinarame/RMA1/dbzh/
                 product_prefix = f"{radar_id_prefix}{product_id}/"

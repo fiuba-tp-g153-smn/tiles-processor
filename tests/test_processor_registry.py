@@ -22,15 +22,96 @@ import pytest
 from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
 from models.gfs_config import GFS_PRODUCT_CONFIGS
 
-# Sources that hardcode their processor_id rather than reading it off a config.
-_HARDCODED_PROCESSOR_IDS = [
-    "goes_band_13",
-    "goes_band_9",
-    "goes_band_2",
-    "goes19_glm_fed",
-    "radar_sinarame",
-    "wrf_arg4k",
-]
+
+def _config_with_every_product_on():
+    """A config with all families enabled, so no source is skipped.
+
+    Products are read off the registries rather than listed, for the same
+    reason the ids below are.
+    """
+    from unittest.mock import MagicMock  # pylint: disable=import-outside-toplevel
+
+    from config import Config  # pylint: disable=import-outside-toplevel
+    from models.input_source_config import (  # pylint: disable=import-outside-toplevel
+        InputSourceConfig,
+    )
+    from models.radar_config import (  # pylint: disable=import-outside-toplevel
+        RADAR_PRODUCT_CONFIGS,
+        RadarStationFilter,
+    )
+    from models.gfs_config import (  # pylint: disable=import-outside-toplevel
+        GfsAccessConfig,
+    )
+    from models.wrf_config import (  # pylint: disable=import-outside-toplevel
+        WRF_PRODUCT_CONFIGS,
+    )
+
+    config = MagicMock(spec=Config)
+    config.ENABLED_RADAR_PRODUCTS = {pid: True for pid in RADAR_PRODUCT_CONFIGS}
+    config.ENABLED_WRF_PRODUCTS = {pid: True for pid in WRF_PRODUCT_CONFIGS}
+    config.RADAR_STATION_FILTER = RadarStationFilter("all")
+    config.ENABLE_ECMWF_PRECIPITATION = True
+    config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE = True
+    config.ECMWF_OPENDATA_SOURCES = ("ecmwf",)
+    config.ENABLE_GFS_MSLP = True
+    config.ENABLE_GFS_500 = True
+    config.ENABLE_GFS_250 = True
+    config.GFS_CYCLES_TO_MAINTAIN = 3
+    config.GFS_MAX_STEPS_PER_TICK = 12
+    config.GFS_AVAILABILITY_PROBE_FROM_HOURS = 3
+    config.GFS_AVAILABILITY_PROBE_TO_HOURS = 8
+    config.GFS_ACCESS = GfsAccessConfig(subset_endpoint="http://nomads.invalid/cgi")
+    config.get_bounds.return_value = {
+        "minx": -110.0,
+        "miny": -60.0,
+        "maxx": -30.0,
+        "maxy": -15.0,
+    }
+    for name, mode in (
+        ("RADAR_INPUT", "local"),
+        ("GOES19_GLM_INPUT", "local"),
+        ("WRF_INPUT", "local"),
+        ("GOES19_INPUT", "local"),
+        ("ECMWF_INPUT", "local"),
+        ("GFS_INPUT", "local"),
+    ):
+        setattr(config, name, InputSourceConfig(mode=mode, input_dir="/tmp/x"))
+    for knob in (
+        "GOES_TARGET_IMAGES",
+        "GOES_MAX_HOURS_BACK",
+        "RADAR_TARGET_IMAGES",
+        "WRF_TARGET_RUNS",
+        "GLM_SAFETY_LAG_SECONDS",
+        "GLM_TARGET_WINDOWS",
+    ):
+        setattr(config, knob, None)
+    config.GLM_ACCUM_MINUTES = 10
+    config.GLM_PRODUCE_EVERY_MINUTES = 10
+    return config
+
+
+def _registered_source_processor_ids() -> list[str]:
+    """Every processor_id a real data source stamps on its work units.
+
+    Read off the sources themselves rather than copied into a literal. The
+    hand-maintained list this replaces went stale during a product rename and
+    kept passing while 100% of ABI work units were unroutable: it asserted that
+    six strings were registered, which they were, but none of them was the id
+    any source actually emitted.
+    """
+    from factories import (  # pylint: disable=import-outside-toplevel
+        create_data_source_registry,
+    )
+
+    from unittest.mock import (
+        MagicMock,
+        patch,
+    )  # pylint: disable=import-outside-toplevel
+
+    # The tile-bucket client is irrelevant here; only the ids matter.
+    with patch("factories.create_s3_client", return_value=MagicMock()):
+        sources = create_data_source_registry(_config_with_every_product_on())
+    return sorted({s.processor_id for s in sources.get_all()})
 
 
 @pytest.fixture(name="registry", scope="module")
@@ -76,9 +157,40 @@ class TestEveryOtherProduct:
     def test_ecmwf_products_resolve(self, registry, product):
         assert registry.get(product.processor_id) is not None
 
-    @pytest.mark.parametrize("processor_id", _HARDCODED_PROCESSOR_IDS)
-    def test_hardcoded_source_ids_resolve(self, registry, processor_id):
-        assert registry.get(processor_id) is not None
+    def test_every_source_processor_id_resolves(self, registry):
+        """Close the loop: source.processor_id must be a registered key.
+
+        This is the only check that spans data_sources/ and the registry, so a
+        rename that moves one and not the other is invisible without it.
+        """
+        from models.ecmwf_config import (  # pylint: disable=import-outside-toplevel
+            ECMWF_MSLP_CONFIG,
+            ECMWF_TP_CONFIG,
+        )
+        from models.gfs_config import (  # pylint: disable=import-outside-toplevel
+            GFS_INLINE_PROCESSOR_ID,
+        )
+
+        # Download/fan-out units are handled by run_worker's inline_processors
+        # dict, never by the subprocess registry (see the contract test below).
+        inline = {
+            ECMWF_TP_CONFIG.inline_processor_id,
+            ECMWF_MSLP_CONFIG.inline_processor_id,
+            GFS_INLINE_PROCESSOR_ID,
+        }
+
+        unroutable = []
+        for processor_id in _registered_source_processor_ids():
+            if processor_id in inline:
+                continue
+            try:
+                registry.get(processor_id)
+            except KeyError:
+                unroutable.append(processor_id)
+        assert not unroutable, (
+            f"these sources stamp a processor_id nothing is registered under, "
+            f"so every one of their work units dead-letters: {unroutable}"
+        )
 
 
 class TestRegistryContract:

@@ -336,16 +336,16 @@ def _v850_palette() -> tuple:
 
 
 _PALETTE: dict[str, tuple] = {
-    "Colmax": _listed(_RADAR_BOUNDS, _RADAR_COLORS),
-    "Rafagas": _gradient(_GUST_BOUNDS, _GUST_GRADIENT),
-    "Campo900hPa": _listed(_Q_BOUNDS, _Q_COLORS),
-    "Precipitacion1h": _listed(_PP_BOUNDS, _PP_COLORS),
-    "MUCAPE": _gradient(_CAPE_BOUNDS, _CAPE_GRADIENT),
-    "AguaPrecipitable": _listed(_PW_BOUNDS, _PW_COLORS),
-    "JetCapasBajas": _v850_palette(),
-    "CortanteNivelesBajos": _listed(_SHEAR_BOUNDS, _SHEAR_COLORS),
-    "CAPE_BRN": _gradient(_CAPE_BOUNDS, _CAPE_GRADIENT),
-    "Granizo": _listed(_SHIP_BOUNDS, _SHIP_COLORS),
+    "colmax": _listed(_RADAR_BOUNDS, _RADAR_COLORS),
+    "rafagas": _gradient(_GUST_BOUNDS, _GUST_GRADIENT),
+    "campo-900hpa": _listed(_Q_BOUNDS, _Q_COLORS),
+    "precipitacion-1h": _listed(_PP_BOUNDS, _PP_COLORS),
+    "mucape": _gradient(_CAPE_BOUNDS, _CAPE_GRADIENT),
+    "agua-precipitable": _listed(_PW_BOUNDS, _PW_COLORS),
+    "jet-capas-bajas": _v850_palette(),
+    "cortante-niveles-bajos": _listed(_SHEAR_BOUNDS, _SHEAR_COLORS),
+    "cape-brn": _gradient(_CAPE_BOUNDS, _CAPE_GRADIENT),
+    "granizo": _listed(_SHIP_BOUNDS, _SHIP_COLORS),
 }
 
 
@@ -621,35 +621,35 @@ class WrfProcessor(ImageProcessor):
         shear magnitudes. Return the converted-but-unmasked field for that one
         product only. `shear_s1_s2` is in m s-1, hence the kt conversion here.
         """
-        if product_id == "CortanteNivelesBajos":
+        if product_id == "cortante-niveles-bajos":
             return primary_raw * MS_TO_KT
         return primary_masked
 
     @staticmethod
     def _apply_primary_masking(product_id: str, data: np.ndarray) -> np.ndarray:
         """Apply unit conversions and below-threshold masking to the primary field."""
-        if product_id == "Colmax":
+        if product_id == "colmax":
             return np.where(data < -18, np.nan, data)
-        if product_id == "Rafagas":
+        if product_id == "rafagas":
             data = data * MS_TO_KT
             return np.where(data < 25, np.nan, data)
-        if product_id == "Precipitacion1h":
+        if product_id == "precipitacion-1h":
             return np.where(data < 0.1, np.nan, data)
-        if product_id in ("MUCAPE", "CAPE_BRN"):
+        if product_id in ("mucape", "cape-brn"):
             return np.where(data < 100, np.nan, data)
-        if product_id == "AguaPrecipitable":
+        if product_id == "agua-precipitable":
             return np.where(data < 20, np.nan, data)
-        if product_id == "JetCapasBajas":
+        if product_id == "jet-capas-bajas":
             # Manual script (`plot_jet`) does NOT apply a threshold — values
             # outside [-48, -24] kt are rendered transparent via the cmap's
             # set_over/set_under overrides. Threshold-masking here would mark
             # most of Argentina as NaN and the brown nan_fill_color would
             # paint the whole scene brown.
             return data * MS_TO_KT
-        if product_id == "CortanteNivelesBajos":
+        if product_id == "cortante-niveles-bajos":
             data = data * MS_TO_KT
             return np.where(data < 10, np.nan, data)
-        if product_id == "Granizo":
+        if product_id == "granizo":
             return np.where(data < 0.1, np.nan, data)
         return data
 

@@ -833,7 +833,7 @@ class TestS3ClientUploadDirectory:
         s3_client._session.client = lambda *args, **kwargs: _AsyncClientContext(boto_client)  # type: ignore[attr-defined]
 
         with caplog.at_level(logging.DEBUG, logger="clients.s3_client"):
-            uploaded = await s3_client.upload_directory(tmp_path, "geojson/wrf/x")
+            uploaded = await s3_client.upload_directory(tmp_path, "geojson/wrf-arg4k/x")
 
         s3_records = [r for r in caplog.records if r.name == "clients.s3_client"]
         errors = [r for r in s3_records if r.levelno == logging.ERROR]

@@ -14,15 +14,15 @@
     "discovery_cron": "*/5 * * * *"
   },
   "sources": {
-    "goes19": {
+    "goes19-abi": {
       "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
-      "products": { "band_13": true, "band_9": true, "band_2": false },
+      "products": { "c13": true, "c09": true, "c02": false },
       "target_images": 24,
       "max_hours_back": 5,
       "zoom_levels": "3-7",
       "retention_days": 1
     },
-    "glm": {
+    "goes19-glm": {
       "input": { "mode": "local", "dir": "/app/data/glm_h5" },
       "accum_minutes": 10,
       "produce_every_minutes": 10,
@@ -32,35 +32,35 @@
       "zoom_levels": "3-7",
       "retention_days": 1
     },
-    "radar": {
+    "radar-sinarame": {
       "input": { "mode": "local", "dir": "/app/data/radar_h5" },
       "stations": { "whitelist": ["RMA1", "RMA2", "RMA8"] },
       "products": {
-        "DBZH": true,
-        "DBZH_450KM": true,
-        "ZDR": true,
-        "RHOHV": true,
-        "KDP": true,
-        "VRAD": true
+        "dbzh": true,
+        "dbzh-450km": true,
+        "zdr": true,
+        "rhohv": true,
+        "kdp": true,
+        "vrad": true
       },
       "target_images": 12,
       "zoom_levels": "4-9",
       "light_queue": "all",
       "retention_days": 1
     },
-    "wrf": {
+    "wrf-arg4k": {
       "input": { "mode": "local", "dir": "/app/data/wrf_nc" },
       "products": {
-        "Colmax": true,
-        "Rafagas": true,
-        "Campo900hPa": false,
-        "Precipitacion1h": false,
-        "MUCAPE": false,
-        "AguaPrecipitable": false,
-        "JetCapasBajas": false,
-        "CortanteNivelesBajos": false,
-        "CAPE_BRN": false,
-        "Granizo": false
+        "colmax": true,
+        "rafagas": true,
+        "campo-900hpa": false,
+        "precipitacion-1h": false,
+        "mucape": false,
+        "agua-precipitable": false,
+        "jet-capas-bajas": false,
+        "cortante-niveles-bajos": false,
+        "cape-brn": false,
+        "granizo": false
       },
       "target_runs": 3,
       "zoom_levels": "4-6",
@@ -68,7 +68,7 @@
       "light_queue": "all",
       "retention_days": 2
     },
-    "ecmwf": {
+    "ecmwf-ifs": {
       "products": {
         "precipitation": true,
         "mean_sea_level_pressure": false
@@ -81,7 +81,7 @@
       "retention_days": { "default": 2, "grib": 1 }
     },
     "gfs": {
-      "products": { "mslp": true, "500": false, "250": false },
+      "products": { "mslp": true, "500hpa": false, "250hpa": false },
       "cycles_to_maintain": 3,
       "max_steps_per_tick": 12,
       "availability_probe_hours": { "from": 3, "to": 8 },

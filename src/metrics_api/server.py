@@ -291,7 +291,7 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
             None,
             alias="type",
             description="Filter by job type.",
-            examples=["goes19_abi_band_13"],
+            examples=["goes19_abi_c13"],
         ),
         outcome: str | None = Query(
             None, description="Filter by outcome.", examples=["dlq"]

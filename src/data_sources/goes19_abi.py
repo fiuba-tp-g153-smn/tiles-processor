@@ -61,8 +61,13 @@ class Goes19AbiDataSource(Goes19BaseDataSource):
 
     @property
     def processor_id(self) -> str:
-        """The processor ID to use for images from this source."""
-        return f"goes_{self._band_config.band_id}"
+        """The processor ID to use for images from this source.
+
+        The band id is already fully qualified, so it names the processor too.
+        Prepending anything here yields an id nothing is registered under, and
+        every ABI work unit dead-letters silently.
+        """
+        return self._band_config.band_id
 
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
         """

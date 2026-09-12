@@ -58,12 +58,12 @@ def create_processor_registry():
 
     registry = ProcessorRegistry()
 
-    # Register GOES processors (both bands use the same processor class)
-    registry.register("goes_band_13", GoesProcessor)
-    registry.register("goes_band_9", GoesProcessor)
+    # Register ABI processors (c13 and c09 share the same processor class)
+    registry.register("goes19_abi_c13", GoesProcessor)
+    registry.register("goes19_abi_c09", GoesProcessor)
 
-    # Register Band 2 processor (downsampled visible imagery)
-    registry.register("goes_band_2", Band2Processor)
+    # Register the c02 processor (downsampled visible imagery)
+    registry.register("goes19_abi_c02", Band2Processor)
 
     # Register GLM processor (lightning products)
     registry.register("goes19_glm_fed", GlmFedProcessor)

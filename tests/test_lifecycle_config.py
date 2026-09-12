@@ -96,10 +96,71 @@ def test_every_written_prefix_is_covered_by_a_lifecycle_rule():
         if cfg.geojson_prefix:
             written.add(cfg.geojson_prefix)
     for cfg in GFS_PRODUCT_CONFIGS.values():
-        written |= {cfg.tiles_prefix, cfg.cog_prefix, cfg.geojson_prefix}
+        written |= {
+            cfg.tiles_prefix,
+            cfg.cog_prefix,
+            cfg.geojson_prefix,
+            cfg.grib_prefix,
+        }
 
     uncovered = sorted(w for w in written if not any(w.startswith(p) for p in rules))
     assert not uncovered, (
         f"these prefixes are written but match no lifecycle rule, so objects "
         f"under them would never expire: {uncovered}"
+    )
+
+
+@pytest.mark.parametrize("settings_name", ["settings.json", "settings-beta-1.json"])
+def test_settings_source_keys_are_all_known(settings_name):
+    """Every source block must be one the config actually reads.
+
+    Config resolves each source with ``_sources.get(<key>, {})``, so a key that
+    no longer matches yields an empty block and every setting under it silently
+    reverts to its default: products off, retention 1 day, no station filter.
+    That is how a whole deployment preset can go dark without an error, which is
+    exactly what happened to settings-beta-1.json during the product rename.
+    """
+    import json
+    from pathlib import Path
+
+    from models.lifecycle_config import SOURCE_LIFECYCLE_PREFIXES
+
+    settings = json.loads((Path(__file__).parent.parent / settings_name).read_text())
+    unknown = sorted(set(settings["sources"]) - set(SOURCE_LIFECYCLE_PREFIXES))
+    assert not unknown, (
+        f"{settings_name} has source keys the config does not read, so their "
+        f"settings are silently ignored: {unknown}"
+    )
+
+
+@pytest.mark.parametrize("settings_name", ["settings.json", "settings-beta-1.json"])
+def test_settings_product_keys_are_all_known(settings_name):
+    """Same for the product ids inside each source block."""
+    import json
+    from pathlib import Path
+
+    from models.band_config import BAND_CONFIGS
+    from models.gfs_config import GFS_PRODUCT_CONFIGS
+    from models.radar_config import RADAR_PRODUCT_CONFIGS
+    from models.wrf_config import WRF_PRODUCT_CONFIGS
+
+    known = {
+        "goes19-abi": {"c13", "c09", "c02"},
+        "goes19-glm": {"fed", "toe", "mfa"},
+        "radar-sinarame": set(RADAR_PRODUCT_CONFIGS),
+        "wrf-arg4k": set(WRF_PRODUCT_CONFIGS),
+        "ecmwf-ifs": {"precipitation", "mean_sea_level_pressure"},
+        "gfs": set(GFS_PRODUCT_CONFIGS),
+    }
+    assert BAND_CONFIGS, "band configs must exist for this guard to mean anything"
+
+    settings = json.loads((Path(__file__).parent.parent / settings_name).read_text())
+    stray = {
+        source: sorted(set(block.get("products", {})) - known.get(source, set()))
+        for source, block in settings["sources"].items()
+        if sorted(set(block.get("products", {})) - known.get(source, set()))
+    }
+    assert not stray, (
+        f"{settings_name} lists products the code does not know, so toggling "
+        f"them does nothing: {stray}"
     )
