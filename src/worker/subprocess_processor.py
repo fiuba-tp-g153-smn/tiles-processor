@@ -80,7 +80,7 @@ def create_processor_registry():
     registry.register(GFS_500_CONFIG.processor_id, GfsUpperLevelProcessor)
 
     # Register WRF processor
-    registry.register("wrf", WrfProcessor)
+    registry.register("wrf_arg4k", WrfProcessor)
 
     return registry
 

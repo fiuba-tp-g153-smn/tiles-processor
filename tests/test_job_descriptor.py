@@ -36,9 +36,11 @@ def test_radar_product_with_underscore_keeps_timestamp():
 
 
 def test_wrf_colmax_label_strips_product_prefix():
-    desc = describe_job("wrf_Colmax", "Colmax_20260114_00UTC_F006", "wrf_Colmax")
-    assert desc.job_type == "wrf_Colmax"
-    assert "WRF Colmax" in desc.product_label
+    desc = describe_job(
+        "wrf_arg4k_colmax", "colmax_20260114_00UTC_F006", "wrf_arg4k_colmax"
+    )
+    assert desc.job_type == "wrf_arg4k_colmax"
+    assert "WRF colmax" in desc.product_label
     assert desc.image_timestamp == "20260114_00UTC_F006"
 
 

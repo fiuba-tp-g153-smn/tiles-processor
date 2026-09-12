@@ -851,7 +851,7 @@ class TestS3ClientUploadDirectory:
 _SAMPLE_RETENTION = {
     "tiles/radar/sinarame/sinarame": 1,
     "cog/radar/sinarame": 1,
-    "tiles/wrf": 2,
+    "tiles/wrf-arg4k": 2,
     "grib/models/ecmwf": 1,
     "geojson/models/ecmwf": 2,
 }
@@ -879,7 +879,7 @@ class TestBuildLifecycleRules:
             for r in _build_lifecycle_rules(_SAMPLE_RETENTION)
         }
         assert days_by_prefix["tiles/radar/sinarame/sinarame"] == 1
-        assert days_by_prefix["tiles/wrf"] == 2
+        assert days_by_prefix["tiles/wrf-arg4k"] == 2
         assert days_by_prefix["grib/models/ecmwf"] == 1
         assert days_by_prefix["geojson/models/ecmwf"] == 2
 
@@ -887,7 +887,7 @@ class TestBuildLifecycleRules:
         rules = _build_lifecycle_rules(
             {
                 "tiles/radar/sinarame/sinarame": 0,
-                "tiles/wrf": 2,
+                "tiles/wrf-arg4k": 2,
                 "cog/radar/sinarame": -3,
             }
         )

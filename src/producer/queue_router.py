@@ -28,8 +28,8 @@ class QueueRouter:
         data_source_id = work_unit.data_source_id
         if self.all_radar_light and data_source_id.startswith("radar_"):
             return self.radar_light_queue
-        if data_source_id.startswith("wrf_"):
-            product_id = data_source_id.removeprefix("wrf_")
+        if data_source_id.startswith("wrf_arg4k_"):
+            product_id = data_source_id.removeprefix("wrf_arg4k_")
             if product_id in self.light_wrf_products:
                 return self.wrf_light_queue
         return self.normal_queue

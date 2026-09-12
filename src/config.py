@@ -173,7 +173,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         _goes19 = _sources.get("goes19-abi", {})
         _glm = _sources.get("goes19-glm", {})
         _radar = _sources.get("radar-sinarame", {})
-        _wrf = _sources.get("wrf", {})
+        _wrf = _sources.get("wrf-arg4k", {})
         _ecmwf = _sources.get("ecmwf", {})
         _gfs = _sources.get("gfs", {})
 
@@ -332,7 +332,10 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             default_dir=str(Path(self.DATA_DIR) / "glm_h5"),
         )
         self.WRF_INPUT: InputSourceConfig = self._parse_input_source(
-            _wrf, "wrf", default_dir=str(Path(self.DATA_DIR) / "wrf_nc")
+            _wrf,
+            "wrf-arg4k",
+            env_prefix="WRF_ARG4K",
+            default_dir=str(Path(self.DATA_DIR) / "wrf_nc"),
         )
         self.GOES19_INPUT: InputSourceConfig = self._parse_input_source(
             _goes19,

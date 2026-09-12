@@ -29,7 +29,7 @@ _HARDCODED_PROCESSOR_IDS = [
     "goes_band_2",
     "goes19_glm_fed",
     "radar_sinarame",
-    "wrf",
+    "wrf_arg4k",
 ]
 
 

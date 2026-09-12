@@ -53,7 +53,7 @@ def _label_and_timestamp(
             return _describe_radar(data_source_id, image_id)
         if data_source_id.startswith("goes19_glm"):
             return ("GLM Lightning (FED/TOE/MFA)", image_id)
-        if data_source_id.startswith("wrf_"):
+        if data_source_id.startswith("wrf_arg4k_"):
             return _describe_wrf(data_source_id, image_id)
         if data_source_id.startswith("ecmwf_"):
             return (f"ECMWF {data_source_id.removeprefix('ecmwf_')}", image_id)
@@ -91,7 +91,7 @@ def _describe_radar(data_source_id: str, image_id: str) -> tuple[str, str]:
 
 def _describe_wrf(data_source_id: str, image_id: str) -> tuple[str, str]:
     """WRF: ``image_id`` is ``{product}_{init_tag}_{fxxx}``."""
-    product_id = data_source_id.removeprefix("wrf_")
+    product_id = data_source_id.removeprefix("wrf_arg4k_")
     config = WRF_PRODUCT_CONFIGS.get(product_id)
     long_name = config.long_name if config else product_id
     # Strip the leading product token to leave "{init_tag}_{fxxx}".

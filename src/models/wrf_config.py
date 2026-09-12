@@ -63,7 +63,7 @@ class WrfProductConfig:
     needs_field3d: bool
     s3_tiles_prefix: str
     s3_cog_prefix: str
-    s3_geojson_prefix: str = "geojson/wrf"
+    s3_geojson_prefix: str = "geojson/wrf-arg4k"
     primary_level_hpa: Optional[float] = None
     nan_fill_color: Optional[tuple[int, int, int]] = None
     barbs: Optional[WrfBarbsConfig] = None
@@ -81,21 +81,21 @@ _TOPO_BROWN = (139, 94, 60)
 
 
 COLMAX_CONFIG = WrfProductConfig(
-    product_id="Colmax",
+    product_id="colmax",
     primary_var="mdbz",
     needs_field3d=False,
-    s3_tiles_prefix="tiles/wrf",
-    s3_cog_prefix="cog/wrf",
+    s3_tiles_prefix="tiles/wrf-arg4k",
+    s3_cog_prefix="cog/wrf-arg4k",
     unit="dBZ",
     long_name="Reflectividad máxima columna",
 )
 
 RAFAGAS_CONFIG = WrfProductConfig(
-    product_id="Rafagas",
+    product_id="rafagas",
     primary_var="gust10",
     needs_field3d=False,
-    s3_tiles_prefix="tiles/wrf",
-    s3_cog_prefix="cog/wrf",
+    s3_tiles_prefix="tiles/wrf-arg4k",
+    s3_cog_prefix="cog/wrf-arg4k",
     barbs=WrfBarbsConfig(u_var="u10", v_var="v10"),
     contours=(
         WrfContourConfig(
@@ -110,25 +110,25 @@ RAFAGAS_CONFIG = WrfProductConfig(
 )
 
 CAMPO900HPA_CONFIG = WrfProductConfig(
-    product_id="Campo900hPa",
+    product_id="campo-900hpa",
     primary_var="q",
     needs_field3d=True,
     primary_level_hpa=900.0,
     nan_fill_color=_TOPO_BROWN,
-    s3_tiles_prefix="tiles/wrf",
-    s3_cog_prefix="cog/wrf",
+    s3_tiles_prefix="tiles/wrf-arg4k",
+    s3_cog_prefix="cog/wrf-arg4k",
     barbs=WrfBarbsConfig(u_var="u", v_var="v", level_hpa=900.0),
     unit="g/kg",
     long_name="Humedad específica 900 hPa",
 )
 
 PRECIPITACION1H_CONFIG = WrfProductConfig(
-    product_id="Precipitacion1h",
+    product_id="precipitacion-1h",
     primary_var="pp01H",
     needs_field3d=False,
     skip_f000=True,  # pp01H no existe en F000 (sin hora previa que acumular)
-    s3_tiles_prefix="tiles/wrf",
-    s3_cog_prefix="cog/wrf",
+    s3_tiles_prefix="tiles/wrf-arg4k",
+    s3_cog_prefix="cog/wrf-arg4k",
     barbs=WrfBarbsConfig(u_var="u10", v_var="v10"),
     contours=(
         WrfContourConfig(
@@ -145,11 +145,11 @@ PRECIPITACION1H_CONFIG = WrfProductConfig(
 )
 
 MUCAPE_CONFIG = WrfProductConfig(
-    product_id="MUCAPE",
+    product_id="mucape",
     primary_var="mcape",
     needs_field3d=False,
-    s3_tiles_prefix="tiles/wrf",
-    s3_cog_prefix="cog/wrf",
+    s3_tiles_prefix="tiles/wrf-arg4k",
+    s3_cog_prefix="cog/wrf-arg4k",
     contours=(
         WrfContourConfig(
             name="shear_850_500",
@@ -165,23 +165,23 @@ MUCAPE_CONFIG = WrfProductConfig(
 )
 
 AGUA_PRECIPITABLE_CONFIG = WrfProductConfig(
-    product_id="AguaPrecipitable",
+    product_id="agua-precipitable",
     primary_var="pw",
     needs_field3d=False,
-    s3_tiles_prefix="tiles/wrf",
-    s3_cog_prefix="cog/wrf",
+    s3_tiles_prefix="tiles/wrf-arg4k",
+    s3_cog_prefix="cog/wrf-arg4k",
     unit="mm",
     long_name="Agua precipitable",
 )
 
 JET_CAPAS_BAJAS_CONFIG = WrfProductConfig(
-    product_id="JetCapasBajas",
+    product_id="jet-capas-bajas",
     primary_var="v",
     needs_field3d=True,
     primary_level_hpa=850.0,
     nan_fill_color=_TOPO_BROWN,
-    s3_tiles_prefix="tiles/wrf",
-    s3_cog_prefix="cog/wrf",
+    s3_tiles_prefix="tiles/wrf-arg4k",
+    s3_cog_prefix="cog/wrf-arg4k",
     barbs=WrfBarbsConfig(u_var="u", v_var="v", level_hpa=850.0),
     contours=(
         WrfContourConfig(
@@ -198,22 +198,22 @@ JET_CAPAS_BAJAS_CONFIG = WrfProductConfig(
 )
 
 CORTANTE_NIVELES_BAJOS_CONFIG = WrfProductConfig(
-    product_id="CortanteNivelesBajos",
+    product_id="cortante-niveles-bajos",
     primary_var="shear_s1_s2",
     needs_field3d=False,
-    s3_tiles_prefix="tiles/wrf",
-    s3_cog_prefix="cog/wrf",
+    s3_tiles_prefix="tiles/wrf-arg4k",
+    s3_cog_prefix="cog/wrf-arg4k",
     barbs=WrfBarbsConfig(u_var="shear_s1_s2_u", v_var="shear_s1_s2_v"),
     unit="kt",
     long_name="Cortante niveles bajos",
 )
 
 CAPE_BRN_CONFIG = WrfProductConfig(
-    product_id="CAPE_BRN",
+    product_id="cape-brn",
     primary_var="mcape",
     needs_field3d=False,
-    s3_tiles_prefix="tiles/wrf",
-    s3_cog_prefix="cog/wrf",
+    s3_tiles_prefix="tiles/wrf-arg4k",
+    s3_cog_prefix="cog/wrf-arg4k",
     contours=(
         WrfContourConfig(
             name="brn",
@@ -229,12 +229,12 @@ CAPE_BRN_CONFIG = WrfProductConfig(
 )
 
 GRANIZO_CONFIG = WrfProductConfig(
-    product_id="Granizo",
+    product_id="granizo",
     primary_var="ship",
     needs_field3d=False,
     nan_fill_color=_TOPO_BROWN,
-    s3_tiles_prefix="tiles/wrf",
-    s3_cog_prefix="cog/wrf",
+    s3_tiles_prefix="tiles/wrf-arg4k",
+    s3_cog_prefix="cog/wrf-arg4k",
     contours=(
         WrfContourConfig(
             name="haildiammax",
@@ -248,16 +248,16 @@ GRANIZO_CONFIG = WrfProductConfig(
 )
 
 WRF_PRODUCT_CONFIGS: dict[str, WrfProductConfig] = {
-    "Colmax": COLMAX_CONFIG,
-    "Rafagas": RAFAGAS_CONFIG,
-    "Campo900hPa": CAMPO900HPA_CONFIG,
-    "Precipitacion1h": PRECIPITACION1H_CONFIG,
-    "MUCAPE": MUCAPE_CONFIG,
-    "AguaPrecipitable": AGUA_PRECIPITABLE_CONFIG,
-    "JetCapasBajas": JET_CAPAS_BAJAS_CONFIG,
-    "CortanteNivelesBajos": CORTANTE_NIVELES_BAJOS_CONFIG,
-    "CAPE_BRN": CAPE_BRN_CONFIG,
-    "Granizo": GRANIZO_CONFIG,
+    "colmax": COLMAX_CONFIG,
+    "rafagas": RAFAGAS_CONFIG,
+    "campo-900hpa": CAMPO900HPA_CONFIG,
+    "precipitacion-1h": PRECIPITACION1H_CONFIG,
+    "mucape": MUCAPE_CONFIG,
+    "agua-precipitable": AGUA_PRECIPITABLE_CONFIG,
+    "jet-capas-bajas": JET_CAPAS_BAJAS_CONFIG,
+    "cortante-niveles-bajos": CORTANTE_NIVELES_BAJOS_CONFIG,
+    "cape-brn": CAPE_BRN_CONFIG,
+    "granizo": GRANIZO_CONFIG,
 }
 
 

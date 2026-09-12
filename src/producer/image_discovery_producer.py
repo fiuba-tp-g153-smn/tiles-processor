@@ -182,8 +182,8 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             product_id = source_id.removeprefix("radar_sinarame_")
             return self._config.ENABLED_RADAR_PRODUCTS.get(product_id, False)
         # Check for WRF sources (wrf_Colmax, wrf_Rafagas, etc.)
-        if source_id.startswith("wrf_"):
-            product_id = source_id.removeprefix("wrf_")
+        if source_id.startswith("wrf_arg4k_"):
+            product_id = source_id.removeprefix("wrf_arg4k_")
             return self._config.ENABLED_WRF_PRODUCTS.get(product_id, False)
 
         # ECMWF sources
@@ -230,7 +230,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             existing_tilesets = await self._get_radar_existing_tilesets(product_id)
         elif isinstance(data_source, WrfDataSource):
             product_id = data_source.product_config.product_id
-            band_id = f"wrf_{product_id}"
+            band_id = f"wrf_arg4k_{product_id}"
             existing_tilesets = await self._get_wrf_existing_tilesets(product_id)
         elif not data_source.uses_existing_tilesets:
             band_id = data_source.source_id
@@ -336,12 +336,12 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
     async def _get_wrf_existing_tilesets(self, product_id: str) -> Set[str]:
         """Get existing WRF tilesets for a product.
 
-        Path structure: tiles/wrf/{product_id}/{init_tag}/{fxxx}/
+        Path structure: tiles/wrf-arg4k/{product_id}/{init_tag}/{fxxx}/
         Returns image_ids like: Colmax_20260430_060000_F001
         """
         tilesets = set()
         try:
-            product_prefix = f"tiles/wrf/{product_id}/"
+            product_prefix = f"tiles/wrf-arg4k/{product_id}/"
             init_tag_prefixes = await self._s3_client.list_prefixes(
                 product_prefix, delimiter="/"
             )

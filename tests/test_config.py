@@ -205,12 +205,16 @@ class TestConfig:
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
-                "wrf": {"input": {"mode": "s3", "s3_bucket": "wrf-input"}},
+                "wrf-arg4k": {"input": {"mode": "s3", "s3_bucket": "wrf-input"}},
             },
         }
         settings_path = tmp_path / "settings.json"
         settings_path.write_text(json.dumps(settings))
-        env = {**env_vars, "WRF_S3_ACCESS_KEY": "ak", "WRF_S3_SECRET_KEY": "sk"}
+        env = {
+            **env_vars,
+            "WRF_ARG4K_S3_ACCESS_KEY": "ak",
+            "WRF_ARG4K_S3_SECRET_KEY": "sk",
+        }
 
         with mock.patch.dict(os.environ, env, clear=True):
             config = Config(settings_path=settings_path)
@@ -643,7 +647,7 @@ class TestConfig:
                 "goes19-abi": {"target_images": 30, "max_hours_back": 8},
                 "goes19-glm": {"safety_lag_seconds": 45, "target_windows": 12},
                 "radar-sinarame": {"target_images": 6},
-                "wrf": {"target_runs": 5},
+                "wrf-arg4k": {"target_runs": 5},
             },
         }
         path = tmp_path / "settings.json"

@@ -36,13 +36,13 @@ async def test_local_list_files_missing_dir(tmp_path):
 @pytest.mark.asyncio
 async def test_local_download_copies_file(tmp_path):
     src = tmp_path / FIELD2D_NAME
-    src.write_bytes(b"wrf_data")
+    src.write_bytes(b"wrf_arg4k_data")
     repo = LocalWrfFileRepository(tmp_path)
 
     result = await repo.download(str(src), tmp_path / "dest" / "output")
 
     assert result.suffix == ".nc"
-    assert result.read_bytes() == b"wrf_data"
+    assert result.read_bytes() == b"wrf_arg4k_data"
 
 
 @pytest.mark.asyncio

@@ -14,10 +14,10 @@ def _all_prefixes():
 
 
 def test_int_form_applies_uniformly_across_a_sources_prefixes():
-    got = resolve_retention_map({"wrf": {"retention_days": 3}})
-    assert got["tiles/wrf"] == 3
-    assert got["cog/wrf"] == 3
-    assert got["geojson/wrf"] == 3
+    got = resolve_retention_map({"wrf-arg4k": {"retention_days": 3}})
+    assert got["tiles/wrf-arg4k"] == 3
+    assert got["cog/wrf-arg4k"] == 3
+    assert got["geojson/wrf-arg4k"] == 3
 
 
 def test_object_form_overrides_one_kind_and_defaults_the_rest():
@@ -37,14 +37,14 @@ def test_absent_source_falls_back_to_default():
 
 
 def test_object_form_without_default_uses_module_default_for_missing_kinds():
-    got = resolve_retention_map({"wrf": {"retention_days": {"geojson": 4}}})
-    assert got["geojson/wrf"] == 4
-    assert got["tiles/wrf"] == DEFAULT_RETENTION_DAYS
+    got = resolve_retention_map({"wrf-arg4k": {"retention_days": {"geojson": 4}}})
+    assert got["geojson/wrf-arg4k"] == 4
+    assert got["tiles/wrf-arg4k"] == DEFAULT_RETENTION_DAYS
 
 
 def test_rejects_unknown_override_kind():
     with pytest.raises(ValueError, match="unknown keys"):
-        resolve_retention_map({"wrf": {"retention_days": {"tilez": 2}}})
+        resolve_retention_map({"wrf-arg4k": {"retention_days": {"tilez": 2}}})
 
 
 def test_rejects_zero_or_negative_days():
@@ -70,19 +70,33 @@ def test_every_written_prefix_is_covered_by_a_lifecycle_rule():
     PutObject path only. An object written under an uncovered prefix is stored
     with no expiry and never returns its volume slots, which is what exhausted
     the cluster's 900 slots in Sept 2026. A prefix rename that forgets this map
-    reintroduces exactly that, silently.
+    reintroduces exactly that, silently. Covers every family, so each rename is
+    checked rather than only the one the author remembered.
     """
     import json
     from pathlib import Path
 
     from models.band_config import BAND_CONFIGS
+    from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
+    from models.gfs_config import GFS_PRODUCT_CONFIGS
     from models.lifecycle_config import resolve_retention_map
+    from models.radar_config import RADAR_PRODUCT_CONFIGS
+    from models.wrf_config import WRF_PRODUCT_CONFIGS
 
     settings = json.loads((Path(__file__).parent.parent / "settings.json").read_text())
     rules = resolve_retention_map(settings["sources"])
 
-    written = {c.s3_tiles_prefix for c in BAND_CONFIGS.values()}
-    written |= {c.s3_cog_prefix for c in BAND_CONFIGS.values()}
+    written: set[str] = set()
+    for cfg in (*BAND_CONFIGS.values(), *RADAR_PRODUCT_CONFIGS.values()):
+        written |= {cfg.s3_tiles_prefix, cfg.s3_cog_prefix}
+    for cfg in WRF_PRODUCT_CONFIGS.values():
+        written |= {cfg.s3_tiles_prefix, cfg.s3_cog_prefix, cfg.s3_geojson_prefix}
+    for cfg in (ECMWF_TP_CONFIG, ECMWF_MSLP_CONFIG):
+        written |= {cfg.tiles_prefix, cfg.cog_prefix, cfg.grib_prefix}
+        if cfg.geojson_prefix:
+            written.add(cfg.geojson_prefix)
+    for cfg in GFS_PRODUCT_CONFIGS.values():
+        written |= {cfg.tiles_prefix, cfg.cog_prefix, cfg.geojson_prefix}
 
     uncovered = sorted(w for w in written if not any(w.startswith(p) for p in rules))
     assert not uncovered, (

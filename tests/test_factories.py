@@ -204,16 +204,16 @@ class TestCreateDataSourceRegistry:
 
     def test_wrf_local_mode_builds_local_repository(self):
         config = self._build_config(tp=False, mslp=False)
-        config.ENABLED_WRF_PRODUCTS = {"Colmax": True}
+        config.ENABLED_WRF_PRODUCTS = {"colmax": True}
         registry = create_data_source_registry(config)
 
         assert isinstance(
-            registry.get("wrf_Colmax")._repository, LocalWrfFileRepository
+            registry.get("wrf_arg4k_colmax")._repository, LocalWrfFileRepository
         )
 
     def test_wrf_s3_mode_builds_s3_repository(self):
         config = self._build_config(tp=False, mslp=False)
-        config.ENABLED_WRF_PRODUCTS = {"Colmax": True}
+        config.ENABLED_WRF_PRODUCTS = {"colmax": True}
         config.WRF_INPUT = InputSourceConfig(
             mode="s3",
             input_dir="/tmp/wrf",
@@ -223,7 +223,7 @@ class TestCreateDataSourceRegistry:
         with patch("factories.S3Client"):
             registry = create_data_source_registry(config)
 
-        repository = registry.get("wrf_Colmax")._repository
+        repository = registry.get("wrf_arg4k_colmax")._repository
         assert isinstance(repository, S3WrfFileRepository)
         assert repository._prefix == "wrf_nc/"
 

@@ -52,19 +52,19 @@
       "light_queue": "all",
       "retention_days": 1
     },
-    "wrf": {
+    "wrf-arg4k": {
       "input": { "mode": "local", "dir": "/app/data/wrf_nc" },
       "products": {
-        "Colmax": true,
-        "Rafagas": true,
-        "Campo900hPa": true,
-        "Precipitacion1h": true,
-        "MUCAPE": true,
-        "AguaPrecipitable": true,
-        "JetCapasBajas": true,
-        "CortanteNivelesBajos": true,
-        "CAPE_BRN": true,
-        "Granizo": true
+        "colmax": true,
+        "rafagas": true,
+        "campo-900hpa": true,
+        "precipitacion-1h": true,
+        "mucape": true,
+        "agua-precipitable": true,
+        "jet-capas-bajas": true,
+        "cortante-niveles-bajos": true,
+        "cape-brn": true,
+        "granizo": true
       },
       "target_runs": 3,
       "zoom_levels": "4-6",

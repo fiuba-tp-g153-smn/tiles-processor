@@ -372,7 +372,7 @@ class WrfProcessor(ImageProcessor):
 
     async def process(self, downloaded_file_path: str, work_unit: WorkUnit) -> None:
         """Execute full WRF processing pipeline for one product / forecast step."""
-        product_id = work_unit.band_id.removeprefix("wrf_")
+        product_id = work_unit.band_id.removeprefix("wrf_arg4k_")
         product_config = get_wrf_product_config(product_id)
 
         f2d_path = Path(downloaded_file_path)
