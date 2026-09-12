@@ -24,17 +24,16 @@
     },
     "goes19-glm": {
       "input": { "mode": "local", "dir": "/app/data/glm_h5" },
+      "products": { "fed": true, "toe": false, "mfa": false },
+      "target_windows": 24,
       "accum_minutes": 10,
       "produce_every_minutes": 10,
       "safety_lag_seconds": 30,
-      "target_windows": 24,
-      "products": { "fed": true, "toe": false, "mfa": false },
       "zoom_levels": "3-7",
       "retention_days": 1
     },
     "radar-sinarame": {
       "input": { "mode": "local", "dir": "/app/data/radar_h5" },
-      "stations": { "whitelist": ["RMA1", "RMA2", "RMA8"] },
       "products": {
         "dbzh": true,
         "dbzh-450km": true,
@@ -43,6 +42,7 @@
         "kdp": true,
         "vrad": true
       },
+      "stations": { "whitelist": ["RMA1", "RMA2", "RMA8"] },
       "target_images": 12,
       "zoom_levels": "4-9",
       "light_queue": "all",
@@ -69,28 +69,24 @@
       "retention_days": 2
     },
     "ecmwf-ifs": {
-      "products": {
-        "precipitation": true,
-        "mean_sea_level_pressure": false
-      },
-      "mslp": {
-        "isobar_simplify_tolerance": 0.05,
-        "smoothing_sigma": 1.5
-      },
+      "input": { "mode": "opendata" },
+      "products": { "precipitation": true, "mean_sea_level_pressure": false },
+      "mslp": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 },
       "zoom_levels": "3-7",
       "retention_days": { "default": 2, "grib": 1 }
     },
     "gfs": {
+      "input": { "mode": "nomads" },
       "products": { "mslp": true, "500hpa": false, "250hpa": false },
       "cycles_to_maintain": 3,
       "max_steps_per_tick": 12,
       "availability_probe_hours": { "from": 3, "to": 8 },
       "smoothing_sigma": 1.5,
       "isoline_simplify_tolerance": 0.05,
-      "http_timeout_seconds": 120,
-      "max_concurrent_downloads": 2,
       "zoom_levels": "3-7",
       "barb_zoom_strides": { "2": 24, "4": 7, "6": 3, "8": 2 },
+      "http_timeout_seconds": 120,
+      "max_concurrent_downloads": 2,
       "retention_days": 1
     }
   }
