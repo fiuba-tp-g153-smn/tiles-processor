@@ -25,20 +25,30 @@ Distributed Python system for processing GOES-19 satellite data from NOAA S3 —
 
 ## Features
 
-- **Satellite Data Processing**: Automatically downloads and processes GOES-19 satellite imagery.
-  - **Band 13 (Clean IR Window)**: Channel 13 (10.33 µm) for Cloud Top monitoring.
-  - **Band 9 (Mid-Level Water Vapor)**: Channel 9 (6.93 µm) for Water Vapor analysis.
-  - **Band 2 (Visible Red)**: Channel 2 (0.64 µm) for high-resolution visible imagery (500 m native).
-  - **GLM Flash Extent Density (FED)**: 10-minute lightning activity maps from 20-second L2-LCFA files.
-  - **GLM Time of Event (TOE)** and **Multi-Flash Aggregation (MFA)**: Additional GLM-derived products.
-  - **Radar**: Dual-pol products (DBZH, ZDR, RHOHV, KDP, VRAD) from local H5 files, plus
-    **DBZH_450KM** — the same 0.55° reflectivity read from the long-range subvolume 04
-    (~445 km reach, single sweep) and published as its own product.
-- **Queue-based Architecture**: RabbitMQ producer-worker pattern. Workers process images sequentially per worker (prefetch=1) with manual ack and a dead-letter queue for failures.
-- **Subprocess Isolation**: Each image is processed in an isolated subprocess to guarantee full memory reclamation between jobs.
-- **Smart Skip**: Producer checks S3 before publishing — already-processed tilesets are never re-queued.
-- **Tile Retention**: S3 lifecycle TTL configured per bucket (`tile_retention_days` in `settings.json`).
-- **Feature Toggles**: Individual products enabled/disabled in `settings.json`.
+**Products.** Each one is colorized and tiled as its own tileset:
+
+- **Band 13 (Clean IR Window).** Channel 13 (10.33 µm), cloud top monitoring.
+- **Band 9 (Mid-Level Water Vapor).** Channel 9 (6.93 µm), water vapor analysis.
+- **Band 2 (Visible Red).** Channel 2 (0.64 µm), high-resolution visible imagery (500 m native).
+- **GLM Flash Extent Density (FED).** 10-minute lightning activity maps from 20-second L2-LCFA files.
+- **GLM Time of Event (TOE)** and **Multi-Flash Aggregation (MFA).** Further GLM-derived products.
+- **Radar.** Dual-pol products (DBZH, ZDR, RHOHV, KDP, VRAD) from local H5 files, plus
+  **DBZH_450KM** — the same 0.55° reflectivity read from the long-range subvolume 04
+  (~445 km reach, single sweep) and published as its own product.
+
+**Queue.** The producer publishes `WorkUnit` messages to RabbitMQ; each worker takes
+one image at a time (prefetch=1), acks manually, and failures go to a dead-letter queue.
+
+**Subprocess isolation.** Each image is processed in an isolated subprocess, so its
+memory is reclaimed in full between jobs.
+
+**Deduplication.** The producer checks S3 before publishing — already-processed
+tilesets are never re-queued.
+
+**Tile retention.** S3 lifecycle TTL configured per bucket (`tile_retention_days` in
+`settings.json`).
+
+**Feature toggles.** Individual products enabled/disabled in `settings.json`.
 
 ## Tech Stack
 
@@ -327,11 +337,13 @@ input, product toggles, retention, and tuning live together.
       "retention_days": 2
     },
     "ecmwf": {
+      "input": { "mode": "opendata" },
       "products": { "precipitation": true, "mean_sea_level_pressure": true },
       "mslp": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 },
       "retention_days": { "default": 2, "grib": 1 }
     },
     "gfs": {
+      "input": { "mode": "nomads" },
       "products": { "mslp": true, "500": true, "250": true },
       "cycles_to_maintain": 3,
       "max_steps_per_tick": 12,
@@ -346,9 +358,45 @@ input, product toggles, retention, and tuning live together.
 - **`metrics`**: `enabled` toggles the /status backend; `max_rows` caps `metrics.db`.
 - **`scheduler.discovery_cron`**: 5-field cron for the whole-pipeline discovery
   tick (default `"*/5 * * * *"` — every 5 minutes). A non-5-field value fails fast.
-- **`sources.<name>.input`**: `mode` (`local`/`s3`), `dir` for local, or
-  `s3_bucket`/`s3_endpoint`/`s3_prefix`/`s3_secure` for S3. Credentials come from
-  `<NAME>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars (unset = anonymous).
+- **`sources.<name>.input`**: where the source reads its raw files from. Every
+  source supports `mode: "local"` (a folder) and `mode: "s3"` (a bucket with the
+  same layout); `ecmwf` and `gfs` additionally accept the upstream API they
+  default to (`"opendata"` and `"nomads"` respectively).
+  - `dir` — the root folder, for `local`.
+  - `s3_bucket` — a bare bucket name, or a whole location as `s3://bucket/prefix`
+    (which fills the prefix; setting `s3_prefix` as well is then an error).
+  - `s3_endpoint` — either `host:port` (with `s3_secure` picking http/https) or a
+    complete URL including the scheme and any path, e.g.
+    `"http://seaweedfs:8333"` or `"https://gateway.example.com/s3"`. Omit it for
+    the public AWS endpoint. A value that is not a readable http(s) endpoint
+    fails at startup instead of at the first request.
+  - `s3_prefix` — key prefix the layout is rooted at (a trailing `/` is added if
+    missing). Supported by every source, GOES-19 included, so a mirror can keep
+    NOAA's `ABI-L1b-RadF/YYYY/JJJ/HH/` tree under a folder of its own.
+  - `s3_region` — needed only for an authenticated bucket outside `us-east-1`;
+    botocore signs for `us-east-1` when it is unset.
+  - `s3_addressing_style` — `path` (default; what SeaweedFS/MinIO/RustFS need),
+    `virtual` or `auto` for endpoints that only answer on `<bucket>.<host>`.
+  - Credentials come from `<NAME>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars (unset =
+    anonymous; setting only one of the pair fails at startup). The names are
+    `GOES19_`, `RADAR_`, `GLM_FOLDER_`, `WRF_`, `ECMWF_` and `GFS_`.
+
+  The folder and bucket layouts are identical per source, so one can be synced
+  into the other unchanged:
+
+  | Source | Layout below the root (`dir` or `s3_prefix`) |
+  |---|---|
+  | `goes19` | `ABI-L1b-RadF/YYYY/JJJ/HH/OR_ABI-...nc` |
+  | `radar` | `*.H5`, or `<subdir>/*.H5` |
+  | `glm` | `CG_GLM-L2-GLMF-*.nc`, or `<subdir>/CG_GLM-...nc` |
+  | `wrf` | `WRF_ARG4K.FCST_L0_FIELD2D.*.nc`, or `<subdir>/...nc` |
+  | `ecmwf` | `<product>/<YYYYMMDDTHHmmZ>.grib` (`<product>` = `total_precipitation`, `mean_sea_level_pressure`) |
+  | `gfs` | `<cycle>/<cycle>_f<step>.grib2` (cycle as `YYYYMMDDTHHmmZ`) |
+
+  The ECMWF and GFS layouts are the same shape as the tile bucket's own GRIB
+  cache (`grib/models/ecmwf`, `grib/models/gfs`), so a cache prefix can be used
+  as an input prefix directly. GRIBs read from a folder or bucket are validated
+  exactly as the HTTP path validates them.
 - **`sources.<name>.products`**: Enable/disable individual products without a rebuild.
 - **Per-source discovery/cadence knobs** (all optional — omitting one keeps the
   source's built-in default): `goes19.target_images` / `goes19.max_hours_back`,
