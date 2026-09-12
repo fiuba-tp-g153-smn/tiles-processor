@@ -338,13 +338,13 @@ input, product toggles, retention, and tuning live together.
     },
     "ecmwf-ifs": {
       "input": { "mode": "opendata" },
-      "products": { "precipitation": true, "mean_sea_level_pressure": true },
-      "mslp": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 },
+      "products": { "total-precipitation": true, "mean-sea-level-pressure": true },
+      "mean-sea-level-pressure": { "isobar_simplify_tolerance": 0.05, "smoothing_sigma": 1.5 },
       "retention_days": { "default": 2, "grib": 1 }
     },
     "gfs": {
       "input": { "mode": "nomads" },
-      "products": { "mslp": true, "500hpa": true, "250hpa": true },
+      "products": { "mean-sea-level-pressure": true, "geopotential-500hpa": true, "geopotential-250hpa": true },
       "cycles_to_maintain": 3,
       "max_steps_per_tick": 12,
       "availability_probe_hours": { "from": 3, "to": 8 },
@@ -360,7 +360,7 @@ input, product toggles, retention, and tuning live together.
   tick (default `"*/5 * * * *"` — every 5 minutes). A non-5-field value fails fast.
 - **`sources.<name>.input`**: where the source reads its raw files from. Every
   source supports `mode: "local"` (a folder) and `mode: "s3"` (a bucket with the
-  same layout); `ecmwf` and `gfs` additionally accept the upstream API they
+  same layout); `ecmwf-ifs` and `gfs` additionally accept the upstream API they
   default to (`"opendata"` and `"nomads"` respectively).
   - `dir` — the root folder, for `local`.
   - `s3_bucket` — a bare bucket name, or a whole location as `s3://bucket/prefix`
@@ -391,7 +391,7 @@ input, product toggles, retention, and tuning live together.
   | `radar-sinarame` | `*.H5`, or `<subdir>/*.H5` |
   | `goes19-glm` | `CG_GLM-L2-GLMF-*.nc`, or `<subdir>/CG_GLM-...nc` |
   | `wrf-arg4k` | `WRF_ARG4K.FCST_L0_FIELD2D.*.nc`, or `<subdir>/...nc` |
-  | `ecmwf-ifs` | `<product>/<YYYYMMDDTHHmmZ>.grib` (`<product>` = `tp`, `mslp`) |
+  | `ecmwf-ifs` | `<product>/<YYYYMMDDTHHmmZ>.grib` (`<product>` = `total-precipitation`, `mean-sea-level-pressure`) |
   | `gfs` | `<cycle>/<cycle>_f<step>.grib2` (cycle as `YYYYMMDDTHHmmZ`) |
 
   The ECMWF and GFS layouts are the same shape as the tile bucket's own GRIB

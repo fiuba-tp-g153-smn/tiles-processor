@@ -228,7 +228,7 @@ class TestDuplicatePrevention:
             image_id="OR_ABI-L1b-RadF-M6C02_G19_s2025038NEW0.nc",
             source_uri="ABI-L1b-RadF/2025/038/12/OR_ABI-L1b-RadF-M6C02_G19_s2025038NEW0.nc",
             data_source_id="goes19_abi_c02",
-            processor_id="goes_band_2",
+            processor_id="goes19_abi_c02",
             output_prefix=band_config.s3_tiles_prefix,
         )
         source._images = initial_images + [new_image]

@@ -106,8 +106,8 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
-                data_source_id="goes19_abi_band_13",
-                processor_id="goes_band_13",
+                data_source_id="goes19_abi_c13",
+                processor_id="goes19_abi_c13",
                 output_prefix="tiles/goes19/abi/c13",
                 bounds=config.get_bounds(),
                 band_id="goes19_abi_c13",
@@ -145,8 +145,8 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
-                data_source_id="goes19_abi_band_13",
-                processor_id="goes_band_13",
+                data_source_id="goes19_abi_c13",
+                processor_id="goes19_abi_c13",
                 output_prefix="tiles/goes19/abi/c13",
                 bounds=config.get_bounds(),
                 band_id="goes19_abi_c13",
@@ -187,8 +187,8 @@ class TestWorkerIntegration:
             work_unit = WorkUnit.create(
                 image_id="test_image.nc",
                 source_uri="ABI-L1b-RadF/2025/001/12/test_image.nc",
-                data_source_id="goes19_abi_band_13",
-                processor_id="goes_band_13",
+                data_source_id="goes19_abi_c13",
+                processor_id="goes19_abi_c13",
                 output_prefix="tiles/goes19/abi/c13",
                 bounds=config.get_bounds(),
                 band_id="goes19_abi_c13",
@@ -228,7 +228,7 @@ class TestWorkerIntegration:
                 source_uri="/data/radar/RMA11_KDP_20260114T170040Z.H5",
                 data_source_id="radar_sinarame_kdp",
                 processor_id="radar_sinarame",
-                output_prefix="tiles/radar/sinarame/sinarame",
+                output_prefix="tiles/radar/sinarame",
                 bounds=config.get_bounds(),
                 band_id="radar_sinarame_kdp",
             )
@@ -300,7 +300,7 @@ class TestWorkerIntegration:
                 source_uri="/data/radar/RMA1_DBZH_20260114T170040Z.H5",
                 data_source_id="radar_sinarame_dbzh",
                 processor_id="radar_sinarame",
-                output_prefix="tiles/radar/sinarame/sinarame",
+                output_prefix="tiles/radar/sinarame",
                 bounds=config.get_bounds(),
                 band_id="radar_sinarame_dbzh",
             )

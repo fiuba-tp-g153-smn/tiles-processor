@@ -85,8 +85,8 @@ def test_three_way_split():
 @pytest.mark.parametrize(
     "data_source_id,processor_id",
     [
-        ("goes19_abi_band_2", "goes_band_2"),
-        ("goes19_abi_band_13", "goes_band_13"),
+        ("goes19_abi_c02", "goes19_abi_c02"),
+        ("goes19_abi_c13", "goes19_abi_c13"),
         ("goes19_glm", "goes19_glm_fed"),
         (
             "ecmwf_ifs_total_precipitation_producer",

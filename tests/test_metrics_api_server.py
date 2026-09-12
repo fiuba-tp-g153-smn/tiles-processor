@@ -26,10 +26,10 @@ def _seed(db_path):
             JobMetrics(
                 work_unit_id="w",
                 image_id=f"i{i}",
-                data_source_id="goes19_abi_band_13",
-                processor_id="goes_band_13",
+                data_source_id="goes19_abi_c13",
+                processor_id="goes19_abi_c13",
                 band_id="goes19_abi_c13",
-                job_type="goes19_abi_band_13",
+                job_type="goes19_abi_c13",
                 product_label="GOES ABI goes19_abi_c13 · Cloud Tops",
                 image_timestamp=f"2026052132020{i}",
                 outcome="success",
@@ -147,8 +147,8 @@ def test_jobs_limit_zero_with_window_is_unbounded(client):
 def test_summary_groups_by_type(client):
     s = client.get("/api/summary").json()
     by_type = {x["job_type"]: x for x in s}
-    assert set(by_type) == {"goes19_abi_band_13", "radar_sinarame_dbzh"}
-    goes = by_type["goes19_abi_band_13"]
+    assert set(by_type) == {"goes19_abi_c13", "radar_sinarame_dbzh"}
+    goes = by_type["goes19_abi_c13"]
     assert goes["counts"]["total"] == 3
     assert goes["total_s"]["max"] == 120
     assert goes["stages"]["georef"] == pytest.approx(3.2)
@@ -161,8 +161,8 @@ def test_summary_keeps_idle_types_when_window_empty(client):
     # must still appear with zero counts and its real last-run time.
     s = client.get("/api/summary?hours=1").json()
     by_type = {x["job_type"]: x for x in s}
-    assert set(by_type) == {"goes19_abi_band_13", "radar_sinarame_dbzh"}
-    goes = by_type["goes19_abi_band_13"]
+    assert set(by_type) == {"goes19_abi_c13", "radar_sinarame_dbzh"}
+    goes = by_type["goes19_abi_c13"]
     assert goes["counts"]["total"] == 0
     assert goes["total_s"]["avg"] is None
     assert goes["last_finished"] == "2026-06-04T02:00:44+00:00"
@@ -196,7 +196,7 @@ def test_timeseries(client):
         "p95_total_s",
         "stages",
     }
-    goes = [r for r in ts if r["job_type"] == "goes19_abi_band_13"]
+    goes = [r for r in ts if r["job_type"] == "goes19_abi_c13"]
     assert goes and goes[0]["stages"].get("georef") == pytest.approx(3.2)
 
 

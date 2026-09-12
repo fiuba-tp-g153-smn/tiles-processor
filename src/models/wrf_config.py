@@ -76,7 +76,7 @@ class WrfProductConfig:
     skip_f000: bool = False
 
 
-# Topographic brown background used by Campo900hPa and JetCapasBajas
+# Topographic brown background used by campo-900hpa and jet-capas-bajas
 _TOPO_BROWN = (139, 94, 60)
 
 

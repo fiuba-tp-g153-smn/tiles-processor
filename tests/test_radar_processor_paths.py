@@ -143,7 +143,7 @@ async def test_radar_upload_paths_split_elevation_and_timestamp(
         source_uri=str(radar_file),
         data_source_id=f"radar_{product_id}",
         processor_id="radar",
-        output_prefix="tiles/radar/sinarame/sinarame",
+        output_prefix="tiles/radar/sinarame",
         bounds={"minx": -70, "miny": -40, "maxx": -50, "maxy": -20},
         band_id=f"radar_{product_id}",
     )

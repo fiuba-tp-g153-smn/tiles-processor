@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 from services.job_descriptor import describe_job
 
 
-def test_goes_band_13_label_and_timestamp():
+def test_goes19_abi_c13_label_and_timestamp():
     desc = describe_job("goes19_abi_c13", "20260521320209", "goes19_abi_c13")
     assert desc.job_type == "goes19_abi_c13"
     assert "GOES-19 ABI" in desc.product_label

@@ -123,7 +123,7 @@ class GfsProductConfig:
     cog_prefix: str
     tiles_prefix: str
     geojson_prefix: str
-    log_prefix: str
+    log_prefix: str  # log line prefix, e.g. "GFS-MSLP"
     # Shared by every product: one GRIB subset serves all three. Declared here
     # so the lifecycle coverage guard can see it, like EcmwfProductConfig does.
     grib_prefix: str = GFS_GRIB_PREFIX  # log line prefix, e.g. "GFS-500"

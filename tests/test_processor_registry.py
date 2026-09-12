@@ -12,7 +12,7 @@ The strings are coupled across three places with nothing checking them:
     worker/subprocess_processor.py::create_processor_registry  ->  the id bound
 
 These tests close that loop. They matter most where one registration is shared
-by more than one product — `gfs_500` and `gfs_250` are both rendered by
+by more than one product — `gfs_geopotential_500hpa` and `gfs_geopotential_250hpa` are both rendered by
 `GfsUpperLevelProcessor` and only `GFS_500_CONFIG.processor_id` is registered
 explicitly, so giving 250 hPa its own id would silently break it.
 """
@@ -134,7 +134,7 @@ class TestGfsProducts:
         assert registry.get(product.processor_id) is not None
 
     def test_the_two_upper_level_products_share_one_registration(self):
-        """If these ever diverge, gfs_250 needs its own `registry.register`.
+        """If these ever diverge, gfs_geopotential_250hpa needs its own `registry.register`.
 
         This is not a style preference: `create_processor_registry` registers
         `GFS_500_CONFIG.processor_id` and nothing else for the upper levels, so

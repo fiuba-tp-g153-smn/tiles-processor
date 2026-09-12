@@ -43,8 +43,7 @@
         "vrad": true,
         "zh": false,
         "th": false,
-        "wrad": false,
-        "phidp": false
+        "wrad": false
       },
       "stations": "all",
       "target_images": 12,

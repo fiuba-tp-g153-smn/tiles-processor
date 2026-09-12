@@ -57,8 +57,8 @@ class TestGoesProcessor:
                 work_unit = WorkUnit.create(
                     image_id="img1.nc",
                     source_uri="s3://noaa-goes19/path/to/img1.nc",
-                    data_source_id="goes19_abi_band_13",
-                    processor_id="goes_band_13",
+                    data_source_id="goes19_abi_c13",
+                    processor_id="goes19_abi_c13",
                     output_prefix="tiles/goes19/abi/c13",
                     bounds={"minx": 0, "miny": 0, "maxx": 10, "maxy": 10},
                     band_id="goes19_abi_c13",
@@ -102,8 +102,8 @@ class TestGoesProcessor:
                 work_unit = WorkUnit.create(
                     image_id="img1.nc",
                     source_uri="s3://noaa-goes19/path/to/img1.nc",
-                    data_source_id="goes19_abi_band_13",
-                    processor_id="goes_band_13",
+                    data_source_id="goes19_abi_c13",
+                    processor_id="goes19_abi_c13",
                     output_prefix="tiles/goes19/abi/c13",
                     bounds={"minx": 0, "miny": 0, "maxx": 10, "maxy": 10},
                     band_id="goes19_abi_c13",

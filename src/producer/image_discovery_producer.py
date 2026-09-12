@@ -181,7 +181,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         if source_id.startswith("radar_sinarame_"):
             product_id = source_id.removeprefix("radar_sinarame_")
             return self._config.ENABLED_RADAR_PRODUCTS.get(product_id, False)
-        # Check for WRF sources (wrf_Colmax, wrf_Rafagas, etc.)
+        # Check for WRF sources (wrf_arg4k_colmax, wrf_arg4k_rafagas, etc.)
         if source_id.startswith("wrf_arg4k_"):
             product_id = source_id.removeprefix("wrf_arg4k_")
             return self._config.ENABLED_WRF_PRODUCTS.get(product_id, False)
@@ -337,7 +337,7 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         """Get existing WRF tilesets for a product.
 
         Path structure: tiles/wrf-arg4k/{product_id}/{init_tag}/{fxxx}/
-        Returns image_ids like: Colmax_20260430_060000_F001
+        Returns image_ids like: colmax_20260430_060000_F001
         """
         tilesets = set()
         try:

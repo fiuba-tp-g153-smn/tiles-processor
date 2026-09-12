@@ -849,7 +849,7 @@ class TestS3ClientUploadDirectory:
 
 
 _SAMPLE_RETENTION = {
-    "tiles/radar/sinarame/sinarame": 1,
+    "tiles/radar/sinarame": 1,
     "cog/radar/sinarame": 1,
     "tiles/wrf-arg4k": 2,
     "grib/ecmwf-ifs": 1,
@@ -878,7 +878,7 @@ class TestBuildLifecycleRules:
             r["Filter"]["Prefix"]: r["Expiration"]["Days"]
             for r in _build_lifecycle_rules(_SAMPLE_RETENTION)
         }
-        assert days_by_prefix["tiles/radar/sinarame/sinarame"] == 1
+        assert days_by_prefix["tiles/radar/sinarame"] == 1
         assert days_by_prefix["tiles/wrf-arg4k"] == 2
         assert days_by_prefix["grib/ecmwf-ifs"] == 1
         assert days_by_prefix["geojson/ecmwf-ifs"] == 2
@@ -886,7 +886,7 @@ class TestBuildLifecycleRules:
     def test_sub_day_retention_rounds_up_to_one_and_ids_unique(self):
         rules = _build_lifecycle_rules(
             {
-                "tiles/radar/sinarame/sinarame": 0,
+                "tiles/radar/sinarame": 0,
                 "tiles/wrf-arg4k": 2,
                 "cog/radar/sinarame": -3,
             }

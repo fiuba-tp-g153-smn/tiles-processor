@@ -112,3 +112,60 @@ def test_resolves_product_from_variable_and_subvolume(filename, expected):
 def test_unknown_variable_subvolume_pair_raises():
     with pytest.raises(ValueError, match="No radar product"):
         get_radar_product_config_for_file("DBZH", "07")
+
+
+def test_every_radar_product_config_declares_a_palette_or_stays_off():
+    """A product reachable from settings must be renderable.
+
+    `RADAR_PRODUCT_CONFIGS` is now the source of the settings id list, so every
+    entry is a flippable toggle. `get_palette` is called once per file before
+    the sweep loop, so a product without a palette raises for every file it ever
+    sees. This records which products are knowingly unrenderable; adding a
+    palette should shrink the set, never grow it.
+    """
+    from models.radar_palettes import RADAR_PALETTES
+
+    unrenderable = sorted(
+        pid
+        for pid, cfg in RADAR_PRODUCT_CONFIGS.items()
+        if cfg.variable not in RADAR_PALETTES
+    )
+    assert unrenderable == ["phidp"], (
+        f"radar products without a palette changed: {unrenderable}. Adding one "
+        f"is good (shrink this list); adding a product without one is not."
+    )
+
+
+def test_enabling_a_product_without_a_palette_fails_at_startup(tmp_path, monkeypatch):
+    """The failure must land once at boot, not once per file forever."""
+    import json
+
+    settings = {
+        "timezone": "UTC",
+        "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+        "sources": {"radar-sinarame": {"products": {"phidp": True}}},
+    }
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(settings))
+    for key, value in {
+        "LOG_LEVEL": "ERROR",
+        "DATA_DIR": "/tmp/t",
+        "S3_TILES_DATA_ENDPOINT": "s:9000",
+        "S3_TILES_DATA_TILES_PROCESSOR_USER": "u",
+        "S3_TILES_DATA_TILES_PROCESSOR_PASSWORD": "p",
+        "S3_TILES_DATA_BUCKET_NAME": "tiles-data",
+        "RABBITMQ_HOST": "r",
+        "RABBITMQ_PORT": "5672",
+        "RABBITMQ_USER": "g",
+        "RABBITMQ_PASSWORD": "g",
+        "RABBITMQ_QUEUE": "q",
+        "RABBITMQ_DLQ": "d",
+        "RABBITMQ_DLX": "x",
+        "JOB_TTL_MINUTES": "20",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    from config import Config
+
+    with pytest.raises(ValueError, match="no palette"):
+        Config(settings_path=path)

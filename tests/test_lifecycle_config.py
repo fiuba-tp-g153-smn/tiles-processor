@@ -164,3 +164,40 @@ def test_settings_product_keys_are_all_known(settings_name):
         f"{settings_name} lists products the code does not know, so toggling "
         f"them does nothing: {stray}"
     )
+
+
+@pytest.mark.parametrize("settings_name", ["settings.json", "settings-beta-1.json"])
+def test_settings_keys_inside_a_source_are_all_read(settings_name):
+    """Every key in a source block must be one config.py actually looks up.
+
+    The source-key and product-key guards above miss everything in between, and
+    that gap is not hypothetical: the ECMWF tuning sub-block is keyed by its own
+    product name, so renaming the product silently orphaned
+    isobar_simplify_tolerance and smoothing_sigma. Both guards stayed green and
+    the tolerance reverted from 0.05 to the code default.
+
+    The allowed set is read out of config.py's own `.get(` calls rather than
+    hand-listed, so it cannot drift from the code the way a literal would.
+    """
+    import json
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    config_src = (root / "src" / "config.py").read_text()
+    # Keys config.py reads off a source block or a sub-block within one.
+    read_keys = set(re.findall(r'\.get\(\s*"([a-z0-9_-]+)"', config_src))
+    read_keys |= set(re.findall(r'inp\.get\("([a-z0-9_]+)"', config_src))
+    # Structural keys handled positionally rather than by a literal .get().
+    read_keys |= {"input", "products", "retention_days"}
+
+    settings = json.loads((root / settings_name).read_text())
+    orphans = {
+        source: sorted(set(block) - read_keys)
+        for source, block in settings["sources"].items()
+        if sorted(set(block) - read_keys)
+    }
+    assert not orphans, (
+        f"{settings_name} has keys config.py never reads, so editing them does "
+        f"nothing: {orphans}"
+    )

@@ -25,11 +25,11 @@ class WorkUnit:
     Attributes:
         work_unit_id: Unique identifier for this work unit
         image_id: Original filename from source (unique per image)
-        data_source_id: ID of the data source (e.g., "goes19_abi_band_13")
+        data_source_id: ID of the data source (e.g., "goes19_abi_c13")
         source_uri: Full URI to the source file (e.g., S3 key)
         output_prefix: S3 prefix for output tiles
         bounds: Geographic bounding box for clipping
-        processor_id: ID of the processor to use (e.g., "goes_band_13")
+        processor_id: ID of the processor to use (e.g., "goes19_abi_c13")
         band_id: Band being processed (for backwards compatibility and config lookup)
         created_at: Timestamp when work unit was created
         retry_count: Number of times this work unit has been retried

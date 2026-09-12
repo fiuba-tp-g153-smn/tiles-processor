@@ -221,6 +221,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.ENABLED_RADAR_PRODUCTS: dict[str, bool] = {
             pid: _radar_products.get(pid, False) for pid in _radar_product_ids
         }
+        self._reject_radar_products_without_a_palette()
         # Per-radar-station enablement, AND-combined with the product flags above:
         # a (radar, product) pair is processed iff the product is enabled AND the
         # station filter allows the radar. Accepts "all" (default), "none",
@@ -547,6 +548,29 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
                 "must be set together (or neither, for anonymous access)"
             )
         return access_key, secret_key
+
+    def _reject_radar_products_without_a_palette(self) -> None:
+        """An enabled radar product with no palette must not reach a worker.
+
+        Deriving the id list from the registry made zh/th/wrad/phidp reachable
+        for the first time, and phidp has no palette: get_palette raises per
+        file, forever, once the toggle is flipped. Failing here turns that into
+        one startup error naming the product instead of an endless DLQ.
+        """
+        from models.radar_palettes import (  # pylint: disable=import-outside-toplevel
+            RADAR_PALETTES,
+        )
+
+        missing = sorted(
+            pid
+            for pid, enabled in self.ENABLED_RADAR_PRODUCTS.items()
+            if enabled and RADAR_PRODUCT_CONFIGS[pid].variable not in RADAR_PALETTES
+        )
+        if missing:
+            raise ValueError(
+                f"radar products {missing} are enabled but have no palette; "
+                f"add one to RADAR_PALETTES or disable them"
+            )
 
     @staticmethod
     def _validate_cron(value: Any, name: str) -> str:

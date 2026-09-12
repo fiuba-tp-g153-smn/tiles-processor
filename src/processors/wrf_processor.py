@@ -616,7 +616,7 @@ class WrfProcessor(ImageProcessor):
 
         For every product this is the *masked* primary (identical bytes to the
         rendered raster) — no behavior change. The sole exception is
-        CortanteNivelesBajos: its colour scale starts at 10 kt, so the raster
+        cortante-niveles-bajos: its colour scale starts at 10 kt, so the raster
         masks <10 kt to NaN, but the point query should still report sub-10-kt
         shear magnitudes. Return the converted-but-unmasked field for that one
         product only. `shear_s1_s2` is in m s-1, hence the kt conversion here.
