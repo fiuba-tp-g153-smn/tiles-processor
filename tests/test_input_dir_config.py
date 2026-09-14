@@ -304,20 +304,39 @@ def test_host_paths_are_never_handed_to_the_app(compose_file):
     )
 
 
-def test_env_example_uses_absolute_paths():
-    """The shipped example must not make the path depend on where you stood.
+def test_env_example_ships_every_input_dir_commented_and_absolute():
+    """The template must not produce a .env that starts but reads nothing.
 
-    `${PWD}` is interpolated from the shell's working directory, not the compose
-    file's, so `docker compose -f tiles-processor/... ` run from the parent would
-    silently bind a different tree and every local source would read nothing.
+    Copying .env.example is the documented setup step. Shipping real-looking
+    paths uncommented would give a stack that boots and finds no files, which is
+    indistinguishable from a quiet feed; left commented, compose refuses to start
+    and names the first variable missing. Loud beats silent.
+
+    The values are still checked for absoluteness, since they are the shape
+    people copy, and ${PWD} would resolve against whatever directory they ran
+    docker compose from.
     """
     text = (REPO_ROOT / ".env.example").read_text()
-    assigned = re.findall(r"^([A-Z0-9_]+_INPUT_DIR)=(.*)$", text, re.M)
-    assert assigned, ".env.example declares no input directories"
-    bad = [f"{k}={v}" for k, v in assigned if not v.startswith("/")]
-    assert not bad, (
-        f".env.example must use absolute paths; these are relative or "
-        f"interpolated: {bad}"
+    sources = json.loads((REPO_ROOT / "settings.json").read_text())["sources"]
+
+    entries = dict(re.findall(r"^#\s*([A-Z0-9_]+_INPUT_DIR)=(.*)$", text, re.M))
+    missing = [
+        f"{_env_prefix(name)}_INPUT_DIR"
+        for name in sources
+        if f"{_env_prefix(name)}_INPUT_DIR" not in entries
+    ]
+    assert not missing, f".env.example does not document: {missing}"
+
+    relative = [f"{k}={v}" for k, v in entries.items() if not v.startswith("/")]
+    assert not relative, (
+        f".env.example must show absolute paths; these are relative or "
+        f"interpolated: {relative}"
+    )
+
+    live = re.findall(r"^([A-Z0-9_]+_INPUT_DIR)=", text, re.M)
+    assert not live, (
+        f".env.example has uncommented input dirs, so a copied .env would start "
+        f"and read nothing: {live}"
     )
 
 
