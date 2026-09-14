@@ -11,7 +11,7 @@ cache can be synced into an input location unchanged::
     <root>/<product_dir>/<YYYYMMDDTHHmmZ>.grib
 
 where ``<product_dir>`` is the last segment of the product's ``grib_prefix``
-(``total_precipitation``, ``mean_sea_level_pressure``), i.e. ``<root>`` is the
+(``total-precipitation``, ``mean-sea-level-pressure``), i.e. ``<root>`` is the
 ``grib/ecmwf-ifs`` level.
 """
 
