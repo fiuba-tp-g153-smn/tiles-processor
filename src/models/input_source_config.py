@@ -103,6 +103,10 @@ class InputSourceConfig:
 
     mode: str  # "local" | "s3"
     input_dir: str
+    # Which layer supplied input_dir: "env", "settings" or "default". Carried so
+    # the startup log can say WHY a source reads where it does — the answer lives
+    # in three files, and guessing wrong is how a wrong path goes unnoticed.
+    input_dir_origin: str = "default"
     s3_bucket: str | None = None
     # host:port, or a complete http(s):// URL; None → AWS default endpoint
     s3_endpoint: str | None = None

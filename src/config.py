@@ -25,6 +25,31 @@ from models.radar_config import RADAR_PRODUCT_CONFIGS, RadarStationFilter
 from models.wrf_config import WRF_PRODUCT_CONFIGS
 from models.zoom_config import ZoomLevels, parse_zoom_levels
 
+# Module-level so the parsing helpers can warn during __init__, before
+# log_config() runs. log_config() used to bind its own local copy of this.
+logger = logging.getLogger(__name__)
+
+
+def _describe_input_dir(src: InputSourceConfig) -> str:
+    """How usable ``src.input_dir`` looks right now, for the startup log.
+
+    Only meaningful for local mode. A missing or empty folder is the single most
+    common cause of "the source runs but produces nothing", and it is invisible
+    in the logs otherwise: discovery reports a normal tick either way.
+    """
+    if not src.is_local:
+        return "unused in this mode"
+    path = Path(src.input_dir)
+    if not path.is_dir():
+        return "MISSING"
+    try:
+        next(path.iterdir())
+    except StopIteration:
+        return "empty"
+    except OSError as exc:
+        return f"unreadable: {exc.strerror}"
+    return "ok"
+
 
 class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
     """Application configuration from environment variables and settings.json.
@@ -428,9 +453,14 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         mode = Config._parse_input_mode(inp, json_key, default_mode, extra_modes)
         bucket, prefix = Config._parse_input_bucket(inp, json_key, mode, default_bucket)
         access_key, secret_key = Config._input_credentials(env_prefix)
+        input_dir, input_dir_origin = Config._parse_input_dir(
+            inp, json_key, env_prefix, default_dir
+        )
+        Config._warn_if_dir_is_unused(inp, json_key, mode, input_dir_origin)
         source = InputSourceConfig(
             mode=mode,
-            input_dir=inp.get("dir", default_dir),
+            input_dir=input_dir,
+            input_dir_origin=input_dir_origin,
             s3_bucket=bucket,
             s3_endpoint=inp.get("s3_endpoint") or None,
             s3_prefix=prefix,
@@ -442,6 +472,76 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         Config._validate_input_endpoint(source, inp, json_key)
         return source
+
+    @staticmethod
+    def _parse_input_dir(
+        inp: Dict[str, Any], json_key: str, env_prefix: str, default_dir: str
+    ) -> tuple[str, str]:
+        """Read ``input.dir``, env override first, else the per-source default.
+
+        The value is a real absolute path that resolves the same inside the
+        container as on the host: compose mounts each input filesystem at the
+        same path on both sides (see the ``x-input-volumes`` anchor), so nothing
+        is translated and an operator can name the path their data actually has.
+
+        A relative path would resolve against the container's working directory
+        and silently read the wrong place — and a source reading the wrong place
+        is indistinguishable from one with no new data — so it is refused.
+
+        Returns:
+            (path, origin) where origin is "env", "settings" or "default".
+
+        Raises:
+            ValueError: the configured path is not absolute.
+        """
+        # A blank (or whitespace-only) value reads as "not set", so a key present
+        # but empty in .env falls through instead of becoming an empty path.
+        env_value = (os.getenv(f"{env_prefix}_INPUT_DIR") or "").strip()
+        settings_value = str(inp.get("dir") or "").strip()
+
+        if env_value and settings_value and env_value != settings_value:
+            # Both set and disagreeing. Env wins, and saying so is the difference
+            # between "my edit did nothing" and a one-line answer.
+            logger.warning(
+                "sources.%s.input.dir is %r in settings.json but %s_INPUT_DIR is "
+                "%r in the environment; the environment wins. Remove one.",
+                json_key,
+                settings_value,
+                env_prefix,
+                env_value,
+            )
+
+        value = env_value or settings_value or default_dir
+        origin = "env" if env_value else ("settings" if settings_value else "default")
+        if not value.startswith("/"):
+            raise ValueError(
+                f"sources.{json_key}.input.dir must be an absolute path that is "
+                f"valid both on the host and in the container, got {value!r} "
+                f"(from {origin})"
+            )
+        return value.rstrip("/") or "/", origin
+
+    @staticmethod
+    def _warn_if_dir_is_unused(
+        inp: Dict[str, Any], json_key: str, mode: str, origin: str
+    ) -> None:
+        """Say when a configured directory will never be read.
+
+        settings.json decides the mode and .env decides the location, so the two
+        can disagree: a path configured for a source reading from S3 or from a
+        provider is simply ignored. Only an explicit settings.json entry is
+        reported — every source carries an env var because the compose mounts are
+        unconditional, so warning about those would be noise on every boot.
+        """
+        if mode == INPUT_MODE_LOCAL or origin != "settings":
+            return
+        logger.warning(
+            "sources.%s.input.dir is %r but mode is '%s', which reads no folder; "
+            "the path is ignored.",
+            json_key,
+            inp.get("dir"),
+            mode,
+        )
 
     @staticmethod
     def _parse_input_mode(
@@ -689,7 +789,6 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
 
     def log_config(self) -> None:  # pylint: disable=too-many-statements
         """Log the current configuration values."""
-        logger = logging.getLogger(__name__)
         logger.info("=== Configuration ===")
         logger.info("LOG_LEVEL: %s", self.LOG_LEVEL)
         logger.info("TIMEZONE: %s", self.TIMEZONE)
@@ -740,11 +839,13 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             # differs from the configured s3_endpoint whenever the short
             # host:port form is used — log both so misconfigurations are visible.
             logger.info(
-                "%s_INPUT: mode=%s dir=%s bucket=%s endpoint=%s url=%s prefix=%s "
-                "region=%s addressing=%s credentials=%s",
+                "%s_INPUT: mode=%s dir=%s (from %s, %s) bucket=%s endpoint=%s "
+                "url=%s prefix=%s region=%s addressing=%s credentials=%s",
                 name,
                 src.mode,
                 src.input_dir,
+                src.input_dir_origin,
+                _describe_input_dir(src),
                 src.s3_bucket,
                 src.s3_endpoint,
                 src.endpoint_url,
@@ -753,6 +854,18 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
                 src.s3_addressing_style,
                 "set" if src.s3_access_key else "anonymous",
             )
+            state = _describe_input_dir(src)
+            if src.is_local and state != "ok":
+                logger.warning(
+                    "%s_INPUT reads %s which is %s. settings.json puts this "
+                    "source in '%s' mode; the path came from %s. Discovery will "
+                    "run normally and find nothing.",
+                    name,
+                    src.input_dir,
+                    state,
+                    src.mode,
+                    src.input_dir_origin,
+                )
         logger.info("GLM_ACCUM_MINUTES: %s", self.GLM_ACCUM_MINUTES)
         logger.info("GLM_PRODUCE_EVERY_MINUTES: %s", self.GLM_PRODUCE_EVERY_MINUTES)
         for pid, enabled in self.ENABLED_WRF_PRODUCTS.items():
