@@ -22,15 +22,15 @@ def _make_metrics(
     image_id: str = "img1",
     outcome: str = JobOutcome.SUCCESS.value,
     finished_at: str = "2026-06-04T00:00:44+00:00",
-    job_type: str = "goes19_abi_band_13",
-    product_label: str = "GOES ABI band_13 · Cloud Tops",
+    job_type: str = "goes19_abi_c13",
+    product_label: str = "GOES ABI goes19_abi_c13 · Cloud Tops",
 ):
     return JobMetrics(
         work_unit_id="wu-1",
         image_id=image_id,
         data_source_id=job_type,
-        processor_id="goes_band_13",
-        band_id="band_13",
+        processor_id="goes19_abi_c13",
+        band_id="goes19_abi_c13",
         job_type=job_type,
         product_label=product_label,
         image_timestamp=image_id,
@@ -60,7 +60,7 @@ def test_record_persists_a_row(tmp_path):
     row = rows[0]
     assert row["image_id"] == "img1"
     assert row["outcome"] == "success"
-    assert row["job_type"] == "goes19_abi_band_13"
+    assert row["job_type"] == "goes19_abi_c13"
     assert abs(row["total_s"] - 44.31) < 1e-6
     # stage_timings round-trips as JSON
     assert '"georef"' in row["stage_timings_json"]
@@ -84,7 +84,7 @@ def test_timing_series_groups_success_only(tmp_path):
     assert len(series) == 1
     row = series[0]
     assert row["bucket"] == "2026-06-04T00"
-    assert row["job_type"] == "goes19_abi_band_13"
+    assert row["job_type"] == "goes19_abi_c13"
     assert row["count"] == 2  # only successes
     assert row["avg_total_s"] == 44.31
     assert row["p95_total_s"] is not None
@@ -98,7 +98,7 @@ def test_error_outcome_counts_toward_fail_rate(tmp_path):
     repo.record(_make_metrics("b", JobOutcome.ERROR.value))
 
     summary = repo.summary(since="2026-06-04T00:00:00+00:00")
-    entry = next(s for s in summary if s["job_type"] == "goes19_abi_band_13")
+    entry = next(s for s in summary if s["job_type"] == "goes19_abi_c13")
 
     assert entry["counts"]["error"] == 1
     assert entry["counts"]["total"] == 2

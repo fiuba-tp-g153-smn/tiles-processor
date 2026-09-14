@@ -64,7 +64,11 @@ class TestForecastSteps:
 
 class TestProductConfigs:
     def test_three_products(self):
-        assert set(GFS_PRODUCT_CONFIGS) == {"mslp", "500", "250"}
+        assert set(GFS_PRODUCT_CONFIGS) == {
+            "mean-sea-level-pressure",
+            "geopotential-500hpa",
+            "geopotential-250hpa",
+        }
 
     def test_band_ids_are_distinct(self):
         band_ids = {cfg.band_id for cfg in GFS_PRODUCT_CONFIGS.values()}
@@ -81,7 +85,9 @@ class TestProductConfigs:
         assert GFS_250_CONFIG.level_hpa == 250
 
     def test_lookup_by_band_id(self):
-        assert get_gfs_product_config_by_band("gfs_500") is GFS_500_CONFIG
+        assert (
+            get_gfs_product_config_by_band("gfs_geopotential_500hpa") is GFS_500_CONFIG
+        )
 
     def test_unknown_band_id_raises(self):
         with pytest.raises(ValueError, match="Unknown GFS band_id"):

@@ -426,7 +426,7 @@ def run_worker(config: Config) -> None:
 
     # Build inline processors (run in main process, need MQ access).
     # GRIB inputs and ECMWF outputs each expire via their own per-prefix bucket
-    # lifecycle rule (grib/models/ecmwf vs cog|tiles|geojson/models/ecmwf), so
+    # lifecycle rule (grib/ecmwf-ifs vs cog|tiles|geojson/ecmwf-ifs), so
     # operators can retain raw GRIB inputs independently of derived outputs.
     inline_processors: dict[str, InlineProcessor] = {}
     if config.ENABLE_ECMWF_PRECIPITATION:

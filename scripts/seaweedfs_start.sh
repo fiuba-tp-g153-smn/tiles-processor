@@ -406,6 +406,7 @@ fi
 echo "Starting SeaweedFS admin scheduler..."
 weed $WEED_LOG_FLAGS admin \
   -master=localhost:9333 \
+  -ip=0.0.0.0 \
   -dataDir="$ADMIN_DATA_DIR" \
   -adminUser="${S3_ROOT_USER}" \
   -adminPassword="${S3_ROOT_PASSWORD}" \

@@ -12,12 +12,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Final
 
-
 _TS_TOKEN_LEN: Final[int] = 14  # YYYY+JJJ+HH+MM+SS+D
 
 
 @dataclass(frozen=True, slots=True)
-class GlmFolderFilenameParts:
+class Goes19GlmFilenameParts:
     """Parsed components of a CG_GLM-L2-GLMF-M3 filename."""
 
     platform: str  # e.g. "G19"
@@ -42,7 +41,7 @@ def _parse_goes_timestamp(token: str) -> datetime:
     )
 
 
-def parse_glm_folder_filename(filename: str) -> GlmFolderFilenameParts:
+def parse_goes19_glm_filename(filename: str) -> Goes19GlmFilenameParts:
     """Parse a CG_GLM-L2-GLMF-M? filename into its components.
 
     Expected pattern::
@@ -68,7 +67,7 @@ def parse_glm_folder_filename(filename: str) -> GlmFolderFilenameParts:
     if not (start_token.startswith("s") and end_token.startswith("e")):
         raise ValueError(f"Unexpected timestamp prefixes in: {filename!r}")
 
-    return GlmFolderFilenameParts(
+    return Goes19GlmFilenameParts(
         platform=platform,
         mode=mode,
         start_dt=_parse_goes_timestamp(start_token[1:]),

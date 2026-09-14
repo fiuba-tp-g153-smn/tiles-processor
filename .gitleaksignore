@@ -1,0 +1,16 @@
+# False positives: empty placeholders in .env.example.
+#
+# The per-source input-bucket credentials are documented as empty (unset = the
+# bucket is read anonymously). With no value after the `=`, the generic-api-key
+# rule's whitespace class steps over the line break and captures the NEXT line's
+# variable name as the "secret" — hence every finding spans two lines (L39-L40,
+# L41-L42, ...) and only the ACCESS_KEY halves fire. The reported entropies
+# (3.55-3.81) are those of a 24-char uppercase identifier, not of a real key.
+#
+# Verified: `git log --all -p -- .env.example` shows these keys have never held
+# a value on any branch.
+d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:39
+d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:41
+d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:43
+d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:45
+d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:47

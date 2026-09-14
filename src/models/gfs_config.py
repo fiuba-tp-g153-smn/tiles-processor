@@ -20,7 +20,7 @@ GFS_STEP_DATA_SOURCE_ID = "gfs_step"
 # Inline processor that uploads the GRIB and fans out one WorkUnit per product.
 GFS_INLINE_PROCESSOR_ID = "gfs_grib_download"
 
-GFS_GRIB_PREFIX = "grib/models/gfs"
+GFS_GRIB_PREFIX = "grib/gfs"
 
 # The required variable/level list. The grib_filter CGI returns the *cross
 # product* of these intersected with what the model carries, i.e. 13 messages:
@@ -115,44 +115,49 @@ POINT_QUERY_GEOPOTENTIAL = "geopotential"
 class GfsProductConfig:
     """Immutable configuration for one GFS-derived product."""
 
-    product_id: str  # "mslp" | "500" | "250"
-    band_id: str  # WorkUnit band_id, e.g. "gfs_500"
+    product_id: (
+        str  # "mean-sea-level-pressure" | "geopotential-500hpa" | "geopotential-250hpa"
+    )
+    band_id: str  # WorkUnit band_id, e.g. "gfs_geopotential_500hpa"
     processor_id: str
     cog_prefix: str
     tiles_prefix: str
     geojson_prefix: str
-    log_prefix: str  # log line prefix, e.g. "GFS-500"
+    log_prefix: str  # log line prefix, e.g. "GFS-MSLP"
+    # Shared by every product: one GRIB subset serves all three. Declared here
+    # so the lifecycle coverage guard can see it, like EcmwfProductConfig does.
+    grib_prefix: str = GFS_GRIB_PREFIX  # log line prefix, e.g. "GFS-500"
     level_hpa: int | None = None  # isobaric level; None for the MSLP product
 
 
 GFS_MSLP_CONFIG = GfsProductConfig(
-    product_id="mslp",
-    band_id="gfs_mslp",
-    processor_id="gfs_mslp",
-    cog_prefix="cog/models/gfs/mean_sea_level_pressure",
-    tiles_prefix="tiles/models/gfs/mean_sea_level_pressure",
-    geojson_prefix="geojson/models/gfs/mean_sea_level_pressure",
+    product_id="mean-sea-level-pressure",
+    band_id="gfs_mean_sea_level_pressure",
+    processor_id="gfs_mean_sea_level_pressure",
+    cog_prefix="cog/gfs/mean-sea-level-pressure",
+    tiles_prefix="tiles/gfs/mean-sea-level-pressure",
+    geojson_prefix="geojson/gfs/mean-sea-level-pressure",
     log_prefix="GFS-MSLP",
 )
 
 GFS_500_CONFIG = GfsProductConfig(
-    product_id="500",
-    band_id="gfs_500",
+    product_id="geopotential-500hpa",
+    band_id="gfs_geopotential_500hpa",
     processor_id="gfs_upper_level",
-    cog_prefix="cog/models/gfs/500hpa",
-    tiles_prefix="tiles/models/gfs/500hpa",
-    geojson_prefix="geojson/models/gfs/500hpa",
+    cog_prefix="cog/gfs/geopotential-500hpa",
+    tiles_prefix="tiles/gfs/geopotential-500hpa",
+    geojson_prefix="geojson/gfs/geopotential-500hpa",
     log_prefix="GFS-500",
     level_hpa=500,
 )
 
 GFS_250_CONFIG = GfsProductConfig(
-    product_id="250",
-    band_id="gfs_250",
+    product_id="geopotential-250hpa",
+    band_id="gfs_geopotential_250hpa",
     processor_id="gfs_upper_level",
-    cog_prefix="cog/models/gfs/250hpa",
-    tiles_prefix="tiles/models/gfs/250hpa",
-    geojson_prefix="geojson/models/gfs/250hpa",
+    cog_prefix="cog/gfs/geopotential-250hpa",
+    tiles_prefix="tiles/gfs/geopotential-250hpa",
+    geojson_prefix="geojson/gfs/geopotential-250hpa",
     log_prefix="GFS-250",
     level_hpa=250,
 )

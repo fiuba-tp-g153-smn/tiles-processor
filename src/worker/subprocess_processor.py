@@ -58,18 +58,18 @@ def create_processor_registry():
 
     registry = ProcessorRegistry()
 
-    # Register GOES processors (both bands use the same processor class)
-    registry.register("goes_band_13", GoesProcessor)
-    registry.register("goes_band_9", GoesProcessor)
+    # Register ABI processors (c13 and c09 share the same processor class)
+    registry.register("goes19_abi_c13", GoesProcessor)
+    registry.register("goes19_abi_c09", GoesProcessor)
 
-    # Register Band 2 processor (downsampled visible imagery)
-    registry.register("goes_band_2", Band2Processor)
+    # Register the c02 processor (downsampled visible imagery)
+    registry.register("goes19_abi_c02", Band2Processor)
 
     # Register GLM processor (lightning products)
-    registry.register("glm_fed", GlmFedProcessor)
+    registry.register("goes19_glm_fed", GlmFedProcessor)
 
     # Register Radar processor
-    registry.register("radar", RadarProcessor)
+    registry.register("radar_sinarame", RadarProcessor)
 
     # Register ECMWF processors (subprocess for scientific processing)
     registry.register(ECMWF_TP_CONFIG.processor_id, EcmwfTotalPrecipitationProcessor)
@@ -80,7 +80,7 @@ def create_processor_registry():
     registry.register(GFS_500_CONFIG.processor_id, GfsUpperLevelProcessor)
 
     # Register WRF processor
-    registry.register("wrf", WrfProcessor)
+    registry.register("wrf_arg4k", WrfProcessor)
 
     return registry
 

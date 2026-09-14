@@ -11,6 +11,16 @@ class UnprocessableInputError(Exception):
     """
 
 
+class InvalidGribResponseError(UnprocessableInputError):
+    """A GRIB source answered, but not with the GRIB that was asked for.
+
+    Deterministic and not worth retrying: the endpoint is misconfigured, or the
+    file on disk/in the bucket is not the subset the products need. Inherits
+    ``UnprocessableInputError`` so the worker acks it as SKIPPED with the reason
+    attached, instead of burning retries on something that will not change.
+    """
+
+
 class ForecastNotAvailableError(Exception):
     """A forecast run is not published yet upstream (e.g. HTTP 403/404).
 

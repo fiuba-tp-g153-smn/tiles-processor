@@ -43,11 +43,11 @@ class WrfDataSource(DataSource):
 
     @property
     def source_id(self) -> str:
-        return f"wrf_{self._product_config.product_id}"
+        return f"wrf_arg4k_{self._product_config.product_id}"
 
     @property
     def processor_id(self) -> str:
-        return "wrf"
+        return "wrf_arg4k"
 
     @property
     def product_config(self) -> WrfProductConfig:

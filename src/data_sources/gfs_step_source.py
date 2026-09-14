@@ -35,7 +35,7 @@ class GfsStepDataSource(DataSource):
     def processor_id(self) -> str:
         """Nominal processor; the real one travels on each WorkUnit.
 
-        Products are rendered by different processors (`gfs_mslp` vs
+        Products are rendered by different processors (`gfs_mean_sea_level_pressure` vs
         `gfs_upper_level`), so this value is only a placeholder for the
         DataSource interface and is never used for routing.
         """

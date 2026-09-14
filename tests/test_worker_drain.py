@@ -32,11 +32,11 @@ def _unit(image_id: str) -> WorkUnit:
     return WorkUnit.create(
         image_id=image_id,
         source_uri="uri",
-        data_source_id="goes19_abi_band_13",
-        processor_id="goes_band_13",
+        data_source_id="goes19_abi_c13",
+        processor_id="goes19_abi_c13",
         output_prefix="tiles/x",
         bounds={"minx": 0.0, "miny": 0.0, "maxx": 1.0, "maxy": 1.0},
-        band_id="band_13",
+        band_id="goes19_abi_c13",
     )
 
 

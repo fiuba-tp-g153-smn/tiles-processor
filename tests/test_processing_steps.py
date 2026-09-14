@@ -98,7 +98,9 @@ class TestPrewarpToMercatorGrid:
         with patch("services.processing_steps.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stderr="")
             with patch.object(Path, "rename"):
-                result = prewarp_to_mercator_grid(mock_input, tmp_output_dir, max_zoom=7)
+                result = prewarp_to_mercator_grid(
+                    mock_input, tmp_output_dir, max_zoom=7
+                )
 
         assert result == tmp_output_dir / f"{mock_input.stem}_3857.tif"
 

@@ -46,7 +46,7 @@ class FakeFetcher:
         return dest.with_suffix(".grib2")
 
 
-def _source(s3=None, fetcher=None, **overrides) -> GfsProducerDataSource:
+def _source(s3=None, repository=None, **overrides) -> GfsProducerDataSource:
     kwargs = {
         "cycles_to_maintain": 3,
         "max_steps_per_tick": 12,
@@ -55,7 +55,9 @@ def _source(s3=None, fetcher=None, **overrides) -> GfsProducerDataSource:
     }
     kwargs.update(overrides)
     return GfsProducerDataSource(
-        fetcher=fetcher or FakeFetcher(), s3_client=s3 or FakeS3(), **kwargs
+        repository=repository or FakeFetcher(),
+        s3_client=s3 or FakeS3(),
+        **kwargs,
     )
 
 
@@ -310,7 +312,7 @@ class TestDownload:
     @pytest.mark.asyncio
     async def test_delegates_to_the_fetcher(self, tmp_path):
         fetcher = FakeFetcher()
-        source = _source(fetcher=fetcher)
+        source = _source(repository=fetcher)
         cycle = datetime(2026, 8, 8, 6, tzinfo=UTC)
         await source.download(
             json.dumps({"cycle": cycle.isoformat(), "step_hours": 9}),

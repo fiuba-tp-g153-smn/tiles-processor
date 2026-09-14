@@ -13,21 +13,25 @@ from typing import Any
 # Output S3 key-prefix stems each source writes, grouped by output kind. Every
 # uploader writes under one of these; changing them is a code change.
 SOURCE_LIFECYCLE_PREFIXES: dict[str, dict[str, str]] = {
-    "goes19": {"tiles": "tiles/band_", "cog": "cog/band_"},
-    "glm": {"tiles": "tiles/glm_", "cog": "cog/glm_"},
-    "radar": {"tiles": "tiles/radar", "cog": "cog/radar"},
-    "wrf": {"tiles": "tiles/wrf", "cog": "cog/wrf", "geojson": "geojson/wrf"},
-    "ecmwf": {
-        "tiles": "tiles/models/ecmwf",
-        "cog": "cog/models/ecmwf",
-        "geojson": "geojson/models/ecmwf",
-        "grib": "grib/models/ecmwf",
+    "goes19-abi": {"tiles": "tiles/goes19/abi", "cog": "cog/goes19/abi"},
+    "goes19-glm": {"tiles": "tiles/goes19/glm", "cog": "cog/goes19/glm"},
+    "radar-sinarame": {"tiles": "tiles/radar/sinarame", "cog": "cog/radar/sinarame"},
+    "wrf-arg4k": {
+        "tiles": "tiles/wrf-arg4k",
+        "cog": "cog/wrf-arg4k",
+        "geojson": "geojson/wrf-arg4k",
+    },
+    "ecmwf-ifs": {
+        "tiles": "tiles/ecmwf-ifs",
+        "cog": "cog/ecmwf-ifs",
+        "geojson": "geojson/ecmwf-ifs",
+        "grib": "grib/ecmwf-ifs",
     },
     "gfs": {
-        "tiles": "tiles/models/gfs",
-        "cog": "cog/models/gfs",
-        "geojson": "geojson/models/gfs",
-        "grib": "grib/models/gfs",
+        "tiles": "tiles/gfs",
+        "cog": "cog/gfs",
+        "geojson": "geojson/gfs",
+        "grib": "grib/gfs",
     },
 }
 

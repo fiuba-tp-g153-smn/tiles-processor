@@ -36,13 +36,13 @@ async def test_local_list_files_missing_dir(tmp_path):
 @pytest.mark.asyncio
 async def test_local_download_copies_file(tmp_path):
     src = tmp_path / FIELD2D_NAME
-    src.write_bytes(b"wrf_data")
+    src.write_bytes(b"wrf_arg4k_data")
     repo = LocalWrfFileRepository(tmp_path)
 
     result = await repo.download(str(src), tmp_path / "dest" / "output")
 
     assert result.suffix == ".nc"
-    assert result.read_bytes() == b"wrf_data"
+    assert result.read_bytes() == b"wrf_arg4k_data"
 
 
 @pytest.mark.asyncio
@@ -56,31 +56,32 @@ async def test_local_download_raises_for_missing_file(tmp_path):
 async def test_s3_list_files_filters_by_glob_and_sorts():
     s3_client = AsyncMock()
     s3_client.list_files.return_value = [
-        f"wrf_nc/{FIELD2D_NAME}",
-        "wrf_nc/WRF_ARG4K.FCST_L0_FIELD3D.01H.2026061100.F003.M000.nc",
-        "wrf_nc/2026061100/WRF_ARG4K.FCST_L0_FIELD2D.01H.2026061100.F001.M000.nc",
+        f"wrf-arg4k/{FIELD2D_NAME}",
+        "wrf-arg4k/WRF_ARG4K.FCST_L0_FIELD3D.01H.2026061100.F003.M000.nc",
+        "wrf-arg4k/2026061100/WRF_ARG4K.FCST_L0_FIELD2D.01H.2026061100.F001.M000.nc",
     ]
-    repo = S3WrfFileRepository(s3_client, prefix="wrf_nc/")
+    repo = S3WrfFileRepository(s3_client, prefix="wrf-arg4k/")
 
     files = await repo.list_files()
 
-    s3_client.list_files.assert_awaited_once_with("wrf_nc/", file_pattern="")
+    s3_client.list_files.assert_awaited_once_with("wrf-arg4k/", file_pattern="")
     assert files == [
-        "wrf_nc/2026061100/WRF_ARG4K.FCST_L0_FIELD2D.01H.2026061100.F001.M000.nc",
-        f"wrf_nc/{FIELD2D_NAME}",
+        "wrf-arg4k/2026061100/WRF_ARG4K.FCST_L0_FIELD2D.01H.2026061100.F001.M000.nc",
+        f"wrf-arg4k/{FIELD2D_NAME}",
     ]
 
 
 @pytest.mark.asyncio
 async def test_s3_download_forces_nc_suffix_and_strips_scheme(tmp_path):
     s3_client = AsyncMock()
+    s3_client.bucket_name = "wrf-input"
     repo = S3WrfFileRepository(s3_client)
     dest = tmp_path / "work" / "output"
 
-    result = await repo.download(f"s3://wrf-input/wrf_nc/{FIELD2D_NAME}", dest)
+    result = await repo.download(f"s3://wrf-input/wrf-arg4k/{FIELD2D_NAME}", dest)
 
     assert result == dest.with_suffix(".nc")
     assert result.parent.exists()
     s3_client.download_to_file.assert_awaited_once_with(
-        f"wrf_nc/{FIELD2D_NAME}", result
+        f"wrf-arg4k/{FIELD2D_NAME}", result
     )

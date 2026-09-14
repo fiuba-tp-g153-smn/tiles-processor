@@ -1,11 +1,15 @@
 """Radar file repository — abstracts file listing and downloading."""
 
+import asyncio
+import logging
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from clients.s3_client import S3Client
 from data_sources.s3_repository_utils import strip_s3_scheme
+
+logger = logging.getLogger(__name__)
 
 
 class RadarFileRepository(ABC):
@@ -35,19 +39,25 @@ class LocalRadarFileRepository(RadarFileRepository):
 
     async def list_files(self) -> list[str]:
         if not self._input_dir.exists():
+            logger.warning(
+                "Radar input dir does not exist, treating as empty: %s",
+                self._input_dir,
+            )
             return []
 
-        files: list[Path] = []
+        files: set[Path] = set()
 
-        # Flat files at root level
-        files.extend(self._input_dir.glob("*.H5"))
-        files.extend(self._input_dir.glob("*.h5"))
+        # Flat files at root level. Both cases are globbed because the layout is
+        # case-sensitive on Linux; the set collapses the duplicate a
+        # case-insensitive filesystem would otherwise return twice.
+        files.update(self._input_dir.glob("*.H5"))
+        files.update(self._input_dir.glob("*.h5"))
 
         # Nested per-radar subdirs
         for subdir in self._input_dir.iterdir():
             if subdir.is_dir():
-                files.extend(subdir.glob("*.H5"))
-                files.extend(subdir.glob("*.h5"))
+                files.update(subdir.glob("*.H5"))
+                files.update(subdir.glob("*.h5"))
 
         return [str(f.absolute()) for f in sorted(files)]
 
@@ -57,7 +67,7 @@ class LocalRadarFileRepository(RadarFileRepository):
             raise FileNotFoundError(f"Radar file not found: {source_uri}")
         dest_with_ext = dest_path.with_suffix(".H5")
         dest_with_ext.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, dest_with_ext)
+        await asyncio.to_thread(shutil.copy2, source_path, dest_with_ext)
         return dest_with_ext
 
 
@@ -81,6 +91,6 @@ class S3RadarFileRepository(RadarFileRepository):
         dest_with_ext = dest_path.with_suffix(".H5")
         dest_with_ext.parent.mkdir(parents=True, exist_ok=True)
         await self._s3_client.download_to_file(
-            strip_s3_scheme(source_uri), dest_with_ext
+            strip_s3_scheme(source_uri, self._s3_client.bucket_name), dest_with_ext
         )
         return dest_with_ext

@@ -49,14 +49,14 @@ def _label_and_timestamp(
     try:
         if data_source_id.startswith("goes19_abi_"):
             return _describe_goes(band_id, image_id)
-        if data_source_id.startswith("radar_"):
+        if data_source_id.startswith("radar_sinarame_"):
             return _describe_radar(data_source_id, image_id)
-        if data_source_id.startswith("glm_folder"):
+        if data_source_id.startswith("goes19_glm"):
             return ("GLM Lightning (FED/TOE/MFA)", image_id)
-        if data_source_id.startswith("wrf_"):
+        if data_source_id.startswith("wrf_arg4k_"):
             return _describe_wrf(data_source_id, image_id)
-        if data_source_id.startswith("ecmwf_"):
-            return (f"ECMWF {data_source_id.removeprefix('ecmwf_')}", image_id)
+        if data_source_id.startswith("ecmwf_ifs_"):
+            return (f"ECMWF {data_source_id.removeprefix('ecmwf_ifs_')}", image_id)
     except (ValueError, IndexError, KeyError):
         pass
     return (data_source_id, image_id)
@@ -66,16 +66,17 @@ def _describe_goes(band_id: str, image_id: str) -> tuple[str, str]:
     """GOES ABI: friendly product name from the band config."""
     config = BAND_CONFIGS.get(band_id)
     product = config.product_name.replace("_", " ") if config else band_id
-    return (f"GOES ABI {band_id} · {product}", image_id)
+    channel = band_id.removeprefix("goes19_abi_")
+    return (f"GOES-19 ABI {channel} · {product}", image_id)
 
 
 def _describe_radar(data_source_id: str, image_id: str) -> tuple[str, str]:
     """Radar: ``image_id`` is ``{radar_id}_{product_id}_{timestamp}``.
 
-    The product segment can itself contain underscores (DBZH_450KM), so the
-    station and timestamp are read off the ends rather than by field position.
+    The product segment may contain separators, so the station and timestamp
+    are read off the ends rather than by field position.
     """
-    product_id = data_source_id.removeprefix("radar_")
+    product_id = data_source_id.removeprefix("radar_sinarame_")
     config = RADAR_PRODUCT_CONFIGS.get(product_id)
     long_name = config.long_name if config else product_id
 
@@ -90,7 +91,7 @@ def _describe_radar(data_source_id: str, image_id: str) -> tuple[str, str]:
 
 def _describe_wrf(data_source_id: str, image_id: str) -> tuple[str, str]:
     """WRF: ``image_id`` is ``{product}_{init_tag}_{fxxx}``."""
-    product_id = data_source_id.removeprefix("wrf_")
+    product_id = data_source_id.removeprefix("wrf_arg4k_")
     config = WRF_PRODUCT_CONFIGS.get(product_id)
     long_name = config.long_name if config else product_id
     # Strip the leading product token to leave "{init_tag}_{fxxx}".

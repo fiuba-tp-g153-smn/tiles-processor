@@ -1,7 +1,7 @@
 # Makefile for managing the Data Service application
 
 # Declare phony targets to avoid conflicts with files of the same name
-.PHONY: up down test test-host clean prod metrics-api
+.PHONY: up down beta1 beta1-down test test-host clean prod metrics-api
 
 # `make test` runs the suite inside the runtime image. Two of its dependencies
 # are native and pip cannot supply them: the GDAL CLI tools (gdalwarp,
@@ -26,9 +26,20 @@ up:
 down:
 	docker compose down
 	docker compose -f docker-compose-dev.yaml down --remove-orphans
+	docker compose -f docker-compose-beta-1.yaml -f docker-compose-beta-1.override.yaml down --remove-orphans
 
 prod:
 	docker compose up --build
+
+# The beta-1 light preset: fewer workers and the lower-throughput tuning in
+# docker-compose-beta-1.yaml, with settings-beta-1.json mounted over
+# settings.json by the override. Both files are required — the base alone would
+# run the preset's topology against the normal settings.
+beta1:
+	docker compose -f docker-compose-beta-1.yaml -f docker-compose-beta-1.override.yaml up --build
+
+beta1-down:
+	docker compose -f docker-compose-beta-1.yaml -f docker-compose-beta-1.override.yaml down --remove-orphans
 
 test:
 	@mkdir -p reports .cache/pip

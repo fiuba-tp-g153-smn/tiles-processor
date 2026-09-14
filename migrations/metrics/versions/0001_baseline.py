@@ -7,8 +7,8 @@ Create Date: 2026-06-05
 Idempotent baseline mirroring the schema that ``MetricsRepository._init_db`` used
 to create. It creates ``job_metrics`` + indexes only when the table is absent, so
 ``alembic upgrade head`` adopts a pre-existing database (one created by the old
-``CREATE TABLE IF NOT EXISTS`` path, with no ``alembic_version`` table) by simply
-stamping this revision rather than failing on a duplicate table.
+``CREATE TABLE IF NOT EXISTS`` path, with no ``alembic_version`` table) by stamping
+this revision rather than failing on a duplicate table.
 """
 
 from typing import Sequence, Union

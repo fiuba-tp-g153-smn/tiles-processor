@@ -7,7 +7,7 @@ from pathlib import Path
 
 from clients.s3_client import S3Client
 from data_sources.base import DataSource, DiscoveryConfig, ImageInfo
-from data_sources.gfs_fetcher import GfsGribFetcher
+from data_sources.gfs_repository import GfsGribRepository
 from models.gfs_config import (
     CYCLE_HOURS,
     GFS_GRIB_PREFIX,
@@ -24,6 +24,9 @@ _LOG_PREFIX = "[GFS]"
 class GfsProducerDataSource(DataSource):
     """Discovers GRIB steps that are missing from the S3 cache and fetches them.
 
+    The fetch itself goes through an injected :class:`GfsGribRepository`, so the
+    same discovery logic serves the NOMADS CGI, a folder and a bucket.
+
     Three flow controls keep the request rate against NOMADS bounded:
 
     1. **Eligibility window** — a cycle is only considered once it is old enough
@@ -37,14 +40,14 @@ class GfsProducerDataSource(DataSource):
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
-        fetcher: GfsGribFetcher,
+        repository: GfsGribRepository,
         s3_client: S3Client,
         cycles_to_maintain: int,
         max_steps_per_tick: int,
         probe_from_hours: int,
         probe_to_hours: int,
     ):
-        self._fetcher = fetcher
+        self._repository = repository
         self._s3_client = s3_client
         self._cycles_to_maintain = cycles_to_maintain
         self._max_steps_per_tick = max_steps_per_tick
@@ -102,7 +105,7 @@ class GfsProducerDataSource(DataSource):
         """
         meta = json.loads(source_uri)
         cycle = datetime.fromisoformat(meta["cycle"])
-        return await self._fetcher.fetch(cycle, int(meta["step_hours"]), dest_path)
+        return await self._repository.fetch(cycle, int(meta["step_hours"]), dest_path)
 
     async def _discover_cycle(
         self,

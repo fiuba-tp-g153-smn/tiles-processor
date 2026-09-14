@@ -12,7 +12,7 @@ class BandConfig:
     satellite imagery through the pipeline.
 
     Attributes:
-        band_id: Identifier for the band (e.g., "band_13", "band_9")
+        band_id: Identifier for the product (e.g., "goes19_abi_c13", "goes19_glm_fed")
         file_pattern: Pattern to match files in NOAA S3 (e.g., "C13_G19")
         vmin: Minimum temperature for normalization (Kelvin)
         vmax: Maximum temperature for normalization (Kelvin)
@@ -61,54 +61,54 @@ class BandConfig:
 
 # Pre-defined band configurations
 BAND_13_CONFIG = BandConfig(
-    band_id="band_13",
+    band_id="goes19_abi_c13",
     file_pattern="C13_G19",
     vmin=183.15,  # -90°C in Kelvin
     vmax=323.15,  # +50°C in Kelvin
     palette_name="CLOUD_TOPS_PALETTE",
-    s3_tiles_prefix="tiles/band_13",
-    s3_cog_prefix="cog/band_13",
+    s3_tiles_prefix="tiles/goes19/abi/c13",
+    s3_cog_prefix="cog/goes19/abi/c13",
     product_name="Cloud_Tops",
 )
 
 BAND_9_CONFIG = BandConfig(
-    band_id="band_9",
+    band_id="goes19_abi_c09",
     file_pattern="C09_G19",
     vmin=161.0,  # -112.15°C in Kelvin
     vmax=330.0,  # +56.85°C in Kelvin
     palette_name="WATER_VAPOR_PALETTE",
-    s3_tiles_prefix="tiles/band_9",
-    s3_cog_prefix="cog/band_9",
+    s3_tiles_prefix="tiles/goes19/abi/c09",
+    s3_cog_prefix="cog/goes19/abi/c09",
     product_name="Water_Vapor",
 )
 
 BAND_2_CONFIG = BandConfig(
-    band_id="band_2",
+    band_id="goes19_abi_c02",
     file_pattern="C02_G19",
     vmin=0.0,  # Reflectance factor min
     vmax=1.0,  # Reflectance factor max
     palette_name="VISIBLE_PALETTE",
-    s3_tiles_prefix="tiles/band_2",
-    s3_cog_prefix="cog/band_2",
+    s3_tiles_prefix="tiles/goes19/abi/c02",
+    s3_cog_prefix="cog/goes19/abi/c02",
     product_name="Visible",
 )
 
 # Folder-based GLM pipeline (CG_GLM-L2-GLMF inputs, LogNorm rendering).
 # vmin/vmax are the SMN reference LogNorm ranges in the variable's native
 # units; the processor takes log10 before normalize_and_colorize.
-GLM_FOLDER_FED_CONFIG = BandConfig(
-    band_id="glm_folder_fed",
+GOES19_GLM_FED_CONFIG = BandConfig(
+    band_id="goes19_glm_fed",
     file_pattern="CG_GLM-L2-GLMF",
     vmin=1.0,
     vmax=128.0,  # flashes / cell (LogNorm)
-    palette_name="GLM_FOLDER_FED_PALETTE",
-    s3_tiles_prefix="tiles/glm_fed",
-    s3_cog_prefix="cog/glm_fed",
+    palette_name="GOES19_GLM_FED_PALETTE",
+    s3_tiles_prefix="tiles/goes19/glm/fed",
+    s3_cog_prefix="cog/goes19/glm/fed",
     product_name="GLM_Flash_Extent_Density",
 )
 
-GLM_FOLDER_TOE_CONFIG = BandConfig(
-    band_id="glm_folder_toe",
+GOES19_GLM_TOE_CONFIG = BandConfig(
+    band_id="goes19_glm_toe",
     file_pattern="CG_GLM-L2-GLMF",
     # ``total_energy`` is converted from nJ to fJ inside aggregate_glm_window
     # so this range matches the SMN reference (grafico_glmtools_viejo.py:122)
@@ -116,31 +116,31 @@ GLM_FOLDER_TOE_CONFIG = BandConfig(
     # (64, 2500).
     vmin=0.01,
     vmax=1500.0,
-    palette_name="GLM_FOLDER_TOE_PALETTE",
-    s3_tiles_prefix="tiles/glm_toe",
-    s3_cog_prefix="cog/glm_toe",
+    palette_name="GOES19_GLM_TOE_PALETTE",
+    s3_tiles_prefix="tiles/goes19/glm/toe",
+    s3_cog_prefix="cog/goes19/glm/toe",
     product_name="GLM_Total_Optical_Energy",
 )
 
-GLM_FOLDER_MFA_CONFIG = BandConfig(
-    band_id="glm_folder_mfa",
+GOES19_GLM_MFA_CONFIG = BandConfig(
+    band_id="goes19_glm_mfa",
     file_pattern="CG_GLM-L2-GLMF",
     vmin=64.0,
     vmax=2500.0,  # km² / cell (LogNorm)
-    palette_name="GLM_FOLDER_MFA_PALETTE",
-    s3_tiles_prefix="tiles/glm_mfa",
-    s3_cog_prefix="cog/glm_mfa",
+    palette_name="GOES19_GLM_MFA_PALETTE",
+    s3_tiles_prefix="tiles/goes19/glm/mfa",
+    s3_cog_prefix="cog/goes19/glm/mfa",
     product_name="GLM_Minimum_Flash_Area",
 )
 
 # Registry for looking up band configs by ID
 BAND_CONFIGS = {
-    "band_13": BAND_13_CONFIG,
-    "band_9": BAND_9_CONFIG,
-    "band_2": BAND_2_CONFIG,
-    "glm_folder_fed": GLM_FOLDER_FED_CONFIG,
-    "glm_folder_toe": GLM_FOLDER_TOE_CONFIG,
-    "glm_folder_mfa": GLM_FOLDER_MFA_CONFIG,
+    "goes19_abi_c13": BAND_13_CONFIG,
+    "goes19_abi_c09": BAND_9_CONFIG,
+    "goes19_abi_c02": BAND_2_CONFIG,
+    "goes19_glm_fed": GOES19_GLM_FED_CONFIG,
+    "goes19_glm_toe": GOES19_GLM_TOE_CONFIG,
+    "goes19_glm_mfa": GOES19_GLM_MFA_CONFIG,
 }
 
 
