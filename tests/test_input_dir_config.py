@@ -282,22 +282,27 @@ def _env_prefix(source_name: str) -> str:
     return source_name.upper().replace("-", "_")
 
 
+def _sources_by_mode() -> tuple[list[str], list[str]]:
+    """(local sources, everything else) from the shipped settings."""
+    sources = json.loads((REPO_ROOT / "settings.json").read_text())["sources"]
+    local, other = [], []
+    for name, block in sources.items():
+        (local if block["input"]["mode"] == "local" else other).append(name)
+    return local, other
+
+
 @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
-def test_every_source_has_an_identity_mount_line(compose_file):
-    """Each source gets a ready-to-uncomment mount driven by its own env var.
+def test_local_sources_have_an_identity_mount(compose_file):
+    """Every source that reads a folder gets one, in identity form.
 
-    `<PREFIX>_INPUT_DIR` is read by BOTH compose (as the mount) and config.py (as
-    `input.dir`), so one value is correct on both sides. The line must be in
-    identity form — the same variable on both halves — because any asymmetry
-    reintroduces the host-path-vs-container-path translation this replaced.
-
-    Derived from the shipped source list, so adding a seventh source without a
-    mount line fails here instead of at its first silently empty tick.
+    Derived from settings.json, so flipping a source to "local" fails here until
+    its mount line is added — rather than at its first silently empty tick.
     """
     text = (REPO_ROOT / compose_file).read_text()
-    sources = json.loads((REPO_ROOT / "settings.json").read_text())["sources"]
+    local, _ = _sources_by_mode()
+    assert local, "settings.json has no local sources to check"
     missing = []
-    for name in sources:
+    for name in local:
         prefix = _env_prefix(name)
         line = next(
             (
@@ -309,7 +314,30 @@ def test_every_source_has_an_identity_mount_line(compose_file):
         )
         if line is None or not _is_identity_mount(line):
             missing.append(f"{prefix}_INPUT_DIR")
-    assert not missing, f"{compose_file} has no identity mount line for: {missing}"
+    assert not missing, f"{compose_file} has no identity mount for: {missing}"
+
+
+@pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+def test_non_local_sources_have_no_mount(compose_file):
+    """A source that reads S3 or a provider must not require a folder variable.
+
+    Mounting one anyway forces an operator to invent a path for a directory
+    nothing will ever open, purely so compose does not choke on `::ro`. That is
+    overhead with no payoff, and it is how the variable list stops meaning
+    anything.
+    """
+    text = (REPO_ROOT / compose_file).read_text()
+    _, other = _sources_by_mode()
+    assert other, "settings.json has no non-local sources to check"
+    stray = [
+        f"{_env_prefix(name)}_INPUT_DIR"
+        for name in other
+        if f"${{{_env_prefix(name)}_INPUT_DIR}}" in text
+    ]
+    assert not stray, (
+        f"{compose_file} references input dirs for sources that read no folder: "
+        f"{stray}"
+    )
 
 
 @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
@@ -349,20 +377,37 @@ def test_input_vars_reach_the_containers(compose_file):
     exactly like a source with no new files.
     """
     text = (REPO_ROOT / compose_file).read_text()
-    sources = json.loads((REPO_ROOT / "settings.json").read_text())["sources"]
+    local, _ = _sources_by_mode()
     blocks = _service_blocks(text)
     problems = []
     for svc in INPUT_SERVICES:
         body = blocks.get(svc)
         if body is None or "volumes: *input-volumes" not in body:
             continue
-        for name in sources:
+        for name in local:
             var = f"{_env_prefix(name)}_INPUT_DIR"
             if f"- {var}=${{{var}}}" not in body:
                 problems.append(f"{svc}:{var}")
     assert not problems, (
         f"{compose_file}: mounted but not passed to the app, so the files are "
         f"present and unread: {problems}"
+    )
+
+
+def test_env_example_uses_absolute_paths():
+    """The shipped example must not make the path depend on where you stood.
+
+    `${PWD}` is interpolated from the shell's working directory, not the compose
+    file's, so `docker compose -f tiles-processor/... ` run from the parent would
+    silently bind a different tree and every local source would read nothing.
+    """
+    text = (REPO_ROOT / ".env.example").read_text()
+    assigned = re.findall(r"^([A-Z0-9_]+_INPUT_DIR)=(.*)$", text, re.M)
+    assert assigned, ".env.example declares no input directories"
+    bad = [f"{k}={v}" for k, v in assigned if not v.startswith("/")]
+    assert not bad, (
+        f".env.example must use absolute paths; these are relative or "
+        f"interpolated: {bad}"
     )
 
 

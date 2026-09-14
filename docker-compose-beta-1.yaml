@@ -4,21 +4,23 @@
 # To regenerate with different number of workers:
 #   ./scripts/generate-compose.sh --dev 2 docker-compose-dev.yaml
 
-# Input locations, one per source, set in .env. <PREFIX>_INPUT_DIR is read by BOTH compose
-# (mounted below at the same path inside the container) and the app (sources.<name>.input.dir),
-# so one value is correct on both sides. Sources may live on different filesystems.
+# Input locations, one per source in `local` mode, set in .env. <PREFIX>_INPUT_DIR is read by
+# BOTH compose (mounted below at the same path inside the container) and the app
+# (sources.<name>.input.dir), so one value is correct on both sides. Sources may live on
+# different filesystems.
 #
-# No defaults here on purpose: .env is the single place a path is decided. Read-only, because the
+# Only local sources appear here. goes19-abi reads S3 and ecmwf-ifs/gfs read their providers, so
+# they need no folder and no variable. Switch one to "local" in settings.json and you must add its
+# line here too — tests/test_input_dir_config.py fails until you do.
+#
+# No defaults on purpose: .env is the single place a path is decided. Read-only, because the
 # pipeline copies out of these feeds and never writes to them.
 x-input-volumes: &input-volumes
   - ./data:${DATA_DIR}
   - ./data/radar-sinarame:${DATA_DIR}/radar-sinarame
-  - ${GOES19_ABI_INPUT_DIR}:${GOES19_ABI_INPUT_DIR}:ro
   - ${GOES19_GLM_INPUT_DIR}:${GOES19_GLM_INPUT_DIR}:ro
   - ${RADAR_SINARAME_INPUT_DIR}:${RADAR_SINARAME_INPUT_DIR}:ro
   - ${WRF_ARG4K_INPUT_DIR}:${WRF_ARG4K_INPUT_DIR}:ro
-  - ${ECMWF_IFS_INPUT_DIR}:${ECMWF_IFS_INPUT_DIR}:ro
-  - ${GFS_INPUT_DIR}:${GFS_INPUT_DIR}:ro
 
 # metrics-api serves the progress database only; it reads no source data.
 x-service-volumes: &service-volumes
@@ -117,12 +119,9 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - GOES19_ABI_INPUT_DIR=${GOES19_ABI_INPUT_DIR}
       - GOES19_GLM_INPUT_DIR=${GOES19_GLM_INPUT_DIR}
       - RADAR_SINARAME_INPUT_DIR=${RADAR_SINARAME_INPUT_DIR}
       - WRF_ARG4K_INPUT_DIR=${WRF_ARG4K_INPUT_DIR}
-      - ECMWF_IFS_INPUT_DIR=${ECMWF_IFS_INPUT_DIR}
-      - GFS_INPUT_DIR=${GFS_INPUT_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
@@ -187,12 +186,9 @@ services:
       - WORKER_ID=worker1
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - GOES19_ABI_INPUT_DIR=${GOES19_ABI_INPUT_DIR}
       - GOES19_GLM_INPUT_DIR=${GOES19_GLM_INPUT_DIR}
       - RADAR_SINARAME_INPUT_DIR=${RADAR_SINARAME_INPUT_DIR}
       - WRF_ARG4K_INPUT_DIR=${WRF_ARG4K_INPUT_DIR}
-      - ECMWF_IFS_INPUT_DIR=${ECMWF_IFS_INPUT_DIR}
-      - GFS_INPUT_DIR=${GFS_INPUT_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
@@ -257,12 +253,9 @@ services:
       - WORKER_ID=worker-light1
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - GOES19_ABI_INPUT_DIR=${GOES19_ABI_INPUT_DIR}
       - GOES19_GLM_INPUT_DIR=${GOES19_GLM_INPUT_DIR}
       - RADAR_SINARAME_INPUT_DIR=${RADAR_SINARAME_INPUT_DIR}
       - WRF_ARG4K_INPUT_DIR=${WRF_ARG4K_INPUT_DIR}
-      - ECMWF_IFS_INPUT_DIR=${ECMWF_IFS_INPUT_DIR}
-      - GFS_INPUT_DIR=${GFS_INPUT_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
