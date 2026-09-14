@@ -111,74 +111,6 @@ def test_dir_defaults_to_data_dir_per_source(tmp_path, env_vars):
     assert config.RADAR_INPUT.input_dir == "/app/data/radar-sinarame"
 
 
-def test_env_var_overrides_settings_per_source(tmp_path, env_vars):
-    """<PREFIX>_INPUT_DIR wins, per the project's env-over-settings convention."""
-    config = _config(
-        tmp_path,
-        env_vars,
-        {"mode": "local", "dir": "/mnt/nfs/smn/radar"},
-        {"RADAR_SINARAME_INPUT_DIR": "/srv/override/radar"},
-    )
-    assert config.RADAR_INPUT.input_dir == "/srv/override/radar"
-
-
-@pytest.mark.parametrize("empty", ["", "   "])
-def test_empty_env_var_is_discarded(tmp_path, env_vars, empty):
-    """An empty variable means "not set", matching compose's `:-` fallback.
-
-    .env ships all six keys present but blank, so a blank one must fall through
-    to settings.json rather than being taken literally — an empty input_dir
-    would make the source read the container's working directory.
-    """
-    config = _config(
-        tmp_path,
-        env_vars,
-        {"mode": "local", "dir": "/mnt/nfs/smn/radar"},
-        {"RADAR_SINARAME_INPUT_DIR": empty},
-    )
-    assert config.RADAR_INPUT.input_dir == "/mnt/nfs/smn/radar"
-
-
-def test_empty_env_var_and_no_setting_falls_back_to_the_default(tmp_path, env_vars):
-    """Blank everywhere still lands on ${DATA_DIR}/<source-name>."""
-    config = _config(
-        tmp_path, env_vars, {"mode": "local"}, {"RADAR_SINARAME_INPUT_DIR": ""}
-    )
-    assert config.RADAR_INPUT.input_dir == "/app/data/radar-sinarame"
-
-
-def test_conflicting_env_and_settings_is_reported(tmp_path, env_vars, caplog):
-    """settings.json says the mode, .env says where — when both name a path, say so.
-
-    Env silently winning is how "I changed settings.json and nothing happened"
-    becomes a debugging session.
-    """
-    with caplog.at_level("WARNING"):
-        config = _config(
-            tmp_path,
-            env_vars,
-            {"mode": "local", "dir": "/mnt/from-settings"},
-            {"RADAR_SINARAME_INPUT_DIR": "/mnt/from-env"},
-        )
-    assert config.RADAR_INPUT.input_dir == "/mnt/from-env"
-    assert config.RADAR_INPUT.input_dir_origin == "env"
-    message = caplog.text
-    assert "/mnt/from-settings" in message and "/mnt/from-env" in message
-    assert "environment wins" in message
-
-
-def test_matching_env_and_settings_is_quiet(tmp_path, env_vars, caplog):
-    """Agreeing values are not a conflict; warning on them would train people to ignore it."""
-    with caplog.at_level("WARNING"):
-        _config(
-            tmp_path,
-            env_vars,
-            {"mode": "local", "dir": "/mnt/same"},
-            {"RADAR_SINARAME_INPUT_DIR": "/mnt/same"},
-        )
-    assert "environment wins" not in caplog.text
-
-
 def test_dir_configured_for_a_non_local_mode_is_reported(tmp_path, env_vars, caplog):
     """A path on an s3/provider source is ignored, which should never be silent."""
     with caplog.at_level("WARNING"):
@@ -282,62 +214,51 @@ def _env_prefix(source_name: str) -> str:
     return source_name.upper().replace("-", "_")
 
 
-def _sources_by_mode() -> tuple[list[str], list[str]]:
-    """(local sources, everything else) from the shipped settings."""
+@pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+def test_every_source_mounts_onto_its_default_container_path(compose_file):
+    """One line per source, whatever mode it is in.
+
+    The two halves mean different things: the source is a host path the operator
+    sets, the target is where the app looks. The target must stay
+    ``/app/data/<source-name>`` or the mount lands somewhere the app never reads
+    and the source goes quiet instead of failing.
+
+    Every source is covered, not just the local ones, so switching a source to
+    "local" in settings.json needs no compose edit. A source on S3 or a provider
+    ignores its mount; nothing writes to these paths.
+    """
+    text = (REPO_ROOT / compose_file).read_text()
     sources = json.loads((REPO_ROOT / "settings.json").read_text())["sources"]
-    local, other = [], []
-    for name, block in sources.items():
-        (local if block["input"]["mode"] == "local" else other).append(name)
-    return local, other
-
-
-@pytest.mark.parametrize("compose_file", COMPOSE_FILES)
-def test_local_sources_have_an_identity_mount(compose_file):
-    """Every source that reads a folder gets one, in identity form.
-
-    Derived from settings.json, so flipping a source to "local" fails here until
-    its mount line is added — rather than at its first silently empty tick.
-    """
-    text = (REPO_ROOT / compose_file).read_text()
-    local, _ = _sources_by_mode()
-    assert local, "settings.json has no local sources to check"
-    missing = []
-    for name in local:
-        prefix = _env_prefix(name)
-        line = next(
-            (
-                ln.strip()
-                for ln in text.splitlines()
-                if ln.strip().startswith(f"- ${{{prefix}_INPUT_DIR")
-            ),
-            None,
-        )
-        if line is None or not _is_identity_mount(line):
-            missing.append(f"{prefix}_INPUT_DIR")
-    assert not missing, f"{compose_file} has no identity mount for: {missing}"
-
-
-@pytest.mark.parametrize("compose_file", COMPOSE_FILES)
-def test_non_local_sources_have_no_mount(compose_file):
-    """A source that reads S3 or a provider must not require a folder variable.
-
-    Mounting one anyway forces an operator to invent a path for a directory
-    nothing will ever open, purely so compose does not choke on `::ro`. That is
-    overhead with no payoff, and it is how the variable list stops meaning
-    anything.
-    """
-    text = (REPO_ROOT / compose_file).read_text()
-    _, other = _sources_by_mode()
-    assert other, "settings.json has no non-local sources to check"
-    stray = [
-        f"{_env_prefix(name)}_INPUT_DIR"
-        for name in other
-        if f"${{{_env_prefix(name)}_INPUT_DIR}}" in text
+    missing = [
+        expected
+        for name in sources
+        if (expected := f"- ${{{_env_prefix(name)}_INPUT_DIR}}:/app/data/{name}:ro")
+        not in text
     ]
-    assert not stray, (
-        f"{compose_file} references input dirs for sources that read no folder: "
-        f"{stray}"
-    )
+    assert not missing, f"{compose_file} is missing these mounts: {missing}"
+
+
+@pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+def test_no_volume_target_contains_a_variable(compose_file):
+    """Coolify's compose parser refuses any volume target containing '${'.
+
+    Docker accepts it, so this only shows up at deploy time as "Invalid volume
+    target: contains forbidden character '${'", which aborts the deployment
+    after the old containers are already gone. Cheaper to catch here.
+    """
+    text = (REPO_ROOT / compose_file).read_text()
+    offenders = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- ") or ":" not in stripped:
+            continue
+        spec = stripped.removeprefix("- ").removesuffix(":ro")
+        _, _, target = spec.rpartition(":")
+        if "${" in target:
+            offenders.append(stripped)
+    assert (
+        not offenders
+    ), f"{compose_file} has volume targets Coolify will reject: {offenders}"
 
 
 @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
@@ -368,29 +289,18 @@ def test_input_mounts_are_enabled(compose_file):
 
 
 @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
-def test_input_vars_reach_the_containers(compose_file):
-    """Mounting the path is only half of it — the app has to be told as well.
+def test_host_paths_are_never_handed_to_the_app(compose_file):
+    """<PREFIX>_INPUT_DIR is a HOST path and must stay out of the containers.
 
-    A container only sees the variables its `environment:` block lists. Mount it
-    but omit the variable and the bind is there while the app keeps reading
-    ${DATA_DIR}/<source-name>: the data is present and invisible, which reads
-    exactly like a source with no new files.
+    Inside the container that path does not exist. If the app were handed it, it
+    would read a directory nothing is mounted on and find nothing, which reads
+    exactly like a source with no new data.
     """
     text = (REPO_ROOT / compose_file).read_text()
-    local, _ = _sources_by_mode()
-    blocks = _service_blocks(text)
-    problems = []
-    for svc in INPUT_SERVICES:
-        body = blocks.get(svc)
-        if body is None or "volumes: *input-volumes" not in body:
-            continue
-        for name in local:
-            var = f"{_env_prefix(name)}_INPUT_DIR"
-            if f"- {var}=${{{var}}}" not in body:
-                problems.append(f"{svc}:{var}")
-    assert not problems, (
-        f"{compose_file}: mounted but not passed to the app, so the files are "
-        f"present and unread: {problems}"
+    leaked = re.findall(r"^\s+- ([A-Z0-9_]+_INPUT_DIR)=", text, re.M)
+    assert not leaked, (
+        f"{compose_file} passes host paths into the container environment: "
+        f"{sorted(set(leaked))}"
     )
 
 

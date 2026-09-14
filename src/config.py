@@ -454,7 +454,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         bucket, prefix = Config._parse_input_bucket(inp, json_key, mode, default_bucket)
         access_key, secret_key = Config._input_credentials(env_prefix)
         input_dir, input_dir_origin = Config._parse_input_dir(
-            inp, json_key, env_prefix, default_dir
+            inp, json_key, default_dir
         )
         Config._warn_if_dir_is_unused(inp, json_key, mode, input_dir_origin)
         source = InputSourceConfig(
@@ -475,44 +475,33 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
 
     @staticmethod
     def _parse_input_dir(
-        inp: Dict[str, Any], json_key: str, env_prefix: str, default_dir: str
+        inp: Dict[str, Any], json_key: str, default_dir: str
     ) -> tuple[str, str]:
-        """Read ``input.dir``, env override first, else the per-source default.
+        """Read ``input.dir``, else the per-source default under ``DATA_DIR``.
 
-        The value is a real absolute path that resolves the same inside the
-        container as on the host: compose mounts each input filesystem at the
-        same path on both sides (see the ``x-input-volumes`` anchor), so nothing
-        is translated and an operator can name the path their data actually has.
+        This is the path INSIDE the container. Operators do not set it: compose
+        mounts each host folder onto ``/app/data/<source-name>``, which is what
+        the default already resolves to. The host path lives in
+        ``<PREFIX>_INPUT_DIR``, read by compose alone.
 
         A relative path would resolve against the container's working directory
-        and silently read the wrong place — and a source reading the wrong place
-        is indistinguishable from one with no new data — so it is refused.
+        and silently read the wrong place, and a source reading the wrong place
+        is indistinguishable from one with no new data, so it is refused.
 
         Returns:
-            (path, origin) where origin is "env", "settings" or "default".
+            (path, origin) where origin is "settings" or "default".
 
         Raises:
             ValueError: the configured path is not absolute.
         """
-        # A blank (or whitespace-only) value reads as "not set", so a key present
-        # but empty in .env falls through instead of becoming an empty path.
-        env_value = (os.getenv(f"{env_prefix}_INPUT_DIR") or "").strip()
+        # Deliberately NOT read from the environment. <PREFIX>_INPUT_DIR holds the
+        # path on the HOST, for the compose mount; inside the container that path
+        # does not exist. Reading it here would send the source looking somewhere
+        # nothing is mounted, and an empty source is indistinguishable from one
+        # with no new data.
         settings_value = str(inp.get("dir") or "").strip()
-
-        if env_value and settings_value and env_value != settings_value:
-            # Both set and disagreeing. Env wins, and saying so is the difference
-            # between "my edit did nothing" and a one-line answer.
-            logger.warning(
-                "sources.%s.input.dir is %r in settings.json but %s_INPUT_DIR is "
-                "%r in the environment; the environment wins. Remove one.",
-                json_key,
-                settings_value,
-                env_prefix,
-                env_value,
-            )
-
-        value = env_value or settings_value or default_dir
-        origin = "env" if env_value else ("settings" if settings_value else "default")
+        value = settings_value or default_dir
+        origin = "settings" if settings_value else "default"
         if not value.startswith("/"):
             raise ValueError(
                 f"sources.{json_key}.input.dir must be an absolute path that is "

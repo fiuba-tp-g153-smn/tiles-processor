@@ -4,27 +4,32 @@
 # To regenerate with different number of workers:
 #   ./scripts/generate-compose.sh --dev 2 docker-compose-dev.yaml
 
-# Input locations, one per source in `local` mode, set in .env. <PREFIX>_INPUT_DIR is read by
-# BOTH compose (mounted below at the same path inside the container) and the app
-# (sources.<name>.input.dir), so one value is correct on both sides. Sources may live on
-# different filesystems.
+# Input locations. <PREFIX>_INPUT_DIR is the path ON THE HOST; compose mounts it read-only onto
+# /app/data/<source-name>, which is where the app already looks, so the value never enters the
+# container and settings.json needs no `dir`. Sources may live on different filesystems.
 #
-# Only local sources appear here. goes19-abi reads S3 and ecmwf-ifs/gfs read their providers, so
-# they need no folder and no variable. Switch one to "local" in settings.json and you must add its
-# line here too — tests/test_input_dir_config.py fails until you do.
+# Every source has a line, whatever mode it is in, so switching one to "local" in settings.json is
+# the only edit. A source reading S3 or a provider ignores its mount; nothing writes to these paths
+# (worker scratch is /app/data/tmp, on the read-write volume above).
 #
-# No defaults on purpose: .env is the single place a path is decided. Read-only, because the
-# pipeline copies out of these feeds and never writes to them.
+# Targets are literal, never ${DATA_DIR}/<source>: Coolify's compose parser rejects any volume
+# target containing '${' and aborts the deployment.
+#
+# No defaults on purpose: .env is the single place a path is decided, and every key needs a value
+# or compose refuses to start.
 x-input-volumes: &input-volumes
-  - ./data:${DATA_DIR}
-  - ./data/radar-sinarame:${DATA_DIR}/radar-sinarame
-  - ${GOES19_GLM_INPUT_DIR}:${GOES19_GLM_INPUT_DIR}:ro
-  - ${RADAR_SINARAME_INPUT_DIR}:${RADAR_SINARAME_INPUT_DIR}:ro
-  - ${WRF_ARG4K_INPUT_DIR}:${WRF_ARG4K_INPUT_DIR}:ro
+  - ./data:/app/data
+  - ./data/radar-sinarame:/app/data/radar-sinarame
+  - ${GOES19_ABI_INPUT_DIR}:/app/data/goes19-abi:ro
+  - ${GOES19_GLM_INPUT_DIR}:/app/data/goes19-glm:ro
+  - ${RADAR_SINARAME_INPUT_DIR}:/app/data/radar-sinarame:ro
+  - ${WRF_ARG4K_INPUT_DIR}:/app/data/wrf-arg4k:ro
+  - ${ECMWF_IFS_INPUT_DIR}:/app/data/ecmwf-ifs:ro
+  - ${GFS_INPUT_DIR}:/app/data/gfs:ro
 
 # metrics-api serves the progress database only; it reads no source data.
 x-service-volumes: &service-volumes
-  - ./data:${DATA_DIR}
+  - ./data:/app/data
 
 services:
   # RabbitMQ message broker for the work queue
@@ -119,9 +124,6 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - GOES19_GLM_INPUT_DIR=${GOES19_GLM_INPUT_DIR}
-      - RADAR_SINARAME_INPUT_DIR=${RADAR_SINARAME_INPUT_DIR}
-      - WRF_ARG4K_INPUT_DIR=${WRF_ARG4K_INPUT_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
@@ -186,9 +188,6 @@ services:
       - WORKER_ID=worker1
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - GOES19_GLM_INPUT_DIR=${GOES19_GLM_INPUT_DIR}
-      - RADAR_SINARAME_INPUT_DIR=${RADAR_SINARAME_INPUT_DIR}
-      - WRF_ARG4K_INPUT_DIR=${WRF_ARG4K_INPUT_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
@@ -253,9 +252,6 @@ services:
       - WORKER_ID=worker-light1
       - LOG_LEVEL=${LOG_LEVEL}
       - DATA_DIR=${DATA_DIR}
-      - GOES19_GLM_INPUT_DIR=${GOES19_GLM_INPUT_DIR}
-      - RADAR_SINARAME_INPUT_DIR=${RADAR_SINARAME_INPUT_DIR}
-      - WRF_ARG4K_INPUT_DIR=${WRF_ARG4K_INPUT_DIR}
       - S3_TILES_DATA_ENDPOINT=seaweedfs:8333
       - S3_TILES_DATA_BUCKET_NAME=${S3_TILES_DATA_BUCKET_NAME}
       - S3_TILES_DATA_SECURE=false
