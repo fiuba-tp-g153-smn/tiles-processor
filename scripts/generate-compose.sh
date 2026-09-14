@@ -2,6 +2,20 @@
 #
 # Generate docker-compose.yaml with a configurable number of workers.
 #
+# ##############################################################################
+# STALE — DO NOT RUN WITHOUT REVIEWING THE DIFF
+#
+# The committed compose files have been hand-edited past this script and running
+# it would silently roll those edits back. Known drift as of 2026-09-13:
+#   - rabbitmq      4.2.9-management (live)  vs 4.2.2-management (here)
+#   - seaweedfs     4.46 (live)              vs latest (here)
+#   - the x-input-volumes / x-service-volumes anchors that carry the identity
+#     mounts for input data exist only in the live files
+#
+# Regenerating drops all of it. Either update this script first, or edit the
+# compose files directly (which is what has actually been happening).
+# ##############################################################################
+#
 # Usage:
 #   ./scripts/generate-compose.sh [--dev] [--light <N>] <num_workers> [output_file]
 #
