@@ -4,28 +4,23 @@
 # To regenerate with different number of workers:
 #   ./scripts/generate-compose.sh --dev 2 docker-compose-dev.yaml
 
-# Input locations. <PREFIX>_INPUT_DIR is the path ON THE HOST; compose mounts it read-only onto
-# /app/data/<source-name>, which is where the app already looks, so the value never enters the
-# container and settings.json needs no `dir`. Sources may live on different filesystems.
+# Input locations for the sources that use `local` mode in settings.json.
+# <PREFIX>_INPUT_DIR is the path on the host. Compose mounts it read-only at the
+# canonical path read by the application.
 #
-# Every source has a line, whatever mode it is in, so switching one to "local" in settings.json is
-# the only edit. A source reading S3 or a provider ignores its mount; nothing writes to these paths
-# (worker scratch is /app/data/tmp, on the read-write volume above).
+# A source that reads S3 or an external provider needs no mount. When changing a
+# source to `local`, add its variable and mount here as part of the same change.
+# Worker scratch remains under /app/data/tmp on the read-write data directory.
 #
 # Targets are literal, never ${DATA_DIR}/<source>: Coolify's compose parser rejects any volume
 # target containing '${' and aborts the deployment.
 #
-# No defaults on purpose: .env is the single place a path is decided, and every key needs a value
-# or compose refuses to start.
+# No defaults on purpose. A missing path for a local source must stop Compose.
 x-input-volumes: &input-volumes
   - ./data:/app/data
-  - ./data/radar-sinarame:/app/data/radar-sinarame
-  - ${GOES19_ABI_INPUT_DIR}:/app/data/goes19-abi:ro
   - ${GOES19_GLM_INPUT_DIR}:/app/data/goes19-glm:ro
   - ${RADAR_SINARAME_INPUT_DIR}:/app/data/radar-sinarame:ro
   - ${WRF_ARG4K_INPUT_DIR}:/app/data/wrf-arg4k:ro
-  - ${ECMWF_IFS_INPUT_DIR}:/app/data/ecmwf-ifs:ro
-  - ${GFS_INPUT_DIR}:/app/data/gfs:ro
 
 # metrics-api serves the progress database only; it reads no source data.
 x-service-volumes: &service-volumes

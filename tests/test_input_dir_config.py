@@ -202,49 +202,44 @@ def test_every_input_service_shares_the_input_volumes_anchor(compose_file):
     )
 
 
-def _is_identity_mount(line: str) -> bool:
-    """True when a volume line mounts a path onto itself, read-only.
-
-    Checked by splitting rather than by regex: the fallback carries its own
-    ${...}, and a pattern that tries to match balanced braces twice is easier to
-    get subtly wrong than the thing it is guarding.
-    """
-    spec = line.removeprefix("- ").removesuffix(":ro")
-    if not line.endswith(":ro"):
-        return False
-    middle, remainder = divmod(len(spec) - 1, 2)
-    if remainder or spec[middle] != ":":
-        return False
-    return spec[:middle] == spec[middle + 1 :]
-
-
 def _env_prefix(source_name: str) -> str:
     """The env prefix for a source, matching what config.py passes."""
     return source_name.upper().replace("-", "_")
 
 
-@pytest.mark.parametrize("compose_file", MOUNTING_COMPOSE_FILES)
-def test_every_source_mounts_onto_its_default_container_path(compose_file):
-    """One line per source, whatever mode it is in.
-
-    The two halves mean different things: the source is a host path the operator
-    sets, the target is where the app looks. The target must stay
-    ``/app/data/<source-name>`` or the mount lands somewhere the app never reads
-    and the source goes quiet instead of failing.
-
-    Every source is covered, not just the local ones, so switching a source to
-    "local" in settings.json needs no compose edit. A source on S3 or a provider
-    ignores its mount; nothing writes to these paths.
-    """
-    text = (REPO_ROOT / compose_file).read_text()
+def _sources_by_mode() -> tuple[list[str], list[str]]:
+    """Return local sources and non-local sources from the shipped settings."""
     sources = json.loads((REPO_ROOT / "settings.json").read_text())["sources"]
+    local = [name for name, block in sources.items() if block["input"]["mode"] == "local"]
+    other = [name for name, block in sources.items() if block["input"]["mode"] != "local"]
+    return local, other
+
+
+@pytest.mark.parametrize("compose_file", MOUNTING_COMPOSE_FILES)
+def test_every_local_source_mounts_onto_its_container_path(compose_file):
+    """Every local source has one host variable and one canonical target."""
+    text = (REPO_ROOT / compose_file).read_text()
+    local, _ = _sources_by_mode()
     missing = [
         expected
-        for name in sources
+        for name in local
         if (expected := f"- ${{{_env_prefix(name)}_INPUT_DIR}}:/app/data/{name}:ro")
         not in text
     ]
     assert not missing, f"{compose_file} is missing these mounts: {missing}"
+
+
+@pytest.mark.parametrize("compose_file", MOUNTING_COMPOSE_FILES)
+def test_non_local_sources_have_no_input_mount(compose_file):
+    """S3 and provider sources must not force an unused host directory."""
+    text = (REPO_ROOT / compose_file).read_text()
+    _, other = _sources_by_mode()
+    stray = [
+        f"{_env_prefix(name)}_INPUT_DIR"
+        for name in other
+        if f"${{{_env_prefix(name)}_INPUT_DIR}}" in text
+    ]
+    assert not stray, f"{compose_file} mounts non-local sources: {stray}"
 
 
 def test_prod_mount_sources_are_literal_paths():
@@ -358,8 +353,8 @@ def test_host_paths_are_never_handed_to_the_app(compose_file):
     )
 
 
-def test_env_example_ships_every_input_dir_commented_and_absolute():
-    """The template must not produce a .env that starts but reads nothing.
+def test_env_example_lists_every_input_dir_commented_and_absolute():
+    """The template names every possible local source without enabling it.
 
     Copying .env.example is the documented setup step. Shipping real-looking
     paths uncommented would give a stack that boots and finds no files, which is

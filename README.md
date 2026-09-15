@@ -311,7 +311,7 @@ input, product toggles, retention, and tuning live together.
       "retention_days": 1
     },
     "goes19-glm": {
-      "input": { "mode": "local", "dir": "/app/data/goes19-glm" },
+      "input": { "mode": "local" },
       "accum_minutes": 10,
       "produce_every_minutes": 10,
       "safety_lag_seconds": 30,
@@ -320,7 +320,7 @@ input, product toggles, retention, and tuning live together.
       "retention_days": 1
     },
     "radar-sinarame": {
-      "input": { "mode": "local", "dir": "/app/data/radar-sinarame" },
+      "input": { "mode": "local" },
       "stations": "all",
       "products": {
         "dbzh": true, "dbzh-450km": true, "zdr": true,
@@ -332,7 +332,7 @@ input, product toggles, retention, and tuning live together.
       "retention_days": 1
     },
     "wrf-arg4k": {
-      "input": { "mode": "local", "dir": "/app/data/wrf-arg4k" },
+      "input": { "mode": "local" },
       "products": { "colmax": true, "granizo": true },
       "target_runs": 3,
       "light_queue": "all",
@@ -364,7 +364,9 @@ input, product toggles, retention, and tuning live together.
   source supports `mode: "local"` (a folder) and `mode: "s3"` (a bucket with the
   same layout); `ecmwf-ifs` and `gfs` additionally accept the upstream API they
   default to (`"external-provider-opendata"` and `"external-provider-nomads"` respectively).
-  - `dir` — the root folder, for `local`.
+  - In `local` mode, Compose mounts `<PREFIX>_INPUT_DIR` at the canonical
+    `/app/data/<source-name>` path. Only local sources have a mount. Changing a
+    source to or from `local` requires changing its mount with the settings.
   - `s3_bucket` — a bare bucket name, or a whole location as `s3://bucket/prefix`
     (which fills the prefix; setting `s3_prefix` as well is then an error).
   - `s3_endpoint` — either `host:port` (with `s3_secure` picking http/https) or a
@@ -387,7 +389,7 @@ input, product toggles, retention, and tuning live together.
   The folder and bucket layouts are identical per source, so one can be synced
   into the other unchanged:
 
-  | Source | Layout below the root (`dir` or `s3_prefix`) |
+  | Source | Layout below the local root or `s3_prefix` |
   |---|---|
   | `goes19-abi` | `ABI-L1b-RadF/YYYY/JJJ/HH/OR_ABI-...nc` |
   | `radar-sinarame` | `*.H5`, or `<subdir>/*.H5` |
