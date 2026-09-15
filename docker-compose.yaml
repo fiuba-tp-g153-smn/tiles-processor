@@ -4,27 +4,22 @@
 # To regenerate with different number of workers:
 #   ./scripts/generate-compose.sh 2 docker-compose.yaml
 
-# Input locations. <PREFIX>_INPUT_DIR is the path ON THE HOST; compose mounts it read-only onto
-# /app/data/<source-name>, which is where the app already looks, so the value never enters the
-# container and settings.json needs no `dir`. Sources may live on different filesystems.
+# Input locations, one per source in `local` mode. Sources are LITERAL absolute host paths, not
+# ${VARS}: Coolify decides bind-vs-named-volume before substituting, so a variable source becomes an
+# empty named volume mounted over the path, hiding the real files while the producer ticks normally.
 #
-# Every source has a line, whatever mode it is in, so switching one to "local" in settings.json is
-# the only edit. A source reading S3 or a provider ignores its mount; nothing writes to these paths
-# (worker scratch is /app/data/tmp, on the read-write volume above).
+# The paths below point at where data-simulator writes inside the tiles_data volume. The folder
+# names there (glm_h5, radar_h5, wrf_nc) differ from the source names on purpose: the mount maps one
+# to the other, so neither side has to be renamed. To move a source onto an NFS export or another
+# disk, change the left-hand side here.
 #
-# Targets are literal, never ${DATA_DIR}/<source>: Coolify's compose parser rejects any volume
-# target containing '${' and aborts the deployment.
-#
-# No defaults on purpose: .env is the single place a path is decided, and every key needs a value
-# or compose refuses to start.
+# Read-only: the pipeline copies out of these and never writes back. Worker scratch is
+# /app/data/tmp, on the read-write volume above.
 x-input-volumes: &input-volumes
   - tiles_data:/app/data
-  - ${GOES19_ABI_INPUT_DIR}:/app/data/goes19-abi:ro
-  - ${GOES19_GLM_INPUT_DIR}:/app/data/goes19-glm:ro
-  - ${RADAR_SINARAME_INPUT_DIR}:/app/data/radar-sinarame:ro
-  - ${WRF_ARG4K_INPUT_DIR}:/app/data/wrf-arg4k:ro
-  - ${ECMWF_IFS_INPUT_DIR}:/app/data/ecmwf-ifs:ro
-  - ${GFS_INPUT_DIR}:/app/data/gfs:ro
+  - /var/lib/docker/volumes/tkgs0oo8wg0ss4c400g4gs84_tiles-data/_data/glm_h5:/app/data/goes19-glm:ro
+  - /var/lib/docker/volumes/tkgs0oo8wg0ss4c400g4gs84_tiles-data/_data/radar_h5:/app/data/radar-sinarame:ro
+  - /var/lib/docker/volumes/tkgs0oo8wg0ss4c400g4gs84_tiles-data/_data/wrf_nc:/app/data/wrf-arg4k:ro
 
 # metrics-api serves the progress database only; it reads no source data.
 x-service-volumes: &service-volumes

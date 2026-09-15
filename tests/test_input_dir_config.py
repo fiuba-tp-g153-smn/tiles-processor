@@ -21,8 +21,17 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 from config import Config  # noqa: E402
 
 REPO_ROOT = Path(__file__).parent.parent
+# Every compose file, for rules that hold everywhere.
 COMPOSE_FILES = (
     "docker-compose.yaml",
+    "docker-compose-dev.yaml",
+    "docker-compose-beta-1.yaml",
+)
+# Files that mount each source separately. Prod does not: on Coolify a volume
+# source is classified before variables are substituted, so `${VAR}:...` becomes
+# an empty named volume mounted over the path. Prod reads /app/data/<source>
+# straight out of the tiles_data volume.
+MOUNTING_COMPOSE_FILES = (
     "docker-compose-dev.yaml",
     "docker-compose-beta-1.yaml",
 )
@@ -167,7 +176,7 @@ def test_trailing_slash_is_normalized(tmp_path, env_vars):
     assert config.RADAR_INPUT.input_dir == "/mnt/nfs/radar"
 
 
-@pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+@pytest.mark.parametrize("compose_file", MOUNTING_COMPOSE_FILES)
 def test_every_input_service_shares_the_input_volumes_anchor(compose_file):
     """The anchor is what makes "add one line per filesystem" true.
 
@@ -214,7 +223,7 @@ def _env_prefix(source_name: str) -> str:
     return source_name.upper().replace("-", "_")
 
 
-@pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+@pytest.mark.parametrize("compose_file", MOUNTING_COMPOSE_FILES)
 def test_every_source_mounts_onto_its_default_container_path(compose_file):
     """One line per source, whatever mode it is in.
 
@@ -236,6 +245,51 @@ def test_every_source_mounts_onto_its_default_container_path(compose_file):
         not in text
     ]
     assert not missing, f"{compose_file} is missing these mounts: {missing}"
+
+
+def test_prod_mount_sources_are_literal_paths():
+    """Coolify turns a `${VAR}` volume source into an empty named volume.
+
+    It classifies a source as bind-or-volume before substituting, so anything not
+    starting with a literal / becomes a volume name, slugified from the variable.
+    Mounted over /app/data/<source>, it hides the real files and the source
+    reports empty while the producer keeps ticking normally.
+
+    Dev and beta may use variables; plain Docker Compose substitutes correctly.
+    """
+    text = (REPO_ROOT / "docker-compose.yaml").read_text()
+    block = re.search(r"x-input-volumes: &input-volumes\n((?:  - .*\n)+)", text)
+    assert block, "docker-compose.yaml has no input-volumes anchor"
+    bad = [
+        line.strip()
+        for line in block.group(1).splitlines()
+        if line.strip().startswith("- ${")
+    ]
+    assert not bad, (
+        f"docker-compose.yaml mounts sources by variable, which Coolify turns "
+        f"into empty named volumes: {bad}"
+    )
+
+
+def test_prod_mounts_land_on_the_path_each_source_reads():
+    """The target must be /app/data/<source-name>, whatever the host folder is called.
+
+    The host side may use any name (the VPS writes glm_h5, radar_h5, wrf_nc); the
+    mount is what maps it onto the name the app looks for. If a target drifts, the
+    files are present on disk and invisible to the source.
+    """
+    text = (REPO_ROOT / "docker-compose.yaml").read_text()
+    sources = json.loads((REPO_ROOT / "settings.json").read_text())["sources"]
+    block = re.search(r"x-input-volumes: &input-volumes\n((?:  - .*\n)+)", text)
+    targets = [
+        line.strip().removesuffix(":ro").rpartition(":")[2]
+        for line in block.group(1).splitlines()
+        if line.strip().startswith("- /")
+    ]
+    unknown = [t for t in targets if t.removeprefix("/app/data/") not in sources]
+    assert (
+        not unknown
+    ), f"docker-compose.yaml mounts onto paths no source reads: {unknown}"
 
 
 @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
@@ -261,7 +315,7 @@ def test_no_volume_target_contains_a_variable(compose_file):
     ), f"{compose_file} has volume targets Coolify will reject: {offenders}"
 
 
-@pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+@pytest.mark.parametrize("compose_file", MOUNTING_COMPOSE_FILES)
 def test_input_mounts_carry_no_default(compose_file):
     """.env is the single place a path is decided.
 
@@ -277,7 +331,7 @@ def test_input_mounts_carry_no_default(compose_file):
     )
 
 
-@pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+@pytest.mark.parametrize("compose_file", MOUNTING_COMPOSE_FILES)
 def test_input_mounts_are_enabled(compose_file):
     """The mounts ship live, so .env is the only switch."""
     text = (REPO_ROOT / compose_file).read_text()
