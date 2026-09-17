@@ -35,6 +35,57 @@ logger = logging.getLogger(__name__)
 GRIB_SUFFIX = ".grib"
 TIMESTAMP_FORMAT = "%Y%m%dT%H%MZ"
 
+# The statuses multiurl.robust treats as retriable (multiurl.http.RETRIABLE).
+_RETRIABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+
+# Per-request ceiling on an opendata mirror. multiurl's retry loop is disabled
+# below, so this plus the mirror walk is the whole discovery budget.
+_REQUEST_TIMEOUT_S = 30
+
+
+def _fail_fast(client: Client, source: str) -> Client:
+    """Make ``client`` abandon a failing mirror instead of retrying it forever.
+
+    ``ecmwf.opendata`` routes every request through ``multiurl.robust``, which
+    retries connection errors and 408/429/5xx **500 times, 120 s apart** — over
+    16 h inside a single call — and exposes no knob to shorten it. In September
+    2026 a rate-limit followed by a DNS blip held one discovery tick for 50
+    minutes; the producer's RabbitMQ heartbeats died with it and the pipeline
+    stopped publishing.
+
+    ``robust`` only swallows ``requests`` exceptions and retriable statuses, so
+    raising :class:`TransientDownloadError` escapes its loop on the first
+    failure and the caller falls straight through to the next mirror.
+    """
+    original = client.session.request
+
+    def request(method, url, *args, **kwargs):
+        kwargs.setdefault("timeout", _REQUEST_TIMEOUT_S)
+        try:
+            response = original(method, url, *args, **kwargs)
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.ReadTimeout,
+            requests.exceptions.ChunkedEncodingError,
+        ) as exc:
+            raise TransientDownloadError(
+                f"Mirror '{source}' unreachable: {exc}"
+            ) from exc
+
+        if response.status_code in _RETRIABLE_STATUS:
+            raise TransientDownloadError(
+                f"HTTP {response.status_code} from mirror '{source}'"
+            )
+        return response
+
+    client.session.request = request
+    return client
+
+
+def opendata_client(source: str) -> Client:
+    """An opendata client for ``source`` that fails fast (see :func:`_fail_fast`)."""
+    return _fail_fast(Client(source=source), source)
+
 
 def format_run_timestamp(forecast_time: datetime) -> str:
     """Format a run's base time as YYYYMMDDTHHmmZ (e.g. 20260217T0000Z)."""
@@ -151,25 +202,13 @@ class OpenDataEcmwfGribRepository(EcmwfGribRepository):
         """Retrieve the GRIB from a single mirror into ``target``.
 
         Raises:
-            TransientDownloadError: mirror returned 503 (intercepted before
-                multiurl's retry loop).
+            TransientDownloadError: mirror was unreachable or answered with a
+                retriable status (raised before multiurl's retry loop).
             ForecastNotAvailableError: mirror returned 404 (run not published).
         """
         when = forecast_time.strftime("%Y-%m-%d %H:%M UTC")
 
-        # Intercept 503 BEFORE multiurl's internal retry loop. Raising a
-        # non-HTTPError exception bypasses multiurl's catch and lets us move to
-        # the next mirror immediately.
-        def _reject_slow_down(
-            response, *args, **kwargs
-        ):  # pylint: disable=unused-argument
-            if response.status_code == 503:
-                raise TransientDownloadError(
-                    f"HTTP 503 from mirror '{source}' for {when}"
-                )
-
-        client = Client(source=source)
-        client.session.hooks["response"].append(_reject_slow_down)
+        client = opendata_client(source)
         target.unlink(missing_ok=True)
 
         try:
@@ -198,7 +237,7 @@ class OpenDataEcmwfGribRepository(EcmwfGribRepository):
         """
         for source in self._sources:
             try:
-                latest = Client(source=source).latest(
+                latest = opendata_client(source).latest(
                     type="fc",
                     param=[self._product_config.parameter],
                     step=self._steps[-1],

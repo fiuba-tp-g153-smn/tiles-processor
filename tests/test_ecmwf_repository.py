@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import pytest
+import requests
 
 from data_sources.ecmwf_repository import (
     LocalEcmwfGribRepository,
@@ -259,3 +260,83 @@ async def test_fetch_without_mirrors_is_transient_not_a_silent_success(tmp_path)
     """An empty mirror list is a misconfiguration, not "nothing to do"."""
     with pytest.raises(TransientDownloadError, match="No ECMWF mirrors"):
         await _opendata(()).fetch(RUN, tmp_path / "run.grib")
+
+
+# --- fail-fast opendata client -------------------------------------------------
+#
+# multiurl.robust retries connection errors and 408/429/5xx 500 times, 120 s
+# apart, inside the call. These tests pin the interception that keeps one flaky
+# mirror from owning the whole discovery tick.
+
+
+class _FakeSession:
+    """Stands in for requests.Session; `outcome` is raised or returned."""
+
+    def __init__(self, outcome):
+        self._outcome = outcome
+        self.calls = []
+
+    def request(self, method, url, *args, **kwargs):
+        self.calls.append((method, url, kwargs))
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        return self._outcome
+
+
+def _patched_client(outcome):
+    from data_sources.ecmwf_repository import opendata_client
+
+    fake = MagicMock()
+    fake.session = _FakeSession(outcome)
+    with patch("data_sources.ecmwf_repository.Client", return_value=fake):
+        return opendata_client("ecmwf"), fake.session
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        requests.exceptions.ConnectionError("Name or service not known"),
+        requests.exceptions.ReadTimeout("read timed out"),
+        requests.exceptions.ChunkedEncodingError("truncated"),
+    ],
+)
+def test_connection_errors_multiurl_would_retry_become_transient(exc):
+    """A DNS blip must escape multiurl's loop, not restart it 500 times."""
+    client, _ = _patched_client(exc)
+
+    with pytest.raises(TransientDownloadError):
+        client.session.request("HEAD", "https://data.ecmwf.int/x.grib2")
+
+
+@pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
+def test_retriable_statuses_become_transient(status):
+    client, _ = _patched_client(MagicMock(status_code=status))
+
+    with pytest.raises(TransientDownloadError):
+        client.session.request("HEAD", "https://data.ecmwf.int/x.grib2")
+
+
+@pytest.mark.parametrize("status", [200, 404])
+def test_non_retriable_responses_pass_through(status):
+    """404 must still reach the caller as a 404 — it means "run not published"."""
+    response = MagicMock(status_code=status)
+    client, _ = _patched_client(response)
+
+    assert client.session.request("HEAD", "https://data.ecmwf.int/x.grib2") is response
+
+
+def test_requests_get_a_default_timeout():
+    """Client.latest() HEADs without a timeout; a hung mirror would block forever."""
+    client, session = _patched_client(MagicMock(status_code=200))
+
+    client.session.request("HEAD", "https://data.ecmwf.int/x.grib2")
+
+    assert session.calls[0][2]["timeout"] > 0
+
+
+def test_an_explicit_timeout_is_respected():
+    client, session = _patched_client(MagicMock(status_code=200))
+
+    client.session.request("GET", "https://data.ecmwf.int/x.grib2", timeout=5)
+
+    assert session.calls[0][2]["timeout"] == 5
