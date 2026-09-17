@@ -1,5 +1,6 @@
 """Tests for ImageDiscoveryProducer duplicate prevention."""
 
+import asyncio
 import logging
 import sys
 import os
@@ -44,6 +45,7 @@ def mock_config():
     config.ENABLE_BAND_9 = True
     config.ENABLE_BAND_2 = True
     config.ENABLE_RADAR = False
+    config.SOURCE_DISCOVERY_TIMEOUT_S = 240
     config.get_bounds.return_value = {
         "minx": -90.0,
         "miny": -60.0,
@@ -370,5 +372,64 @@ class TestSourceFailureVisibility:
         assert count == 0
         assert any(
             "aborted after 1/3 work units" in record.getMessage()
+            for record in caplog.records
+        )
+
+
+class _HangingDataSource(FakeDataSource):
+    """A source whose upstream never answers (a stuck third-party retry loop)."""
+
+    async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
+        await asyncio.sleep(3600)
+        return []
+
+
+class TestSourceDiscoveryTimeout:
+    """A source stuck in a third-party retry loop must not own the whole tick.
+
+    Sept 2026: an ECMWF rate-limit plus a DNS blip held one tick for 50 minutes;
+    the producer's RabbitMQ heartbeats died with it and publishing stopped.
+    """
+
+    def _make_producer(self, mock_config, progress_tracker, mq_client, registry):
+        producer = ImageDiscoveryProducer.__new__(ImageDiscoveryProducer)
+        producer._config = mock_config
+        producer._mq_client = mq_client
+        producer._progress_tracker = progress_tracker
+        producer._data_source_registry = registry
+        producer._router = _make_router()
+        producer._s3_client = AsyncMock()
+        producer._s3_client.list_prefixes = AsyncMock(return_value=[])
+        return producer
+
+    @pytest.mark.asyncio
+    async def test_hanging_source_is_abandoned_and_healthy_sources_still_publish(
+        self, mock_config, progress_tracker, caplog
+    ):
+        mock_config.SOURCE_DISCOVERY_TIMEOUT_S = 0.05
+
+        registry = DataSourceRegistry()
+        registry.register(_HangingDataSource(BAND_CONFIGS["goes19_abi_c13"], []))
+        healthy = BAND_CONFIGS["goes19_abi_c09"]
+        registry.register(FakeDataSource(healthy, _make_images(healthy, 2)))
+
+        mq_client = MagicMock()
+        producer = self._make_producer(
+            mock_config, progress_tracker, mq_client, registry
+        )
+
+        with caplog.at_level(logging.WARNING):
+            count = await producer.discover_and_publish()
+
+        assert count == 2, "the healthy source publishes despite the stuck one"
+        assert mq_client.publish.call_count == 2
+        # Abandoned, and named — a timed-out source must not look merely quiet.
+        assert any(
+            "sources FAILED" in record.getMessage()
+            and "goes19_abi_c13" in record.getMessage()
+            for record in caplog.records
+        )
+        assert any(
+            "exceeded" in record.getMessage() and "abandoned" in record.getMessage()
             for record in caplog.records
         )

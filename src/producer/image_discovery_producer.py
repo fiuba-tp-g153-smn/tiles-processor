@@ -1,6 +1,6 @@
 """Producer that discovers new images and publishes work units."""
 
-from asyncio import Event, get_running_loop, run, to_thread
+from asyncio import Event, get_running_loop, run, to_thread, wait_for
 from logging import getLogger
 from signal import SIGINT, SIGTERM
 from datetime import datetime, UTC, timedelta
@@ -102,7 +102,9 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
 
             attempted += 1
             try:
-                count = await self._discover_source(current_time, data_source, bounds)
+                count = await self._discover_with_timeout(
+                    current_time, data_source, bounds
+                )
                 total_published += count
                 logger.info(
                     "Published %d work units for %s",
@@ -133,6 +135,37 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
 
         logger.info("Total work units published: %d", total_published)
         return total_published
+
+    async def _discover_with_timeout(
+        self,
+        current_time: datetime,
+        data_source: DataSource,
+        bounds: dict,
+    ) -> int:
+        """Discover one source under a wall-clock cap.
+
+        Sources talk to third-party endpoints whose client libraries carry their
+        own retry loops; one that refuses to give up blocks the tick for every
+        other source and, because a BlockingConnection only services heartbeats
+        while we are inside pika, lets the broker time our connection out. In
+        September 2026 an ECMWF rate-limit plus a DNS blip held a tick for 50
+        minutes and stopped the pipeline for hours.
+
+        Caveat: this frees the *tick*, not the thread. Work already handed to
+        asyncio.to_thread keeps running to completion — Python cannot cancel a
+        thread — so each source is still responsible for bounding its own I/O.
+        """
+        try:
+            return await wait_for(
+                self._discover_source(current_time, data_source, bounds),
+                timeout=self._config.SOURCE_DISCOVERY_TIMEOUT_S,
+            )
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"Discovery for {data_source.source_id} exceeded "
+                f"{self._config.SOURCE_DISCOVERY_TIMEOUT_S}s and was abandoned "
+                f"for this tick"
+            ) from exc
 
     def _work_queue_empty(self) -> bool:
         """True only if all work queues are confirmed drained.
