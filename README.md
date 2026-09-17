@@ -301,7 +301,7 @@ input, product toggles, retention, and tuning live together.
   "timezone": "America/Argentina/Buenos_Aires",
   "bounds": { "minx": -110.0, "miny": -60.0, "maxx": -30.0, "maxy": -15.0 },
   "metrics": { "enabled": true, "max_rows": 1000000 },
-  "scheduler": { "discovery_cron": "*/5 * * * *" },
+  "scheduler": { "discovery_cron": "*/5 * * * *", "source_discovery_timeout_s": 240 },
   "sources": {
     "goes19-abi": {
       "input": { "mode": "s3", "s3_bucket": "noaa-goes19" },
@@ -360,6 +360,10 @@ input, product toggles, retention, and tuning live together.
 - **`metrics`**: `enabled` toggles the /status backend; `max_rows` caps `metrics.db`.
 - **`scheduler.discovery_cron`**: 5-field cron for the whole-pipeline discovery
   tick (default `"*/5 * * * *"` — every 5 minutes). A non-5-field value fails fast.
+- **`scheduler.source_discovery_timeout_s`**: wall-clock cap on one source's
+  discovery (default `240`). A source that exceeds it is abandoned for the tick
+  and reported in the per-tick FAILED line, so a third-party client stuck in its
+  own retry loop cannot hold up the other sources.
 - **`sources.<name>.input`**: where the source reads its raw files from. Every
   source supports `mode: "local"` (a folder) and `mode: "s3"` (a bucket with the
   same layout); `ecmwf-ifs` and `gfs` additionally accept the upstream API they
