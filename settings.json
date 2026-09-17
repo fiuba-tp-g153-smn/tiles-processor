@@ -11,7 +11,8 @@
     "max_rows": 1000000
   },
   "scheduler": {
-    "discovery_cron": "*/5 * * * *"
+    "discovery_cron": "*/5 * * * *",
+    "source_discovery_timeout_s": 240
   },
   "sources": {
     "goes19-abi": {

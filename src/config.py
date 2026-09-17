@@ -178,6 +178,14 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.DISCOVERY_CRON: str = self._validate_cron(
             _scheduler.get("discovery_cron", "*/5 * * * *"), "scheduler.discovery_cron"
         )
+        # Wall-clock cap on one source's discovery. A third-party client stuck in
+        # its own retry loop otherwise holds the whole tick (and the producer's
+        # RabbitMQ heartbeats) hostage. Comfortably above a healthy source's
+        # few seconds, comfortably below the default 5-minute tick.
+        self.SOURCE_DISCOVERY_TIMEOUT_S: int = int(
+            os.getenv("SOURCE_DISCOVERY_TIMEOUT_S")
+            or _scheduler.get("source_discovery_timeout_s", 240)
+        )
 
         # Metrics + metrics API (the /status backend service)
         _metrics = settings.get("metrics", {})
@@ -782,6 +790,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("LOG_LEVEL: %s", self.LOG_LEVEL)
         logger.info("TIMEZONE: %s", self.TIMEZONE)
         logger.info("DISCOVERY_CRON: %s", self.DISCOVERY_CRON)
+        logger.info("SOURCE_DISCOVERY_TIMEOUT_S: %s", self.SOURCE_DISCOVERY_TIMEOUT_S)
         logger.info("ENABLE_BAND_13: %s", self.ENABLE_BAND_13)
         logger.info("ENABLE_BAND_9: %s", self.ENABLE_BAND_9)
         logger.info("ENABLE_BAND_2: %s", self.ENABLE_BAND_2)
