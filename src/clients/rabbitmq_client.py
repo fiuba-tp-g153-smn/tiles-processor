@@ -25,7 +25,8 @@ class RabbitMQClient(MessageQueueClient):
     - Sending failed work units to the dead letter queue
 
     Connection Management:
-        - Automatic reconnection on connection loss
+        - Publish paths reconnect on a dropped connection (see _ensure_channel);
+          ack/nack deliberately do not, because delivery tags are per-channel
         - Separate connections for publishing and consuming (recommended by RabbitMQ)
 
     Queue Configuration:
@@ -75,6 +76,10 @@ class RabbitMQClient(MessageQueueClient):
         # the last served queue, so successive polls alternate fairly and neither
         # light queue head-of-line blocks the other.
         self._rr = 0
+        # Delivery tags handed out and not yet acked/nacked. Tags are scoped to
+        # the channel that issued them, so this gates the reconnect in
+        # _ensure_channel — see the note there.
+        self._outstanding_deliveries = 0
 
     def _get_connection_params(self) -> pika.ConnectionParameters:
         """Build connection parameters."""
@@ -190,6 +195,63 @@ class RabbitMQClient(MessageQueueClient):
             self._connection.close()
             logger.info("RabbitMQ connection closed")
 
+    def _ensure_channel(self) -> BlockingChannel:
+        """Return a live channel, reconnecting once if the old one died.
+
+        A BlockingConnection only services heartbeats while the caller is inside
+        pika, so any long stall on the calling thread (a slow upstream, a
+        blocking download) lets the broker time the connection out underneath
+        us. Without this the next publish raised forever and the producer went
+        quiet until someone restarted it.
+
+        Raises:
+            RuntimeError: the reconnect attempt also failed.
+        """
+        if (
+            self._connection is not None
+            and self._connection.is_open
+            and self._channel is not None
+            and not self._channel.is_closed
+        ):
+            return self._channel
+
+        if self._outstanding_deliveries:
+            # A consumer is mid-message. Its delivery tag belongs to the dead
+            # channel, and the broker has already requeued the message the tag
+            # refers to; reconnecting here would let the caller publish a retry
+            # and then ack a tag that now means nothing (or, once the new
+            # channel has handed out tags of its own, a different message).
+            # Raising leaves redelivery to the broker, which is the at-least-once
+            # behaviour the worker already expects.
+            raise RuntimeError(
+                "Not connected to RabbitMQ (declining to reconnect with "
+                f"{self._outstanding_deliveries} delivery/deliveries outstanding)"
+            )
+
+        logger.warning("RabbitMQ channel is closed; reconnecting")
+        self._discard_connection()
+        # A short budget on purpose: every source in a discovery tick hits this
+        # while the broker is down, so a long per-call retry would spend the
+        # whole tick waiting instead of publishing the sources that do work.
+        self.connect(max_retries=2, retry_delay=1.0)
+
+        if self._channel is None or self._channel.is_closed:
+            raise RuntimeError("Not connected to RabbitMQ")
+        return self._channel
+
+    def _discard_connection(self) -> None:
+        """Drop the dead connection so connect() starts from a clean slate."""
+        if self._connection is not None:
+            try:
+                if self._connection.is_open:
+                    self._connection.close()
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.debug("Ignoring error closing dead connection", exc_info=True)
+        self._connection = None
+        self._channel = None
+        # Tags died with the channel; nothing is outstanding on the new one.
+        self._outstanding_deliveries = 0
+
     def publish(self, work_unit: WorkUnit, queue_name: Optional[str] = None) -> None:
         """
         Publish a work unit to a work queue.
@@ -204,12 +266,11 @@ class RabbitMQClient(MessageQueueClient):
                 worker requeue/retry paths return units to the queue they consume.
                 The producer passes an explicit queue to route light vs heavy work.
         """
-        if not self._channel or self._channel.is_closed:
-            raise RuntimeError("Not connected to RabbitMQ")
+        channel = self._ensure_channel()
 
         message = work_unit.to_json()
 
-        self._channel.basic_publish(
+        channel.basic_publish(
             exchange="",
             routing_key=queue_name or self._queue_name,
             body=message.encode("utf-8"),
@@ -229,8 +290,7 @@ class RabbitMQClient(MessageQueueClient):
             work_unit: The failed work unit
             error: Error message describing the failure
         """
-        if not self._channel or self._channel.is_closed:
-            raise RuntimeError("Not connected to RabbitMQ")
+        channel = self._ensure_channel()
 
         # Add error info to the work unit data
         data = work_unit.to_dict()
@@ -239,7 +299,7 @@ class RabbitMQClient(MessageQueueClient):
 
         message = json.dumps(data)
 
-        self._channel.basic_publish(
+        channel.basic_publish(
             exchange=self._dlx_name,
             routing_key=self._dlq_name,
             body=message.encode("utf-8"),
@@ -352,6 +412,7 @@ class RabbitMQClient(MessageQueueClient):
             self._channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return None
         logger.info("Received work unit from %s: %s", queue_name, work_unit)
+        self._outstanding_deliveries += 1
         return work_unit, method.delivery_tag, queue_name
 
     def service_events(self, time_limit: float = 0.0) -> None:
@@ -367,22 +428,27 @@ class RabbitMQClient(MessageQueueClient):
 
     def ack(self, delivery_tag: int) -> None:
         """Manually acknowledge a message."""
+        self._settle_delivery()
         if self._channel and not self._channel.is_closed:
             self._channel.basic_ack(delivery_tag=delivery_tag)
 
     def nack(self, delivery_tag: int, requeue: bool = True) -> None:
         """Manually negative-acknowledge a message."""
+        self._settle_delivery()
         if self._channel and not self._channel.is_closed:
             self._channel.basic_nack(delivery_tag=delivery_tag, requeue=requeue)
 
+    def _settle_delivery(self) -> None:
+        """Retire one outstanding delivery tag (floored, so it never goes negative)."""
+        self._outstanding_deliveries = max(0, self._outstanding_deliveries - 1)
+
     def get_queue_size(self, queue_name: Optional[str] = None) -> int:
         """Get the number of messages in a queue."""
-        if not self._channel or self._channel.is_closed:
-            raise RuntimeError("Not connected to RabbitMQ")
+        channel = self._ensure_channel()
 
         target_queue = queue_name if queue_name else self._queue_name
 
-        result = self._channel.queue_declare(queue=target_queue, passive=True)
+        result = channel.queue_declare(queue=target_queue, passive=True)
         return result.method.message_count
 
     @property
