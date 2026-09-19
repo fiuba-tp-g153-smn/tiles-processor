@@ -14,3 +14,9 @@ d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:41
 d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:43
 d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:45
 d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:47
+
+# Same false positive for the INTA pair, added later. Fingerprints carry the
+# commit SHA, so a line introduced in a new commit needs its own entry even
+# though the pattern is identical; rewriting that commit (amend/rebase) changes
+# the SHA and this line has to be updated with it.
+5c3729a2444d30f67f0bff0f60afc855c7c1a200:.env.example:generic-api-key:45
