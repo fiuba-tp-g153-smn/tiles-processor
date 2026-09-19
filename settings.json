@@ -49,6 +49,22 @@
       "light_queue": "all",
       "retention_days": 1
     },
+    "radar-inta": {
+      "input": {
+        "mode": "local"
+      },
+      "products": {
+        "dbzh": true,
+        "zdr": true,
+        "rhohv": true,
+        "kdp": true
+      },
+      "stations": "all",
+      "target_images": 12,
+      "zoom_levels": "4-9",
+      "light_queue": "all",
+      "retention_days": 1
+    },
     "wrf-arg4k": {
       "input": { "mode": "local" },
       "products": {

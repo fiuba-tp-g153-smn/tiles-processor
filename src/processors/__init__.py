@@ -8,6 +8,7 @@ from processors.band13_processor import Band13Processor
 from processors.band9_processor import Band9Processor
 from processors.glm_fed_processor import GlmFedProcessor
 from processors.radar_processor import RadarProcessor
+from processors.inta_radar_processor import IntaRadarProcessor
 from processors.ecmwf_tp_processor import EcmwfTotalPrecipitationProcessor
 from processors.ecmwf_mslp_processor import EcmwfMslpProcessor
 from processors.gfs_mslp_processor import GfsMslpProcessor
@@ -23,6 +24,7 @@ __all__ = [
     "Band9Processor",
     "GlmFedProcessor",
     "RadarProcessor",
+    "IntaRadarProcessor",
     "EcmwfTotalPrecipitationProcessor",
     "EcmwfMslpProcessor",
     "GfsMslpProcessor",

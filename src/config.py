@@ -21,7 +21,11 @@ from models.input_source_config import (
     split_s3_bucket_uri,
 )
 from models.lifecycle_config import resolve_retention_map
-from models.radar_config import RADAR_PRODUCT_CONFIGS, RadarStationFilter
+from models.radar_config import (
+    INTA_PRODUCT_CONFIGS,
+    RADAR_PRODUCT_CONFIGS,
+    RadarStationFilter,
+)
 from models.wrf_config import WRF_PRODUCT_CONFIGS
 from models.zoom_config import ZoomLevels, parse_zoom_levels
 
@@ -207,6 +211,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         _goes19 = _sources.get("goes19-abi", {})
         _glm = _sources.get("goes19-glm", {})
         _radar = _sources.get("radar-sinarame", {})
+        _inta = _sources.get("radar-inta", {})
         _wrf = _sources.get("wrf-arg4k", {})
         _ecmwf = _sources.get("ecmwf-ifs", {})
         _gfs = _sources.get("gfs", {})
@@ -267,6 +272,24 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         self.RADAR_ZOOM: ZoomLevels = parse_zoom_levels(
             _radar.get("zoom_levels"), "sources.radar.zoom_levels", default="4-9"
+        )
+
+        # --- Radar INTA (Anguil/Paraná/Pergamino, Rainbow5 .vol) ---
+        # Its own source, published under tiles/radar/inta. The product ids are
+        # the SINARAME ones the Rainbow data types map onto, so the registry is
+        # read off INTA_PRODUCT_CONFIGS for the same reason as above.
+        _inta_products = _inta.get("products", {})
+        self.ENABLED_INTA_PRODUCTS: dict[str, bool] = {
+            pid: _inta_products.get(pid, False) for pid in INTA_PRODUCT_CONFIGS
+        }
+        self.INTA_STATION_FILTER: RadarStationFilter = (
+            RadarStationFilter.from_settings(_inta.get("stations"))
+        )
+        self.INTA_TARGET_IMAGES: int | None = self._opt_int(
+            _inta.get("target_images"), "sources.radar-inta.target_images"
+        )
+        self.INTA_ZOOM: ZoomLevels = parse_zoom_levels(
+            _inta.get("zoom_levels"), "sources.radar-inta.zoom_levels", default="4-9"
         )
 
         # --- WRF (WRF-ARG4K FIELD2D) ---
@@ -352,6 +375,12 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             env_prefix="RADAR_SINARAME",
             default_dir=str(Path(self.DATA_DIR) / "radar-sinarame"),
         )
+        self.INTA_INPUT: InputSourceConfig = self._parse_input_source(
+            _inta,
+            "radar-inta",
+            env_prefix="RADAR_INTA",
+            default_dir=str(Path(self.DATA_DIR) / "radar-inta"),
+        )
         self.GOES19_GLM_INPUT: InputSourceConfig = self._parse_input_source(
             _glm,
             "goes19-glm",
@@ -389,6 +418,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         # Legacy *_INPUT_DIR aliases retained for callers that read them directly.
         self.RADAR_INPUT_DIR: str = self.RADAR_INPUT.input_dir
+        self.INTA_INPUT_DIR: str = self.INTA_INPUT.input_dir
         self.GOES19_GLM_INPUT_DIR: str = self.GOES19_GLM_INPUT.input_dir
         self.WRF_INPUT_DIR: str = self.WRF_INPUT.input_dir
 
@@ -817,6 +847,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("GFS_MAX_STEPS_PER_TICK: %s", self.GFS_MAX_STEPS_PER_TICK)
         for pid, enabled in self.ENABLED_RADAR_PRODUCTS.items():
             logger.info("ENABLE_RADAR_%s: %s", pid, enabled)
+        for pid, enabled in self.ENABLED_INTA_PRODUCTS.items():
+            logger.info("ENABLE_INTA_%s: %s", pid, enabled)
+        logger.info("INTA_INPUT_DIR: %s", self.INTA_INPUT_DIR)
         _radar_filter = self.RADAR_STATION_FILTER
         logger.info(
             "RADAR_STATION_FILTER: mode=%s stations=%s",

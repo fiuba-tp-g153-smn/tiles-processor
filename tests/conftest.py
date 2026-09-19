@@ -49,3 +49,37 @@ def migrated_dbs(tmp_path):
     progress = tmp_path / "progress_tracker.db"
     run_migrations(metrics, progress)
     return SimpleNamespace(metrics=metrics, progress=progress)
+
+
+@pytest.fixture
+def rainbow_header():
+    """Factory for a synthetic Rainbow5 (.vol) preamble.
+
+    ``<radarinfo>`` is pushed past the 16 KB mark on purpose: in the real INTA
+    files it sits ~18.7 KB in, behind the <pargroup> scan-parameter block, so a
+    fixture that put it up front would not exercise the read window at all.
+    """
+
+    def build(
+        radar_id: str = "PAR",
+        name: str = "INTA_Parana",
+        lat: str = "-31.848438",
+        lon: str = "-60.537289",
+        alt: str = "100.000000",
+        stop_range: str = "240",
+        numele: str = "12",
+        scan_name: str = "VOL_240_ALL.vol",
+        padding: int = 18_000,
+    ) -> bytes:
+        prologue = f'<volume version="5.22.7"><scan name="{scan_name}"><pargroup>'
+        pargroup = "<pad>x</pad>" * (padding // 12)
+        tail = (
+            f"</pargroup><stoprange>{stop_range}</stoprange>"
+            f"<numele>{numele}</numele>"
+            f'<radarinfo alt="{alt}" lon="{lon}" lat="{lat}" id="{radar_id}" >'
+            f"<name>{name}</name><wavelen>0.0532</wavelen></radarinfo>"
+            "</scan></volume>"
+        )
+        return (prologue + pargroup + tail).encode()
+
+    return build

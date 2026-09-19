@@ -28,6 +28,12 @@ apscheduler = "^3.11.2"
 pytz = "^2025.2"
 h5py = "^3.15.1"
 arm-pyart = "^1.19.5"
+# Required by pyart.aux_io.read_rainbow_wrl (the INTA Rainbow5 .vol volumes):
+# pyart imports wradlib.io.read_rainbow lazily and raises
+# MissingOptionalDependency without it. Left open within 2.x on purpose —
+# wradlib >= 2.7 requires xarray >= 2026.x, so the resolver has to be free to
+# settle on the newest release compatible with the xarray pin below.
+wradlib = "^2.0"
 rasterio = "^1.4.3"
 matplotlib = "^3.10.0"
 requests = "^2.32.5"

@@ -5,6 +5,7 @@ from data_sources.registry import DataSourceRegistry
 from data_sources.goes19_abi import Goes19AbiDataSource
 from data_sources.goes19_glm import Goes19GlmDataSource
 from data_sources.radar import RadarDataSource
+from data_sources.inta_radar import IntaRadarDataSource
 from data_sources.ecmwf_producer_source import EcmwfProducerDataSource
 from data_sources.ecmwf_period_source import EcmwfPeriodDataSource
 from data_sources.gfs_producer_source import GfsProducerDataSource
@@ -19,6 +20,7 @@ __all__ = [
     "Goes19AbiDataSource",
     "Goes19GlmDataSource",
     "RadarDataSource",
+    "IntaRadarDataSource",
     "EcmwfProducerDataSource",
     "EcmwfPeriodDataSource",
     "GfsProducerDataSource",

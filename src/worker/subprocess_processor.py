@@ -47,6 +47,7 @@ def create_processor_registry():
         Band2Processor,
         GlmFedProcessor,
         RadarProcessor,
+        IntaRadarProcessor,
         EcmwfTotalPrecipitationProcessor,
         EcmwfMslpProcessor,
         GfsMslpProcessor,
@@ -70,6 +71,7 @@ def create_processor_registry():
 
     # Register Radar processor
     registry.register("radar_sinarame", RadarProcessor)
+    registry.register("radar_inta", IntaRadarProcessor)
 
     # Register ECMWF processors (subprocess for scientific processing)
     registry.register(ECMWF_TP_CONFIG.processor_id, EcmwfTotalPrecipitationProcessor)

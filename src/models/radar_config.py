@@ -5,7 +5,7 @@ This module provides metadata about radar products (variables) and
 filename parsing utilities. Color palettes are now in radar_palettes.py.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 
@@ -213,6 +213,57 @@ RADAR_PRODUCT_CONFIGS = {
     "zdr": ZDR_CONFIG,
     "kdp": KDP_CONFIG,
 }
+
+
+# --- INTA (Rainbow5) -------------------------------------------------------
+#
+# The INTA radars carry the same physical moments as SINARAME, so they reuse the
+# product configs above wholesale — same PyART field, same palette, same unit —
+# and only differ in where they are published. Building them with `replace`
+# keeps that inheritance literal: a palette or field fix on the SINARAME config
+# lands on both networks.
+
+# Rainbow5 data type -> product id. The "u"-prefixed types (dBuZ, uPhiDP) are
+# the uncorrected, unfiltered variants: diagnostic rather than display data, so
+# they are deliberately unmapped.
+INTA_RAINBOW_TO_PRODUCT = {
+    "dBZ": "dbzh",
+    "ZDR": "zdr",
+    "RhoHV": "rhohv",
+    "KDP": "kdp",
+}
+
+# Only the 240 km volumes are published. Anguil and Pergamino interleave 120 km
+# scans (VOL_120_ZVW / SMN_120) in the same folder, distinguishable only by the
+# file header. Publishing both under one product would make the layer's extent
+# jump between two footprints as the user scrubs through time, so the short
+# scans are filtered out — the analogue of SINARAME's subvolume filter.
+INTA_STOP_RANGE_KM = 240.0
+
+INTA_PRODUCT_CONFIGS = {
+    product_id: replace(
+        RADAR_PRODUCT_CONFIGS[product_id],
+        s3_tiles_prefix="tiles/radar/inta",
+        s3_cog_prefix="cog/radar/inta",
+    )
+    for product_id in INTA_RAINBOW_TO_PRODUCT.values()
+}
+
+
+def get_inta_product_config(rainbow_variable: str) -> RadarProductConfig:
+    """Resolve the product a Rainbow5 data type is published as.
+
+    Raises:
+        ValueError: The data type has no mapping (an unsupported or diagnostic
+            moment such as ``dBuZ``).
+    """
+    product_id = INTA_RAINBOW_TO_PRODUCT.get(rainbow_variable)
+    if product_id is None:
+        raise ValueError(
+            f"Rainbow variable '{rainbow_variable}' is not mapped to a radar "
+            f"product. Mapped: {sorted(INTA_RAINBOW_TO_PRODUCT)}"
+        )
+    return INTA_PRODUCT_CONFIGS[product_id]
 
 
 def get_radar_product_config(product_id: str) -> RadarProductConfig:

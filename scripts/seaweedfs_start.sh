@@ -29,6 +29,10 @@ set -e
 : "${S3_INTERSECTION_DATA_ALERTS_SERVICE_USER:?S3_INTERSECTION_DATA_ALERTS_SERVICE_USER is required}"
 : "${S3_INTERSECTION_DATA_ALERTS_SERVICE_PASSWORD:?S3_INTERSECTION_DATA_ALERTS_SERVICE_PASSWORD is required}"
 : "${S3_BASEMAP_BUCKET_NAME:?S3_BASEMAP_BUCKET_NAME is required}"
+# Buckets del subsistema weather-stations del data-service. Con default porque
+# tiles-processor no los escribe: solo necesita concederselos a esa identidad.
+: "${S3_WEATHER_STATIONS_BUCKET_NAME:=weather-stations-data}"
+: "${S3_API_KEYS_BUCKET_NAME:=api-keys}"
 
 mkdir -p /etc/seaweedfs
 
@@ -46,6 +50,8 @@ sed \
   -e "s|__ALERTS_SERVICE_USER__|${S3_INTERSECTION_DATA_ALERTS_SERVICE_USER}|g" \
   -e "s|__ALERTS_SERVICE_PASSWORD__|${S3_INTERSECTION_DATA_ALERTS_SERVICE_PASSWORD}|g" \
   -e "s|__BASEMAP_BUCKET__|${S3_BASEMAP_BUCKET_NAME}|g" \
+  -e "s|__WEATHER_STATIONS_BUCKET__|${S3_WEATHER_STATIONS_BUCKET_NAME}|g" \
+  -e "s|__API_KEYS_BUCKET__|${S3_API_KEYS_BUCKET_NAME}|g" \
   << 'EOF' > /etc/seaweedfs/s3.json
 {
   "identities": [
@@ -91,7 +97,15 @@ sed \
         "Read:__BASEMAP_BUCKET__",
         "Write:__BASEMAP_BUCKET__",
         "List:__BASEMAP_BUCKET__",
-        "Tagging:__BASEMAP_BUCKET__"
+        "Tagging:__BASEMAP_BUCKET__",
+        "Read:__WEATHER_STATIONS_BUCKET__",
+        "Write:__WEATHER_STATIONS_BUCKET__",
+        "List:__WEATHER_STATIONS_BUCKET__",
+        "Tagging:__WEATHER_STATIONS_BUCKET__",
+        "Read:__API_KEYS_BUCKET__",
+        "Write:__API_KEYS_BUCKET__",
+        "List:__API_KEYS_BUCKET__",
+        "Tagging:__API_KEYS_BUCKET__"
       ]
     },
     {

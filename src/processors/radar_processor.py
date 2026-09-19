@@ -30,6 +30,7 @@ from config import Config
 from exceptions import UnprocessableInputError
 from factories import create_s3_client
 from models.work_unit import WorkUnit
+from models.radar_scan import ScanIdentity
 from models.radar_config import (
     get_radar_product_config_for_file,
     parse_radar_filename,
@@ -96,21 +97,13 @@ class RadarProcessor(ImageProcessor):
             work_unit.image_id,
         )
 
-        h5_path = Path(downloaded_file_path)
-        if not h5_path.exists():
-            raise FileNotFoundError(f"Radar file not found: {h5_path}")
+        scan_path = Path(downloaded_file_path)
+        if not scan_path.exists():
+            raise FileNotFoundError(f"Radar file not found: {scan_path}")
 
-        # Parse filename to get product info
-        original_filename = Path(work_unit.source_uri).name
-        parsed = parse_radar_filename(original_filename)
-        # The variable token alone is ambiguous (DBZH lives in both subvolume 01
-        # and the long-range 04), so the product is resolved from the pair. The
-        # physical moment stays ``variable`` — that is what selects the PyART
-        # field, palette and mask — while ``product_id`` names the output path.
-        product_config = get_radar_product_config_for_file(
-            parsed["variable"], parsed["subvolume"]
-        )
-        variable_id = product_config.variable
+        scan = self._resolve_scan(work_unit.source_uri)
+        product_config = scan.product_config
+        variable_id = scan.variable_id
 
         # Setup work directories
         work_dir = Path(self.config.TMP_DIR) / "radar" / self._work_dir_leaf(work_unit)
@@ -120,7 +113,7 @@ class RadarProcessor(ImageProcessor):
             # Read radar data with PyART
             self._check_shutdown()
             with self._time_stage("read"):
-                radar = self._read_radar(h5_path)
+                radar = self._read_radar(scan_path)
 
             # Get field name from radar object
             field_name = self._get_field_name(radar, variable_id)
@@ -204,9 +197,9 @@ class RadarProcessor(ImageProcessor):
                 self._check_shutdown()
                 elevation_id = f"elev{sweep_idx}"
                 s3_prefix = (
-                    f"{product_config.s3_tiles_prefix}/{parsed['radar_id']}/"
+                    f"{product_config.s3_tiles_prefix}/{scan.radar_id}/"
                     f"{product_config.product_id}/"
-                    f"{elevation_id}/{parsed['timestamp']}"
+                    f"{elevation_id}/{scan.timestamp}"
                 )
                 with self._time_stage("upload"):
                     await self._upload_tiles(tiles_dir, s3_prefix)
@@ -214,9 +207,9 @@ class RadarProcessor(ImageProcessor):
                 # Upload COG to storage
                 self._check_shutdown()
                 cog_key = (
-                    f"{product_config.s3_cog_prefix}/{parsed['radar_id']}/"
+                    f"{product_config.s3_cog_prefix}/{scan.radar_id}/"
                     f"{product_config.product_id}/"
-                    f"{elevation_id}/{parsed['timestamp']}.tif"
+                    f"{elevation_id}/{scan.timestamp}.tif"
                 )
                 with self._time_stage("upload"):
                     cog_uploaded = await self._s3_client.upload_file(cog_key, cog_path)
@@ -241,15 +234,41 @@ class RadarProcessor(ImageProcessor):
             if work_dir.exists():
                 shutil.rmtree(work_dir, ignore_errors=True)
 
-    def _read_radar(self, h5_path: Path):
-        """Read H5 radar file using PyART (SINARAME HDF5 format)."""
+    @property
+    def zoom_spec(self) -> str:
+        """gdal2tiles zoom range for this feed (template hook)."""
+        return self.config.RADAR_ZOOM.spec
+
+    def _resolve_scan(self, source_uri: str) -> ScanIdentity:
+        """Resolve what this file is from its name (SINARAME/ODIM convention).
+
+        Template hook: a subclass handling another feed overrides this together
+        with ``_read_radar`` and inherits the rest of the pipeline untouched.
+
+        The variable token alone is ambiguous — DBZH lives in both subvolume 01
+        and the long-range 04 — so the product comes from the (variable,
+        subvolume) pair, while the moment to render stays the variable.
+        """
+        parsed = parse_radar_filename(Path(source_uri).name)
+        product_config = get_radar_product_config_for_file(
+            parsed["variable"], parsed["subvolume"]
+        )
+        return ScanIdentity(
+            radar_id=parsed["radar_id"],
+            timestamp=parsed["timestamp"],
+            product_config=product_config,
+            variable_id=product_config.variable,
+        )
+
+    def _read_radar(self, scan_path: Path):
+        """Read an H5 radar file using PyART (SINARAME HDF5 format)."""
         import pyart  # pylint: disable=import-outside-toplevel
 
-        logger.info("[RADAR] Reading %s", h5_path.name)
+        logger.info("[RADAR] Reading %s", scan_path.name)
 
         # Use SINARAME reader for Argentine radar files
         try:
-            radar = pyart.aux_io.read_sinarame_h5(str(h5_path))
+            radar = pyart.aux_io.read_sinarame_h5(str(scan_path))
         except ValueError as exc:
             # Some RMA scans (notably dual-pol KDP) carry sweeps with different
             # range geometry (rstart/rscale); pyart's single global range array
@@ -259,7 +278,7 @@ class RadarProcessor(ImageProcessor):
             # ValueError so genuine read bugs still surface as errors.
             if "changes between sweeps" in str(exc):
                 raise UnprocessableInputError(
-                    f"Incompatible sweep range geometry for {h5_path.name}: {exc}"
+                    f"Incompatible sweep range geometry for {scan_path.name}: {exc}"
                 ) from exc
             raise
 
@@ -527,7 +546,7 @@ class RadarProcessor(ImageProcessor):
             "-p",
             "mercator",
             "-z",
-            self.config.RADAR_ZOOM.spec,
+            self.zoom_spec,
             "-w",
             "none",
             "--resampling=near",
