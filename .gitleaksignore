@@ -14,3 +14,5 @@ d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:41
 d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:43
 d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:45
 d4dd63ce5e18a0579a4250028d743cbf33d41d99:.env.example:generic-api-key:47
+# Same false positive, from the radar-inta placeholders (feat/radar-inta).
+5c3729a2444d30f67f0bff0f60afc855c7c1a200:.env.example:generic-api-key:45
