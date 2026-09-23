@@ -80,14 +80,18 @@ def test_every_written_prefix_is_covered_by_a_lifecycle_rule():
     from models.ecmwf_config import ECMWF_MSLP_CONFIG, ECMWF_TP_CONFIG
     from models.gfs_config import GFS_PRODUCT_CONFIGS
     from models.lifecycle_config import resolve_retention_map
-    from models.radar_config import RADAR_PRODUCT_CONFIGS
+    from models.radar_config import INTA_PRODUCT_CONFIGS, RADAR_PRODUCT_CONFIGS
     from models.wrf_config import WRF_PRODUCT_CONFIGS
 
     settings = json.loads((Path(__file__).parent.parent / "settings.json").read_text())
     rules = resolve_retention_map(settings["sources"])
 
     written: set[str] = set()
-    for cfg in (*BAND_CONFIGS.values(), *RADAR_PRODUCT_CONFIGS.values()):
+    for cfg in (
+        *BAND_CONFIGS.values(),
+        *RADAR_PRODUCT_CONFIGS.values(),
+        *INTA_PRODUCT_CONFIGS.values(),
+    ):
         written |= {cfg.s3_tiles_prefix, cfg.s3_cog_prefix}
     for cfg in WRF_PRODUCT_CONFIGS.values():
         written |= {cfg.s3_tiles_prefix, cfg.s3_cog_prefix, cfg.s3_geojson_prefix}
@@ -141,13 +145,14 @@ def test_settings_product_keys_are_all_known(settings_name):
 
     from models.band_config import BAND_CONFIGS
     from models.gfs_config import GFS_PRODUCT_CONFIGS
-    from models.radar_config import RADAR_PRODUCT_CONFIGS
+    from models.radar_config import INTA_PRODUCT_CONFIGS, RADAR_PRODUCT_CONFIGS
     from models.wrf_config import WRF_PRODUCT_CONFIGS
 
     known = {
         "goes19-abi": {"c13", "c09", "c02"},
         "goes19-glm": {"fed", "toe", "mfa"},
         "radar-sinarame": set(RADAR_PRODUCT_CONFIGS),
+        "radar-inta": set(INTA_PRODUCT_CONFIGS),
         "wrf-arg4k": set(WRF_PRODUCT_CONFIGS),
         "ecmwf-ifs": {"total-precipitation", "mean-sea-level-pressure"},
         "gfs": set(GFS_PRODUCT_CONFIGS),

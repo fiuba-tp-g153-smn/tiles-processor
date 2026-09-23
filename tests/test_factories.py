@@ -44,10 +44,13 @@ class TestCreateDataSourceRegistry:
         config.ENABLE_GLM_MFA = False
         config.ENABLED_RADAR_PRODUCTS = {}
         config.RADAR_STATION_FILTER = RadarStationFilter("all")
+        config.ENABLED_INTA_PRODUCTS = {}
+        config.INTA_STATION_FILTER = RadarStationFilter("all")
         # Discovery knobs: None -> each data source keeps its class-constant default.
         config.GOES_TARGET_IMAGES = None
         config.GOES_MAX_HOURS_BACK = None
         config.RADAR_TARGET_IMAGES = None
+        config.INTA_TARGET_IMAGES = None
         config.WRF_TARGET_RUNS = None
         config.GLM_SAFETY_LAG_SECONDS = None
         config.GLM_TARGET_WINDOWS = None
@@ -64,6 +67,7 @@ class TestCreateDataSourceRegistry:
         config.WRF_INPUT_DIR = "/tmp/wrf"
         config.ENABLED_WRF_PRODUCTS = {}
         config.RADAR_INPUT = InputSourceConfig(mode="local", input_dir="/tmp/radar")
+        config.INTA_INPUT = InputSourceConfig(mode="local", input_dir="/tmp/inta")
         config.GOES19_GLM_INPUT = InputSourceConfig(mode="local", input_dir="/tmp/glm")
         config.WRF_INPUT = InputSourceConfig(mode="local", input_dir="/tmp/wrf")
         config.GOES19_INPUT = InputSourceConfig(

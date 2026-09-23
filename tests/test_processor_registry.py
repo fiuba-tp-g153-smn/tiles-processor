@@ -36,6 +36,7 @@ def _config_with_every_product_on():
         InputSourceConfig,
     )
     from models.radar_config import (  # pylint: disable=import-outside-toplevel
+        INTA_PRODUCT_CONFIGS,
         RADAR_PRODUCT_CONFIGS,
         RadarStationFilter,
     )
@@ -50,6 +51,8 @@ def _config_with_every_product_on():
     config.ENABLED_RADAR_PRODUCTS = {pid: True for pid in RADAR_PRODUCT_CONFIGS}
     config.ENABLED_WRF_PRODUCTS = {pid: True for pid in WRF_PRODUCT_CONFIGS}
     config.RADAR_STATION_FILTER = RadarStationFilter("all")
+    config.ENABLED_INTA_PRODUCTS = {pid: True for pid in INTA_PRODUCT_CONFIGS}
+    config.INTA_STATION_FILTER = RadarStationFilter("all")
     config.ENABLE_ECMWF_PRECIPITATION = True
     config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE = True
     config.ECMWF_OPENDATA_SOURCES = ("ecmwf",)
@@ -69,6 +72,7 @@ def _config_with_every_product_on():
     }
     for name, mode in (
         ("RADAR_INPUT", "local"),
+        ("INTA_INPUT", "local"),
         ("GOES19_GLM_INPUT", "local"),
         ("WRF_INPUT", "local"),
         ("GOES19_INPUT", "local"),
@@ -80,6 +84,7 @@ def _config_with_every_product_on():
         "GOES_TARGET_IMAGES",
         "GOES_MAX_HOURS_BACK",
         "RADAR_TARGET_IMAGES",
+        "INTA_TARGET_IMAGES",
         "WRF_TARGET_RUNS",
         "GLM_SAFETY_LAG_SECONDS",
         "GLM_TARGET_WINDOWS",
