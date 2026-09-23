@@ -16,6 +16,7 @@ SOURCE_LIFECYCLE_PREFIXES: dict[str, dict[str, str]] = {
     "goes19-abi": {"tiles": "tiles/goes19/abi", "cog": "cog/goes19/abi"},
     "goes19-glm": {"tiles": "tiles/goes19/glm", "cog": "cog/goes19/glm"},
     "radar-sinarame": {"tiles": "tiles/radar/sinarame", "cog": "cog/radar/sinarame"},
+    "radar-inta": {"tiles": "tiles/radar/inta", "cog": "cog/radar/inta"},
     "wrf-arg4k": {
         "tiles": "tiles/wrf-arg4k",
         "cog": "cog/wrf-arg4k",

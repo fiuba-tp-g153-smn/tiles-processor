@@ -211,12 +211,12 @@ tiles-data/                              # Bucket name (configurable)
 │   ├── goes19/glm/fed/
 │   │   └── GLM_FED_s{YYYYJJJHHMMSS}_tiles/  # 10-minute window tilesets
 │   │       └── {z}/{x}/{y}.webp
-│   └── radar/sinarame/
+│   └── radar/{sinarame|inta}/
 │       └── {radar_id}/{product_id}/elev{N}/{timestamp}/
 │           └── {z}/{x}/{y}.webp
 └── cog/
   ├── goes19/{abi/c13|abi/c09|abi/c02|glm/fed|glm/toe|glm/mfa}/{image_id}.tif
-  └── radar/sinarame/{radar_id}/{product_id}/elev{N}/{timestamp}.tif
+  └── radar/{sinarame|inta}/{radar_id}/{product_id}/elev{N}/{timestamp}.tif
 ```
 
 **Tileset naming:**
@@ -331,6 +331,15 @@ input, product toggles, retention, and tuning live together.
       "light_queue": "all",
       "retention_days": 1
     },
+    "radar-inta": {
+      "input": { "mode": "local" },
+      "stations": "all",
+      "products": { "dbzh": true, "zdr": true, "rhohv": true, "kdp": true },
+      "target_images": 12,
+      "zoom_levels": "4-9",
+      "light_queue": "all",
+      "retention_days": 1
+    },
     "wrf-arg4k": {
       "input": { "mode": "local" },
       "products": { "colmax": true, "granizo": true },
@@ -387,7 +396,8 @@ input, product toggles, retention, and tuning live together.
     `virtual` or `auto` for endpoints that only answer on `<bucket>.<host>`.
   - Credentials come from `<NAME>_S3_ACCESS_KEY`/`_SECRET_KEY` env vars (unset =
     anonymous; setting only one of the pair fails at startup). The names are
-    `GOES19_ABI_`, `RADAR_SINARAME_`, `GOES19_GLM_`, `WRF_ARG4K_`, `ECMWF_IFS_` and
+    `GOES19_ABI_`, `RADAR_SINARAME_`, `RADAR_INTA_`, `GOES19_GLM_`, `WRF_ARG4K_`,
+    `ECMWF_IFS_` and
     `GFS_`.
 
   The folder and bucket layouts are identical per source, so one can be synced
@@ -397,6 +407,7 @@ input, product toggles, retention, and tuning live together.
   |---|---|
   | `goes19-abi` | `ABI-L1b-RadF/YYYY/JJJ/HH/OR_ABI-...nc` |
   | `radar-sinarame` | `*.H5`, or `<subdir>/*.H5` |
+  | `radar-inta` | `*.vol`, or `<subdir>/*.vol` (`.azi` products are ignored) |
   | `goes19-glm` | `CG_GLM-L2-GLMF-*.nc`, or `<subdir>/CG_GLM-...nc` |
   | `wrf-arg4k` | `WRF_ARG4K.FCST_L0_FIELD2D.*.nc`, or `<subdir>/...nc` |
   | `ecmwf-ifs` | `<product>/<YYYYMMDDTHHmmZ>.grib` (`<product>` = `total-precipitation`, `mean-sea-level-pressure`) |
@@ -443,6 +454,26 @@ input, product toggles, retention, and tuning live together.
   and publishes under `tiles/radar/sinarame/{radar}/dbzh-450km/`. Subvolume 04 carries a single
   0.55° sweep of 1235 × 360 m gates (~445 km) against subvolume 01's 15 sweeps of 652
   gates (~235 km), so only `elev0` is produced for it.
+- **`sources.radar-inta`**: The three INTA radars (Paraná, Anguil, Pergamino), which
+  deliver Rainbow5 `.vol` volumes instead of SINARAME's ODIM-HDF5. They reuse the same
+  product ids, palettes and elevations — the geometry matches, 240 km of range with
+  0.5°/0.9°/1.3° as the first three sweeps — and publish under their own
+  `tiles/radar/inta/` namespace. Three things are specific to this feed:
+
+  - **The station is read from the file, not its name.** Production files are prefixed
+    (`PAR2026…dBZ.vol`) but the SMN's samples are not (`2026…dBZ.vol`); the XML header
+    carries `<radarinfo id="PAR">` either way. Note the tag sits ~18.7 KB in, behind the
+    `<pargroup>` block, so the header read window has to be generous.
+  - **Only 240 km volumes are published.** Anguil and Pergamino interleave 120 km scans
+    (`VOL_120_ZVW` / `SMN_120`) in the same folder, distinguishable only by the header.
+    Publishing both under one product would make the layer's footprint jump between two
+    extents as the user scrubs through time.
+  - **Variables map onto SINARAME's**: `dBZ→dbzh`, `ZDR→zdr`, `RhoHV→rhohv`, `KDP→kdp`.
+    The `u`-prefixed types (`dBuZ`, `uPhiDP`) are uncorrected diagnostics and are not
+    mapped. `V` is left out: the Nyquist here is ±6.65 m/s against the VRAD palette's
+    ±40, so it would render almost monochrome without a dedicated palette.
+
+  Reading these needs `wradlib`, which PyART imports lazily from `read_rainbow_wrl`.
 - **`sources.<radar-sinarame|wrf-arg4k>.light_queue`**: Route these units to the
   lightweight worker queue. `"all"` / `"none"`, plus WRF accepts an explicit product
   list (e.g. `["colmax", "granizo"]`); radar is all-or-nothing.

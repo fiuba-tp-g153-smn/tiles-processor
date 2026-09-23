@@ -47,6 +47,12 @@ from data_sources.radar_repository import (
     RadarFileRepository,
     S3RadarFileRepository,
 )
+from data_sources.inta_radar import IntaRadarDataSource
+from data_sources.inta_radar_repository import (
+    IntaRadarFileRepository,
+    LocalIntaRadarFileRepository,
+    S3IntaRadarFileRepository,
+)
 from data_sources.wrf_repository import (
     LocalWrfFileRepository,
     S3WrfFileRepository,
@@ -63,7 +69,11 @@ from models.gfs_config import (
 )
 from models.ecmwf_config import EcmwfProductConfig
 from models.input_source_config import InputSourceConfig
-from models.radar_config import RADAR_PRODUCT_CONFIGS
+from models.radar_config import (
+    INTA_RAINBOW_TO_PRODUCT,
+    RADAR_PRODUCT_CONFIGS,
+    get_inta_product_config,
+)
 from models.wrf_config import WRF_PRODUCT_CONFIGS
 
 logger = logging.getLogger(__name__)
@@ -86,6 +96,13 @@ def _create_input_s3_client(src: InputSourceConfig) -> S3Client:
         region_name=src.s3_region,
         addressing_style=src.s3_addressing_style,
     )
+
+
+def _create_inta_repository(config: Config) -> IntaRadarFileRepository:
+    src = config.INTA_INPUT
+    if not src.is_s3:
+        return LocalIntaRadarFileRepository(Path(src.input_dir))
+    return S3IntaRadarFileRepository(_create_input_s3_client(src), prefix=src.s3_prefix)
 
 
 def _create_radar_repository(config: Config) -> RadarFileRepository:
@@ -204,6 +221,22 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
                     repository,
                     config.RADAR_STATION_FILTER,
                     target_images=config.RADAR_TARGET_IMAGES,
+                )
+            )
+
+    # Register INTA radar data sources, one per mapped Rainbow variable. They
+    # share SINARAME's products and palettes; only the reader, the discovery and
+    # the S3 namespace differ.
+    if config is not None:
+        inta_repository = _create_inta_repository(config)
+        for rainbow_variable in INTA_RAINBOW_TO_PRODUCT:
+            registry.register(
+                IntaRadarDataSource(
+                    get_inta_product_config(rainbow_variable),
+                    rainbow_variable,
+                    inta_repository,
+                    config.INTA_STATION_FILTER,
+                    target_images=config.INTA_TARGET_IMAGES,
                 )
             )
 

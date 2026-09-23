@@ -20,6 +20,7 @@ from data_sources import (
     DataSourceRegistry,
     DiscoveryConfig,
     Goes19GlmDataSource,
+    IntaRadarDataSource,
     RadarDataSource,
     WrfDataSource,
 )
@@ -214,6 +215,10 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
         if source_id.startswith("radar_sinarame_"):
             product_id = source_id.removeprefix("radar_sinarame_")
             return self._config.ENABLED_RADAR_PRODUCTS.get(product_id, False)
+        # INTA radar sources (radar_inta_dbzh, ...)
+        if source_id.startswith("radar_inta_"):
+            product_id = source_id.removeprefix("radar_inta_")
+            return self._config.ENABLED_INTA_PRODUCTS.get(product_id, False)
         # Check for WRF sources (wrf_arg4k_colmax, wrf_arg4k_rafagas, etc.)
         if source_id.startswith("wrf_arg4k_"):
             product_id = source_id.removeprefix("wrf_arg4k_")
@@ -255,12 +260,16 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             existing_tilesets = await self._get_existing_tilesets(
                 data_source.band_config.s3_tiles_prefix
             )
-        elif isinstance(data_source, RadarDataSource):
-            # Radar sources use product_id as band_id
-            band_id = f"radar_sinarame_{data_source.product_config.product_id}"
+        elif isinstance(data_source, (RadarDataSource, IntaRadarDataSource)):
+            # Both radar feeds key work by product and dedup against the tileset
+            # layout under their own network prefix, which the product config
+            # carries. band_id comes from source_id so each feed keeps its own
+            # in-progress namespace.
+            band_id = data_source.source_id
             product_id = data_source.product_config.product_id
-            # Search across all radar IDs for this product
-            existing_tilesets = await self._get_radar_existing_tilesets(product_id)
+            existing_tilesets = await self._get_radar_existing_tilesets(
+                product_id, data_source.product_config.s3_tiles_prefix
+            )
         elif isinstance(data_source, WrfDataSource):
             product_id = data_source.product_config.product_id
             band_id = f"wrf_arg4k_{product_id}"
@@ -391,18 +400,24 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
             logger.warning("Error listing WRF tilesets for %s: %s", product_id, e)
         return tilesets
 
-    async def _get_radar_existing_tilesets(self, product_id: str) -> Set[str]:
+    async def _get_radar_existing_tilesets(
+        self, product_id: str, tiles_prefix: str
+    ) -> Set[str]:
         """
         Get existing radar tilesets across all radar IDs for a specific product.
 
-        Path structure: tiles/radar/sinarame/{radar_id}/{product}/{elev}/{timestamp}/
-        Returns image_ids like: RMA1_DBZH_20260114T170328Z
+        Path structure: {tiles_prefix}/{radar_id}/{product}/{elev}/{timestamp}/
+        Returns image_ids like: RMA1_dbzh_20260114T170328Z
+
+        ``tiles_prefix`` carries the network (tiles/radar/sinarame or
+        tiles/radar/inta) so both feeds dedup against their own namespace with
+        one implementation — the layout below it is identical.
         """
         tilesets = set()
         try:
-            # List radar IDs: tiles/radar/sinarame/RMA1/, tiles/radar/sinarame/RMA12/, etc.
+            # List radar IDs: {tiles_prefix}/RMA1/, {tiles_prefix}/PAR/, etc.
             radar_ids = await self._s3_client.list_prefixes(
-                "tiles/radar/sinarame/", delimiter="/"
+                f"{tiles_prefix}/", delimiter="/"
             )
             for radar_id_prefix in radar_ids:
                 # radar_id_prefix = "tiles/radar/sinarame/RMA1/"
@@ -414,12 +429,12 @@ class ImageDiscoveryProducer:  # pylint: disable=too-few-public-methods
                     product_prefix, delimiter="/"
                 )
                 for elevation_prefix in elevation_prefixes:
-                    # elevation_prefix = "tiles/radar/sinarame/RMA1/dbzh/elev0/"
+                    # elevation_prefix = ".../RMA1/dbzh/elev0/"
                     timestamp_prefixes = await self._s3_client.list_prefixes(
                         elevation_prefix, delimiter="/"
                     )
                     for timestamp_prefix in timestamp_prefixes:
-                        # timestamp_prefix = "tiles/radar/sinarame/RMA1/dbzh/elev0/20260114T170328Z/"
+                        # timestamp_prefix = ".../RMA1/dbzh/elev0/20260114T170328Z/"
                         timestamp = timestamp_prefix.rstrip("/").split("/")[-1]
                         image_id = f"{radar_id}_{product_id}_{timestamp}"
                         tilesets.add(image_id)

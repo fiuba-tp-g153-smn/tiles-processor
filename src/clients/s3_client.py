@@ -364,6 +364,54 @@ class S3Client:
     async def __aexit__(self, *_exc) -> None:
         await self.aclose()
 
+    async def read_range(
+        self,
+        s3_key: str,
+        length: int,
+        retries: int = 3,
+    ) -> bytes:
+        """
+        Fetch the leading ``length`` bytes of an object with a ranged GET.
+
+        Reads a file header without pulling the whole object — the INTA radar
+        discovery needs each volume's XML preamble to resolve its station, and
+        the payload behind it is megabytes of binary blobs. An object shorter
+        than the range simply yields fewer bytes; S3 clamps it.
+
+        Args:
+            s3_key: The S3 key (path) of the file to read
+            length: Number of leading bytes to request
+            retries: Number of retry attempts
+
+        Raises:
+            RuntimeError: If the read fails after all retries
+        """
+        async with self._client_session() as s3_client:
+            for attempt in range(retries):
+                try:
+                    async with self._semaphore:
+                        response = await s3_client.get_object(
+                            Bucket=self._bucket_name,
+                            Key=s3_key,
+                            Range=f"bytes=0-{length - 1}",
+                        )
+                        return await response["Body"].read()
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    logger.warning(
+                        "Range read attempt %d/%d failed for %s: %s",
+                        attempt + 1,
+                        retries,
+                        s3_key,
+                        e,
+                    )
+                    if attempt == retries - 1:
+                        raise RuntimeError(
+                            f"Failed to read range of {s3_key} after "
+                            f"{retries} attempts"
+                        ) from e
+                    await asyncio.sleep(1)
+        raise RuntimeError(f"Failed to read range of {s3_key}")
+
     async def download_to_file(
         self,
         s3_key: str,
