@@ -16,13 +16,12 @@ from models.band_config import BAND_CONFIGS
 from models.radar_config import INTA_PRODUCT_CONFIGS, RADAR_PRODUCT_CONFIGS
 from models.wrf_config import WRF_PRODUCT_CONFIGS
 
-# Radar networks by data-source prefix: (product registry, label tag). The tag
-# names the fleet because INTA stations (PAR/ANG/PER) do not reveal it the way
-# RMAx does. Product names stay in English here, like every other label; the
-# visualizer translates them (metrics-labels.constants.ts PRODUCT_TERMS).
+# Radar networks by data-source prefix: (product registry, network name).
+# Product names stay in English here, like every other label; the visualizer
+# translates them (metrics-labels.constants.ts PRODUCT_TERMS).
 _RADAR_NETWORKS = {
-    "radar_sinarame_": (RADAR_PRODUCT_CONFIGS, ""),
-    "radar_inta_": (INTA_PRODUCT_CONFIGS, "INTA "),
+    "radar_sinarame_": (RADAR_PRODUCT_CONFIGS, "SINARAME"),
+    "radar_inta_": (INTA_PRODUCT_CONFIGS, "INTA"),
 }
 
 
@@ -82,9 +81,13 @@ def _describe_goes(band_id: str, image_id: str) -> tuple[str, str]:
 def _describe_radar(data_source_id: str, image_id: str) -> tuple[str, str]:
     """Radar: ``image_id`` is ``{radar_id}_{product_id}_{timestamp}``.
 
-    The product segment may contain separators, so the station and timestamp
-    are read off the ends rather than by field position. Every network shares
-    this layout; only the product registry and the label tag differ.
+    The label names the network and product but not the station: a job type
+    spans every radar of its network, and the dashboard labels each job-type
+    row with its latest job, so a station there would just be whichever radar
+    ran last. The station stays visible per job through ``image_id``.
+
+    The product segment may contain separators, so the timestamp is read off
+    the end rather than by field position.
 
     Raises:
         KeyError: The data source belongs to no known radar network.
@@ -95,13 +98,9 @@ def _describe_radar(data_source_id: str, image_id: str) -> tuple[str, str]:
     config = configs.get(product_id)
     long_name = config.long_name if config else product_id
 
-    radar_id, timestamp = "", image_id
     parts = image_id.split("_")
-    if len(parts) >= 3:
-        radar_id, timestamp = parts[0], parts[-1]
-
-    station = f"{radar_id} " if radar_id else ""
-    return (f"Radar {network}{station}{product_id} · {long_name}", timestamp)
+    timestamp = parts[-1] if len(parts) >= 3 else image_id
+    return (f"Radar {network} {product_id} · {long_name}", timestamp)
 
 
 def _describe_wrf(data_source_id: str, image_id: str) -> tuple[str, str]:

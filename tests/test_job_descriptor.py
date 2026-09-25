@@ -17,16 +17,15 @@ def test_goes19_abi_c13_label_and_timestamp():
 def test_radar_rma12_dbzh_label_and_timestamp():
     desc = describe_job("radar_sinarame_dbzh", "RMA12_dbzh_20260114T170328Z", "radar")
     assert desc.job_type == "radar_sinarame_dbzh"
-    assert "RMA12" in desc.product_label
-    assert "dbzh" in desc.product_label
-    assert "Horizontal Reflectivity" in desc.product_label
+    # One job type spans every RMA, so the label names the network, not RMA12.
+    assert desc.product_label == "Radar SINARAME dbzh · Horizontal Reflectivity"
     assert desc.image_timestamp == "20260114T170328Z"
 
 
-def test_radar_inta_label_names_the_network_and_station():
+def test_radar_inta_label_names_the_network_not_the_station():
     desc = describe_job("radar_inta_kdp", "PAR_kdp_20260521T143004Z", "radar_inta")
     assert desc.job_type == "radar_inta_kdp"
-    assert desc.product_label == ("Radar INTA PAR kdp · Specific Differential Phase")
+    assert desc.product_label == "Radar INTA kdp · Specific Differential Phase"
     assert desc.image_timestamp == "20260521T143004Z"
 
 
@@ -42,7 +41,7 @@ def test_radar_product_with_underscore_keeps_timestamp():
     desc = describe_job(
         "radar_sinarame_dbzh-450km", "RMA1_dbzh-450km_20260114T170328Z", "radar"
     )
-    assert "RMA1" in desc.product_label
+    assert "RMA1" not in desc.product_label
     assert "dbzh-450km" in desc.product_label
     assert "450 km" in desc.product_label
     assert desc.image_timestamp == "20260114T170328Z"
