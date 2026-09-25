@@ -13,8 +13,17 @@ never raises, so a labeling gap can never break metrics recording.
 from dataclasses import dataclass
 
 from models.band_config import BAND_CONFIGS
-from models.radar_config import RADAR_PRODUCT_CONFIGS
+from models.radar_config import INTA_PRODUCT_CONFIGS, RADAR_PRODUCT_CONFIGS
 from models.wrf_config import WRF_PRODUCT_CONFIGS
+
+# Radar networks by data-source prefix: (product registry, label tag). The tag
+# names the fleet because INTA stations (PAR/ANG/PER) do not reveal it the way
+# RMAx does. Product names stay in English here, like every other label; the
+# visualizer translates them (metrics-labels.constants.ts PRODUCT_TERMS).
+_RADAR_NETWORKS = {
+    "radar_sinarame_": (RADAR_PRODUCT_CONFIGS, ""),
+    "radar_inta_": (INTA_PRODUCT_CONFIGS, "INTA "),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +58,7 @@ def _label_and_timestamp(
     try:
         if data_source_id.startswith("goes19_abi_"):
             return _describe_goes(band_id, image_id)
-        if data_source_id.startswith("radar_sinarame_"):
+        if data_source_id.startswith("radar_"):
             return _describe_radar(data_source_id, image_id)
         if data_source_id.startswith("goes19_glm"):
             return ("GLM Lightning (FED/TOE/MFA)", image_id)
@@ -74,10 +83,16 @@ def _describe_radar(data_source_id: str, image_id: str) -> tuple[str, str]:
     """Radar: ``image_id`` is ``{radar_id}_{product_id}_{timestamp}``.
 
     The product segment may contain separators, so the station and timestamp
-    are read off the ends rather than by field position.
+    are read off the ends rather than by field position. Every network shares
+    this layout; only the product registry and the label tag differ.
+
+    Raises:
+        KeyError: The data source belongs to no known radar network.
     """
-    product_id = data_source_id.removeprefix("radar_sinarame_")
-    config = RADAR_PRODUCT_CONFIGS.get(product_id)
+    prefix = next((p for p in _RADAR_NETWORKS if data_source_id.startswith(p)), "")
+    configs, network = _RADAR_NETWORKS[prefix]
+    product_id = data_source_id.removeprefix(prefix)
+    config = configs.get(product_id)
     long_name = config.long_name if config else product_id
 
     radar_id, timestamp = "", image_id
@@ -86,7 +101,7 @@ def _describe_radar(data_source_id: str, image_id: str) -> tuple[str, str]:
         radar_id, timestamp = parts[0], parts[-1]
 
     station = f"{radar_id} " if radar_id else ""
-    return (f"Radar {station}{product_id} · {long_name}", timestamp)
+    return (f"Radar {network}{station}{product_id} · {long_name}", timestamp)
 
 
 def _describe_wrf(data_source_id: str, image_id: str) -> tuple[str, str]:

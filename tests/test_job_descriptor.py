@@ -23,6 +23,19 @@ def test_radar_rma12_dbzh_label_and_timestamp():
     assert desc.image_timestamp == "20260114T170328Z"
 
 
+def test_radar_inta_label_names_the_network_and_station():
+    desc = describe_job("radar_inta_kdp", "PAR_kdp_20260521T143004Z", "radar_inta")
+    assert desc.job_type == "radar_inta_kdp"
+    assert desc.product_label == ("Radar INTA PAR kdp · Specific Differential Phase")
+    assert desc.image_timestamp == "20260521T143004Z"
+
+
+def test_unknown_radar_network_falls_back_to_raw_values():
+    desc = describe_job("radar_other_dbzh", "XYZ_dbzh_20260521T143004Z", "radar")
+    assert desc.product_label == "radar_other_dbzh"
+    assert desc.image_timestamp == "XYZ_dbzh_20260521T143004Z"
+
+
 def test_radar_product_with_underscore_keeps_timestamp():
     # DBZH_450KM has an underscore in the product id, so the timestamp must be
     # read off the end of the image_id rather than by field position.
