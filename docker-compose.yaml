@@ -20,9 +20,9 @@ x-input-volumes: &input-volumes
   - /var/lib/docker/volumes/tkgs0oo8wg0ss4c400g4gs84_tiles-data/_data/glm_h5:/app/data/goes19-glm:ro
   - /var/lib/docker/volumes/tkgs0oo8wg0ss4c400g4gs84_tiles-data/_data/radar_h5:/app/data/radar-sinarame:ro
   - /var/lib/docker/volumes/tkgs0oo8wg0ss4c400g4gs84_tiles-data/_data/wrf_nc:/app/data/wrf-arg4k:ro
-  # INTA (radar-inta): add the mount once the feed has a folder on the host.
-  # Mounting a non-existent path aborts every service, so it is left out until then:
-  # - <host path>:/app/data/radar-inta:ro
+  # INTA is new, so its folder already carries the source name. data-simulator creates it on its
+  # first INTA tick; it must exist before this stack deploys (a missing path aborts every service).
+  - /var/lib/docker/volumes/tkgs0oo8wg0ss4c400g4gs84_tiles-data/_data/radar-inta:/app/data/radar-inta:ro
 
 # metrics-api serves the progress database only; it reads no source data.
 x-service-volumes: &service-volumes
