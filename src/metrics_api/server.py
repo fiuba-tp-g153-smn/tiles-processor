@@ -424,7 +424,7 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
                     "application/json": {
                         "example": {
                             "detail": "Export version 'metrics_0001' does not "
-                            "match database schema 'metrics_0002'"
+                            "match database schema 'metrics_0003'"
                         }
                     }
                 },

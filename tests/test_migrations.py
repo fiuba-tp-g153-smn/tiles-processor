@@ -47,7 +47,7 @@ def _columns(path, table: str) -> set[str]:
 def test_creates_both_schemas_at_head(migrated_dbs):
     assert "job_metrics" in _tables(migrated_dbs.metrics)
     assert "processed_images" in _tables(migrated_dbs.progress)
-    assert _version(migrated_dbs.metrics) == "metrics_0002"
+    assert _version(migrated_dbs.metrics) == "metrics_0003"
     assert _version(migrated_dbs.progress) == "progress_0001"
 
 
@@ -89,7 +89,7 @@ def test_migrations_are_idempotent(tmp_path):
     metrics, progress = tmp_path / "metrics.db", tmp_path / "progress_tracker.db"
     run_migrations(metrics, progress)
     run_migrations(metrics, progress)  # must not raise
-    assert _version(metrics) == "metrics_0002"
+    assert _version(metrics) == "metrics_0003"
     assert _version(progress) == "progress_0001"
 
 
@@ -105,7 +105,7 @@ def test_ensure_migrations_applies_under_lock(tmp_path):
 
     assert "job_metrics" in _tables(tmp_path / "metrics.db")
     assert "processed_images" in _tables(tmp_path / "progress_tracker.db")
-    assert _version(tmp_path / "metrics.db") == "metrics_0002"
+    assert _version(tmp_path / "metrics.db") == "metrics_0003"
     assert (tmp_path / ".migrate.lock").exists()
 
 
@@ -120,7 +120,7 @@ def test_adopts_existing_database_without_losing_data(tmp_path):
 
     run_migrations(metrics, progress)
 
-    assert _version(metrics) == "metrics_0002"
+    assert _version(metrics) == "metrics_0003"
     conn = sqlite3.connect(str(metrics))
     try:
         assert conn.execute("SELECT image_id FROM job_metrics").fetchone()[0] == "old"
@@ -201,7 +201,8 @@ def test_renames_legacy_product_ids_onto_the_current_ones(tmp_path):
     conn.commit()
     conn.close()
 
-    # Re-running the chain applies 0002 to the rows just inserted.
+    # Re-running the chain applies 0002 to the rows just inserted (and 0003,
+    # which then relabels the radar row by network).
     _stamp_before(metrics, "metrics_0001")
     run_migrations(metrics, progress)
 
@@ -211,7 +212,7 @@ def test_renames_legacy_product_ids_onto_the_current_ones(tmp_path):
             "radar_sinarame_dbzh",
             "radar_sinarame",
             "radar_sinarame_dbzh",
-            "Radar RMA9 dbzh · Horizontal Reflectivity",
+            "Radar SINARAME dbzh · Horizontal Reflectivity",
             "RMA9_DBZH_20260914T193000Z",  # upstream filename, left alone
         )
     ]
@@ -262,12 +263,79 @@ def test_rename_leaves_rows_already_on_the_current_ids_untouched(tmp_path):
     _stamp_before(metrics, "metrics_0001")
     run_migrations(metrics, progress)
 
-    assert _rows(
-        metrics, "processor_id, band_id, product_label", "radar_sinarame_dbzh"
-    ) == [
+    # 0002 leaves the ids alone; the label is 0003's (see the tests below).
+    assert _rows(metrics, "processor_id, band_id", "radar_sinarame_dbzh") == [
+        ("radar_sinarame", "radar_sinarame_dbzh")
+    ]
+
+
+def test_relabels_radar_rows_by_network_instead_of_station(tmp_path):
+    """metrics_0003 gives every radar row of a job type the same network label."""
+    metrics, progress = tmp_path / "metrics.db", tmp_path / "progress_tracker.db"
+    run_migrations(metrics, progress)
+    conn = sqlite3.connect(str(metrics))
+    for job_type, image_id, label in (
         (
-            "radar_sinarame",
-            "radar_sinarame_dbzh",
-            "Radar RMA9 dbzh · Horizontal Reflectivity",
-        )
+            "radar_sinarame_zdr",
+            "RMA9_zdr_1",
+            "Radar RMA9 zdr · Differential Reflectivity",
+        ),
+        (
+            "radar_sinarame_zdr",
+            "RMA20_zdr_2",
+            "Radar RMA20 zdr · Differential Reflectivity",
+        ),
+        (
+            "radar_inta_kdp",
+            "PAR_kdp_3",
+            "Radar INTA PAR kdp · Specific Differential Phase",
+        ),
+        (
+            "radar_inta_dbzh",
+            "PER_dbzh_4",
+            "radar_inta_dbzh",
+        ),  # written before INTA had a label
+    ):
+        _insert_job(conn, job_type=job_type, image_id=image_id, product_label=label)
+    conn.commit()
+    conn.close()
+
+    _stamp_before(metrics, "metrics_0002")
+    run_migrations(metrics, progress)
+
+    cols = "product_label, image_id"
+    assert _rows(metrics, cols, "radar_sinarame_zdr") == [
+        ("Radar SINARAME zdr · Differential Reflectivity", "RMA9_zdr_1"),
+        ("Radar SINARAME zdr · Differential Reflectivity", "RMA20_zdr_2"),
+    ]
+    assert _rows(metrics, cols, "radar_inta_kdp") == [
+        ("Radar INTA kdp · Specific Differential Phase", "PAR_kdp_3")
+    ]
+    assert _rows(metrics, cols, "radar_inta_dbzh") == [
+        ("Radar INTA dbzh · Horizontal Reflectivity", "PER_dbzh_4")
+    ]
+
+
+def test_relabel_leaves_other_job_types_untouched(tmp_path):
+    """Only the frozen radar products are relabeled; everything else keeps its label."""
+    metrics, progress = tmp_path / "metrics.db", tmp_path / "progress_tracker.db"
+    run_migrations(metrics, progress)
+    conn = sqlite3.connect(str(metrics))
+    _insert_job(
+        conn, job_type="goes19_abi_c13", product_label="GOES-19 ABI c13 · Cloud Tops"
+    )
+    _insert_job(
+        conn, job_type="radar_sinarame_future", product_label="Radar RMA1 future · X"
+    )
+    conn.commit()
+    conn.close()
+
+    _stamp_before(metrics, "metrics_0002")
+    run_migrations(metrics, progress)
+
+    assert _rows(metrics, "product_label", "goes19_abi_c13") == [
+        ("GOES-19 ABI c13 · Cloud Tops",)
+    ]
+    assert _rows(metrics, "product_label", "radar_sinarame_future") == [
+        ("Radar RMA1 future · X",)
     ]

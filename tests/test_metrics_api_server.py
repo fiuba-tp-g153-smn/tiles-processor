@@ -296,7 +296,7 @@ def test_swagger_and_openapi_available(client):
 
 def test_export_returns_versioned_dump(client):
     data = client.get("/api/export").json()
-    assert data["version"] == "metrics_0002"
+    assert data["version"] == "metrics_0003"
     assert data["window_hours"] is None
     assert data["count"] == 4 and len(data["jobs"]) == 4
     a_job = next(j for j in data["jobs"] if j["outcome"] == "success")
@@ -333,12 +333,12 @@ def test_import_round_trip_is_idempotent(client, tmp_path):
     target = _empty_client(tmp_path / "target")
 
     first = target.post("/api/import", json=dump, headers=_API_KEY).json()
-    assert first == {"version": "metrics_0002", "inserted": 4, "skipped": 0}
+    assert first == {"version": "metrics_0003", "inserted": 4, "skipped": 0}
     assert len(target.get("/api/jobs?limit=10").json()) == 4
 
     # Re-importing the same dump inserts nothing (idempotent skip-duplicates).
     second = target.post("/api/import", json=dump, headers=_API_KEY).json()
-    assert second == {"version": "metrics_0002", "inserted": 0, "skipped": 4}
+    assert second == {"version": "metrics_0003", "inserted": 0, "skipped": 4}
     assert len(target.get("/api/jobs?limit=10").json()) == 4
 
 
