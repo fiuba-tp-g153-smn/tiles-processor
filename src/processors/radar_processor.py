@@ -414,21 +414,28 @@ class RadarProcessor(ImageProcessor):
 
         lons = np.linspace(min_lon, max_lon, grid_size)
         lats = np.linspace(min_lat, max_lat, grid_size)
-        lon_grid, lat_grid = np.meshgrid(lons, lats)
 
-        dx = (lon_grid - radar_lon) * 111000 * np.cos(np.radians(radar_lat))
-        dy = (lat_grid - radar_lat) * 111000
+        # 1-D offsets broadcast against each other: the two full grids meshgrid
+        # used to materialize are never allocated.
+        cos_lat = np.cos(np.radians(radar_lat))
+        dx = ((lons - radar_lon) * 111000 * cos_lat)[np.newaxis, :]
+        dy = ((lats - radar_lat) * 111000)[:, np.newaxis]
 
-        r_grid = np.sqrt(dx**2 + dy**2)
-        theta_grid = np.degrees(np.arctan2(dx, dy)) % 360
+        r_grid = dx**2 + dy**2
+        np.sqrt(r_grid, out=r_grid)
+        r_flat = r_grid.ravel()
 
-        range_idx = np.searchsorted(ranges, r_grid.ravel())
-        range_idx = np.clip(range_idx, 0, len(ranges) - 1)
+        theta = np.arctan2(dx, dy)
+        np.degrees(theta, out=theta)
+        np.mod(theta, 360.0, out=theta)
+
+        range_idx = np.searchsorted(ranges, r_flat).astype(np.int32)
+        np.clip(range_idx, 0, len(ranges) - 1, out=range_idx)
 
         # Nearest azimuth ray per grid cell, vectorized (see _nearest_azimuth_indices).
-        azimuth_idx = _nearest_azimuth_indices(azimuths, theta_grid.ravel())
+        azimuth_idx = _nearest_azimuth_indices(azimuths, theta.ravel()).astype(np.int32)
 
-        outside_range = r_grid.ravel() > max_range_m
+        outside_range = r_flat > max_range_m
         bounds = (min_lon, max_lon, min_lat, max_lat)
         return range_idx, azimuth_idx, outside_range, bounds, grid_size
 
@@ -499,11 +506,14 @@ class RadarProcessor(ImageProcessor):
         below_min = data < palette.vmin
         rgba_uint8[below_min, 3] = 0
 
-        grid_rgba = np.zeros((grid_size, grid_size, 4), dtype=np.uint8)
-
-        for band in range(4):
-            values = rgba_uint8[:, :, band][azimuth_idx, range_idx]
-            grid_rgba[:, :, band] = values.reshape(grid_size, grid_size)
+        # One gather over (ray, gate) pairs flattened to a single axis, instead
+        # of one fancy-indexing pass per band. Building the index as intp spares
+        # take the widened copy it would make of an int32 one.
+        flat_idx = azimuth_idx.astype(np.intp)
+        flat_idx *= rgba_uint8.shape[1]
+        flat_idx += range_idx
+        grid_rgba = rgba_uint8.reshape(-1, 4).take(flat_idx, axis=0)
+        grid_rgba = grid_rgba.reshape(grid_size, grid_size, 4)
 
         grid_rgba[outside_range.reshape(grid_size, grid_size), 3] = 0
 
