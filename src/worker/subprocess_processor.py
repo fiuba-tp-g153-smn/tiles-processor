@@ -18,8 +18,10 @@ The subprocess:
 
 import asyncio
 import logging
+import os
 import signal
 import sys
+import time
 import traceback
 
 from exceptions import UnprocessableInputError
@@ -31,6 +33,8 @@ from worker.exit_codes import (
     EXIT_SUCCESS_CODE,
     SKIP_REASON_PREFIX,
 )
+
+SPAWNED_AT_ENV = "SUBPROCESS_SPAWNED_AT"
 
 
 def create_processor_registry():
@@ -87,6 +91,30 @@ def create_processor_registry():
     return registry
 
 
+def _read_spawned_at() -> float | None:
+    """Parse the parent's spawn mark; None when absent or malformed."""
+    raw = os.environ.get(SPAWNED_AT_ENV)
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        logging.warning("[SUBPROCESS] Ignoring malformed %s=%r", SPAWNED_AT_ENV, raw)
+        return None
+
+
+def _record_startup_stages(processor, main_started_at: float) -> None:
+    """Record ``startup`` (spawn → main) and ``setup`` (main → processor ready).
+
+    Best-effort: a missing or malformed spawn mark only drops ``startup`` —
+    metrics must never break processing.
+    """
+    spawned_at = _read_spawned_at()
+    if spawned_at is not None and main_started_at >= spawned_at:
+        processor.record_stage("startup", main_started_at - spawned_at)
+    processor.record_stage("setup", time.monotonic() - main_started_at)
+
+
 async def _process_and_cleanup(processor, file_path: str, work_unit) -> None:
     """Run the processor, then close its S3 client on the same event loop.
 
@@ -107,6 +135,7 @@ def run_processing(
     file_path: str,
     metrics_sink: str | None = None,
     work_token: str | None = None,
+    main_started_at: float | None = None,
 ) -> None:
     """
     Run the heavy image processing in this subprocess.
@@ -119,6 +148,8 @@ def run_processing(
         work_token: Optional per-attempt token from the handler; scopes the
             processor's scratch dir so two concurrent copies of the same image
             never share (and rmtree) a work dir.
+        main_started_at: CLOCK_MONOTONIC reading taken when ``main()`` began;
+            when given, the ``startup`` and ``setup`` stages are recorded.
     """
     # Import heavy modules here - they'll be unloaded when process exits
     # pylint: disable=import-outside-toplevel
@@ -153,6 +184,8 @@ def run_processing(
         processor.bind_metrics_sink(Path(metrics_sink))
     if work_token:
         processor.bind_work_token(work_token)
+    if main_started_at is not None:
+        _record_startup_stages(processor, main_started_at)
     logger.info(
         "[SUBPROCESS] Using %s for %s",
         processor_class.__name__,
@@ -175,6 +208,7 @@ def run_processing(
 
 def main() -> int:
     """Entry point for subprocess execution."""
+    main_started_at = time.monotonic()  # module imports already ran by now
     if len(sys.argv) not in (3, 4, 5):
         print(
             "Usage: python -m worker.subprocess_processor "
@@ -189,7 +223,13 @@ def main() -> int:
     work_token = sys.argv[4] if len(sys.argv) == 5 else None
 
     try:
-        run_processing(work_unit_json, file_path, metrics_sink, work_token)
+        run_processing(
+            work_unit_json,
+            file_path,
+            metrics_sink,
+            work_token,
+            main_started_at=main_started_at,
+        )
         return EXIT_SUCCESS_CODE
 
     except ShutdownRequested:

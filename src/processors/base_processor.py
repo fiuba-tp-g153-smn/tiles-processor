@@ -5,7 +5,7 @@ import shutil
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
-from time import perf_counter
+from time import monotonic, perf_counter
 from typing import Iterator
 import logging
 
@@ -13,6 +13,8 @@ from models.work_unit import WorkUnit
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+FINISHED_AT_KEY = "_finished_at"
 
 
 class ShutdownRequested(Exception):
@@ -71,19 +73,27 @@ class ImageProcessor(ABC):
         try:
             yield
         finally:
-            elapsed = perf_counter() - start
-            self._stage_timings[name] = self._stage_timings.get(name, 0.0) + elapsed
+            self.record_stage(name, perf_counter() - start)
+
+    def record_stage(self, name: str, seconds: float) -> None:
+        """Accumulate a stage duration measured outside ``_time_stage``.
+
+        Used for the subprocess startup stages, timed before this processor exists.
+        """
+        self._stage_timings[name] = self._stage_timings.get(name, 0.0) + seconds
 
     def flush_metrics(self) -> None:
         """Write accumulated stage timings to the bound sink as JSON.
 
         Called in a ``finally`` by the subprocess entry point so partial timings
-        survive a mid-pipeline failure. No-op when nothing was recorded.
+        survive a mid-pipeline failure. No-op when nothing was recorded. Adds the
+        ``FINISHED_AT_KEY`` mark so the parent can time the teardown.
         """
         if self._metrics_sink is None or not self._stage_timings:
             return
+        payload = {**self._stage_timings, FINISHED_AT_KEY: monotonic()}
         try:
-            self._metrics_sink.write_text(json.dumps(self._stage_timings))
+            self._metrics_sink.write_text(json.dumps(payload))
         except OSError as exc:
             logger.warning(
                 "Failed to write metrics sink %s: %s", self._metrics_sink, exc

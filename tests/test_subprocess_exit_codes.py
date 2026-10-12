@@ -2,7 +2,8 @@
 
 import os
 import sys
-from unittest.mock import patch
+import time
+from unittest.mock import ANY, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
@@ -64,7 +65,9 @@ def test_main_forwards_work_token_to_run_processing():
         subprocess_processor, "run_processing", return_value=None
     ) as run_processing:
         assert subprocess_processor.main() == EXIT_SUCCESS_CODE
-    run_processing.assert_called_once_with("{}", "/tmp/in.nc", "/tmp/m.json", "tok7")
+    run_processing.assert_called_once_with(
+        "{}", "/tmp/in.nc", "/tmp/m.json", "tok7", main_started_at=ANY
+    )
 
 
 def test_main_without_token_forwards_none():
@@ -74,4 +77,46 @@ def test_main_without_token_forwards_none():
         subprocess_processor, "run_processing", return_value=None
     ) as run_processing:
         assert subprocess_processor.main() == EXIT_SUCCESS_CODE
-    run_processing.assert_called_once_with("{}", "/tmp/in.nc", "/tmp/m.json", None)
+    run_processing.assert_called_once_with(
+        "{}", "/tmp/in.nc", "/tmp/m.json", None, main_started_at=ANY
+    )
+
+
+class _RecordingProcessor:
+    """Collects record_stage calls instead of timing a real pipeline."""
+
+    def __init__(self):
+        self.stages: dict[str, float] = {}
+
+    def record_stage(self, name: str, seconds: float) -> None:
+        self.stages[name] = seconds
+
+
+def test_startup_stages_measure_spawn_to_main_and_main_to_ready(monkeypatch):
+    """startup = main − spawn mark; setup = now − main."""
+    monkeypatch.setenv(subprocess_processor.SPAWNED_AT_ENV, "100.0")
+    monkeypatch.setattr(subprocess_processor.time, "monotonic", lambda: 103.5)
+    processor = _RecordingProcessor()
+
+    subprocess_processor._record_startup_stages(processor, main_started_at=102.0)
+
+    assert processor.stages == {"startup": 2.0, "setup": 1.5}
+
+
+def test_startup_stage_dropped_without_spawn_mark(monkeypatch):
+    """No env mark (e.g. a manual run) → only setup is recorded, no error."""
+    monkeypatch.delenv(subprocess_processor.SPAWNED_AT_ENV, raising=False)
+    processor = _RecordingProcessor()
+
+    subprocess_processor._record_startup_stages(processor, time.monotonic())
+
+    assert set(processor.stages) == {"setup"}
+
+
+def test_startup_stage_dropped_on_malformed_or_future_mark(monkeypatch):
+    """A garbage or later-than-main mark must not break processing nor go negative."""
+    processor = _RecordingProcessor()
+    for raw in ("not-a-number", "999999999.0"):
+        monkeypatch.setenv(subprocess_processor.SPAWNED_AT_ENV, raw)
+        subprocess_processor._record_startup_stages(processor, main_started_at=10.0)
+        assert "startup" not in processor.stages

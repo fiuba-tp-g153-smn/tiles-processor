@@ -21,10 +21,11 @@ from config import Config
 from data_sources import DataSourceRegistry
 from exceptions import SourceFileNotFoundError, UnprocessableInputError
 from models.work_unit import WorkUnit
-from processors.base_processor import ShutdownRequested
+from processors.base_processor import FINISHED_AT_KEY, ShutdownRequested
 from worker.exit_codes import EXIT_SHUTDOWN_CODE, EXIT_SKIP_CODE, SKIP_REASON_PREFIX
 from worker.inline_processor import InlineProcessor
 from worker.job_metrics_context import JobMetricsContext
+from worker.subprocess_processor import SPAWNED_AT_ENV
 
 logger = getLogger(__name__)
 
@@ -151,11 +152,13 @@ class WorkHandler:
                     work_unit.image_id,
                     work_unit.processor_id,
                 )
-                await self._run_processing_subprocess(
+                exited_at = await self._run_processing_subprocess(
                     work_unit, str(local_path), metrics_sink, attempt
                 )
                 if collector is not None:
-                    collector.set_stage_timings(self._read_stage_timings(metrics_sink))
+                    collector.set_stage_timings(
+                        self._read_stage_timings(metrics_sink, exited_at)
+                    )
             process_time = perf_counter() - process_start
             if collector is not None:
                 collector.set_process_seconds(process_time)
@@ -181,14 +184,27 @@ class WorkHandler:
             self._cleanup_file(metrics_sink)
 
     @staticmethod
-    def _read_stage_timings(sink_path: Path) -> dict[str, float]:
+    def _read_stage_timings(sink_path: Path, exited_at: float) -> dict[str, float]:
         """Read per-stage timings written by the subprocess (best-effort)."""
         try:
             if sink_path.exists():
-                return json.loads(sink_path.read_text())
+                timings = json.loads(sink_path.read_text())
+                return WorkHandler._derive_teardown(timings, exited_at)
         except (OSError, ValueError) as exc:
             logger.warning("Could not read stage timings %s: %s", sink_path, exc)
         return {}
+
+    @staticmethod
+    def _derive_teardown(timings: dict, exited_at: float) -> dict[str, float]:
+        """Swap the subprocess's flush mark for a ``teardown`` stage (flush → exit).
+
+        The mark is always removed so it never surfaces as a stage; a missing or
+        inconsistent one just leaves ``teardown`` out.
+        """
+        finished_at = timings.pop(FINISHED_AT_KEY, None)
+        if isinstance(finished_at, (int, float)) and exited_at >= finished_at:
+            timings["teardown"] = exited_at - finished_at
+        return timings
 
     @staticmethod
     def _cleanup_file(file_path: Path) -> None:
@@ -251,7 +267,7 @@ class WorkHandler:
         file_path: str,
         metrics_sink: Path,
         work_token: str | None = None,
-    ) -> None:
+    ) -> float:
         """
         Run image processing in a subprocess for memory isolation.
 
@@ -269,6 +285,10 @@ class WorkHandler:
                 dir's ``-{attempt}`` suffix); no two concurrent copies of the
                 same image can then rmtree each other's work dir.
 
+        Returns:
+            The CLOCK_MONOTONIC reading when the subprocess exited, from which the
+            caller derives the ``teardown`` stage.
+
         Raises:
             RuntimeError: If the subprocess fails or times out (includes error
                 details from the tail of its stderr).
@@ -285,6 +305,9 @@ class WorkHandler:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            # Spawn mark for the child's ``startup`` stage. CLOCK_MONOTONIC is one
+            # kernel clock, so parent and child readings are directly comparable.
+            env={**os.environ, SPAWNED_AT_ENV: str(time.monotonic())},
         )
         self._processes.add(proc)
         if self._aborting:
@@ -302,6 +325,7 @@ class WorkHandler:
         try:
             try:
                 return_code = await asyncio.wait_for(proc.wait(), timeout=1800)
+                exited_at = time.monotonic()
             except asyncio.TimeoutError as exc:
                 await self._kill(proc)
                 raise RuntimeError(
@@ -334,6 +358,7 @@ class WorkHandler:
                     f"Processing subprocess failed for {work_unit.image_id} "
                     f"(exit code {return_code}):\n{error_details}"
                 )
+            return exited_at
         finally:
             self._processes.discard(proc)
 

@@ -1,9 +1,11 @@
 """Tests for WorkHandler's async subprocess execution and multi-process abort."""
 
 import asyncio
+import json
 import os
 import signal
 import sys
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
@@ -11,8 +13,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import pytest
 from exceptions import SourceFileNotFoundError, UnprocessableInputError
 from models.work_unit import WorkUnit
-from processors.base_processor import ShutdownRequested
+from processors.base_processor import FINISHED_AT_KEY, ShutdownRequested
 from worker.exit_codes import EXIT_SHUTDOWN_CODE, EXIT_SKIP_CODE, SKIP_REASON_PREFIX
+from worker.subprocess_processor import SPAWNED_AT_ENV
 from worker.work_handler import WorkHandler
 
 
@@ -348,3 +351,67 @@ async def test_abort_then_spawn_signals_the_late_subprocess(tmp_path):
             )
 
     assert (proc, signal.SIGTERM) in signalled  # just-spawned group was signalled
+
+
+@pytest.mark.asyncio
+async def test_subprocess_gets_spawn_mark_and_returns_exit_mark(tmp_path):
+    """The child inherits the environment plus a monotonic spawn mark, and the
+    runner returns the monotonic reading at exit (for the teardown stage)."""
+    handler = _handler()
+    spawn = AsyncMock(return_value=_FakeProcess(returncode=0))
+
+    before = time.monotonic()
+    with patch("worker.work_handler.asyncio.create_subprocess_exec", spawn):
+        exited_at = await handler._run_processing_subprocess(
+            _work_unit(), "/tmp/in.nc", tmp_path / "m.json"
+        )
+
+    env = spawn.call_args.kwargs["env"]
+    spawned_at = float(env[SPAWNED_AT_ENV])
+    assert before <= spawned_at <= exited_at <= time.monotonic()
+    assert {k: v for k, v in env.items() if k != SPAWNED_AT_ENV} == dict(os.environ)
+
+
+def test_derive_teardown_swaps_finish_mark_for_stage():
+    timings = {"tiling": 4.0, "startup": 2.0, FINISHED_AT_KEY: 50.0}
+
+    result = WorkHandler._derive_teardown(timings, exited_at=50.25)
+
+    assert result == {"tiling": 4.0, "startup": 2.0, "teardown": 0.25}
+
+
+def test_derive_teardown_without_or_with_inconsistent_mark():
+    """No mark → no teardown; a mark after exit is dropped, never kept as a stage."""
+    assert WorkHandler._derive_teardown({"a": 1.0}, exited_at=5.0) == {"a": 1.0}
+    assert WorkHandler._derive_teardown(
+        {"a": 1.0, FINISHED_AT_KEY: 9.0}, exited_at=5.0
+    ) == {"a": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_handle_records_teardown_and_hides_finish_mark(tmp_path):
+    """End to end through handle(): the collector gets teardown, never the mark."""
+    config = MagicMock()
+    config.TMP_DIR = str(tmp_path)
+    handler = WorkHandler(
+        config=config,
+        progress_tracker=MagicMock(),
+        data_source_registry=MagicMock(),
+    )
+    data_source = MagicMock()
+    data_source.download = AsyncMock(side_effect=lambda _uri, path: path)
+    handler._data_source_registry.get = MagicMock(return_value=data_source)
+    handler._cleanup_directory = lambda _path: None
+
+    async def fake_subprocess(_work_unit, _file_path, metrics_sink, _token):
+        metrics_sink.write_text(json.dumps({"tiling": 3.0, FINISHED_AT_KEY: 10.0}))
+        return 10.5
+
+    handler._run_processing_subprocess = fake_subprocess
+    collector = MagicMock()
+
+    await handler.handle(_work_unit(), collector)
+
+    collector.set_stage_timings.assert_called_once_with(
+        {"tiling": 3.0, "teardown": 0.5}
+    )
