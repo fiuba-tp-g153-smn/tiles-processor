@@ -57,6 +57,7 @@ class TestCreateDataSourceRegistry:
         config.WRF_MAX_AGE_HOURS = None
         config.GLM_SAFETY_LAG_SECONDS = None
         config.GLM_TARGET_WINDOWS = None
+        config.GLM_MAX_AGE_MINUTES = None
         config.ENABLE_ECMWF_PRECIPITATION = tp
         config.ENABLE_ECMWF_MEAN_SEA_LEVEL_PRESSURE = mslp
         config.ECMWF_OPENDATA_SOURCES = ("ecmwf-ifs", "azure", "aws")

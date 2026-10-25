@@ -27,6 +27,7 @@
       "input": { "mode": "local" },
       "products": { "fed": true, "toe": true, "mfa": true },
       "target_windows": 24,
+      "max_age_minutes": 270,
       "accum_minutes": 10,
       "produce_every_minutes": 10,
       "safety_lag_seconds": 30,
