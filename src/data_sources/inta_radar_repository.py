@@ -108,11 +108,12 @@ class S3IntaRadarFileRepository(IntaRadarFileRepository):
         self, s3_client: S3Client, prefix: str = "", key_template: str | None = None
     ) -> None:
         self._s3_client = s3_client
-        self._lister = S3WindowedKeyLister(s3_client, prefix, key_template)
+        self._lister = S3WindowedKeyLister(
+            s3_client, prefix, key_template, key_suffix=".vol"
+        )
 
     async def list_files(self, window: ListingWindow | None = None) -> list[str]:
-        keys = await self._lister.list_keys(window)
-        return sorted(k for k in keys if k.lower().endswith(".vol"))
+        return await self._lister.list_keys(window)
 
     async def read_header(self, source_uri: str) -> bytes:
         return await self._s3_client.read_range(

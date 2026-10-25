@@ -400,8 +400,9 @@ input, product toggles, retention, and tuning live together.
     `max_age_minutes` window instead of a bucket's whole history. Placeholders
     are `{yyyy}`, `{mm}`, `{dd}`, `{jjj}` and `{HH}`, filled from the scan time
     in UTC; a `*` segment matches any one folder (typically one per radar).
-    Unset, the whole prefix is listed. Either way the products of a source
-    share one listing per tick.
+    Unset, or if listing the template's folders fails or finds no files
+    (logged as a warning), the whole prefix is listed. Either way the products
+    of a source share one listing per tick.
   - `s3_region` — needed only for an authenticated bucket outside `us-east-1`;
     botocore signs for `us-east-1` when it is unset.
   - `s3_addressing_style` — `path` (default; what SeaweedFS/MinIO/RustFS need),

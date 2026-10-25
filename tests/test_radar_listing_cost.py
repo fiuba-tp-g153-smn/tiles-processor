@@ -126,9 +126,17 @@ async def run_tick(repository: RadarFileRepository, now: datetime) -> set[str]:
     return found
 
 
-async def measure(layout: str, days: int, strategy: str, now: datetime = NOW):
+async def measure(
+    layout: str,
+    days: int,
+    strategy: str,
+    now: datetime = NOW,
+    template: str | None = None,
+):
+    """Pages, entries and image ids of one tick; ``template`` overrides the layout's."""
     fake = build_bucket(layout, days, now)
-    template = LAYOUTS[layout][1] if strategy == "shared + template" else None
+    if strategy == "shared + template":
+        template = template or LAYOUTS[layout][1]
     repository: RadarFileRepository = S3RadarFileRepository(
         s3_client_over(fake), prefix="radar/", key_template=template
     )
@@ -189,3 +197,19 @@ async def test_template_keeps_scans_across_midnight(layout):
 
     assert template[2] == shared[2]
     assert any("20261024T23" in image_id for image_id in template[2])
+
+
+@pytest.mark.asyncio
+async def test_wrong_template_falls_back_to_the_shared_listing():
+    """Hourly folders don't exist in a per-radar/day bucket: 4 empty LISTs, then 35."""
+    shared = await measure("per-radar/day", 1, "shared")
+    wrong = await measure(
+        "per-radar/day", 1, "shared + template", template="{yyyy}/{mm}/{dd}/{HH}/"
+    )
+
+    print(
+        f"\n   per-radar/day | 1d history | wrong template    | "
+        f"{wrong[0]:>4} LIST pages | {wrong[1]:>7} entries | {len(wrong[2])} images"
+    )
+    assert wrong[2] == shared[2]
+    assert wrong[0] == shared[0] + 4

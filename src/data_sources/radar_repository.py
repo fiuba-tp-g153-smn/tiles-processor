@@ -90,11 +90,12 @@ class S3RadarFileRepository(RadarFileRepository):
         self, s3_client: S3Client, prefix: str = "", key_template: str | None = None
     ) -> None:
         self._s3_client = s3_client
-        self._lister = S3WindowedKeyLister(s3_client, prefix, key_template)
+        self._lister = S3WindowedKeyLister(
+            s3_client, prefix, key_template, key_suffix=".h5"
+        )
 
     async def list_files(self, window: ListingWindow | None = None) -> list[str]:
-        keys = await self._lister.list_keys(window)
-        return sorted(k for k in keys if k.lower().endswith(".h5"))
+        return await self._lister.list_keys(window)
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         dest_with_ext = dest_path.with_suffix(".H5")

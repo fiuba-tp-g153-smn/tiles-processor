@@ -3,6 +3,8 @@
 import asyncio
 import logging
 
+from botocore.exceptions import BotoCoreError, ClientError
+
 from clients.s3_client import S3Client
 from data_sources.s3_repository_utils import join_s3_prefix
 from models.listing_window import ListingWindow
@@ -12,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class S3WindowedKeyLister:  # pylint: disable=too-few-public-methods
-    """Returns the keys under an input prefix, listing at most once per window.
+    """Returns the input files under a prefix, listing at most once per window.
 
     One repository serves every product source of a radar family (six for
     SINARAME, four for INTA), and they all ask for the same window in a tick:
@@ -23,25 +25,38 @@ class S3WindowedKeyLister:  # pylint: disable=too-few-public-methods
     the next source retries it.
 
     With ``key_template`` set (see ``s3_key_template``) only the partitions
-    the window overlaps are listed, instead of the whole prefix.
+    the window overlaps are listed first. If that listing fails or holds no
+    file with ``key_suffix`` — a template that does not match the bucket, or
+    folders named in another timezone — the whole prefix is listed instead and
+    a warning says so, so a wrong template costs one extra listing rather than
+    every radar file.
     """
 
     LIST_CONCURRENCY = 8
 
     def __init__(
-        self, s3_client: S3Client, prefix: str = "", key_template: str | None = None
+        self,
+        s3_client: S3Client,
+        prefix: str = "",
+        key_template: str | None = None,
+        *,
+        key_suffix: str,
     ) -> None:
         self._s3_client = s3_client
         self._prefix = prefix
         self._key_template = key_template
+        self._key_suffix = key_suffix.lower()
         self._lock = asyncio.Lock()
         self._cached_window: ListingWindow | None = None
         self._cached_keys: list[str] = []
 
     async def list_keys(self, window: ListingWindow | None = None) -> list[str]:
-        """Keys under the prefix; ``None`` lists everything and is never cached."""
+        """Sorted keys ending in ``key_suffix`` (any case).
+
+        ``None`` lists the whole prefix and is never cached.
+        """
         if window is None:
-            return await self._s3_client.list_files(self._prefix, file_pattern="")
+            return await self._list_all()
         async with self._lock:
             if window != self._cached_window:
                 self._cached_keys = await self._list_window(window)
@@ -49,23 +64,52 @@ class S3WindowedKeyLister:  # pylint: disable=too-few-public-methods
             return list(self._cached_keys)
 
     async def _list_window(self, window: ListingWindow) -> list[str]:
-        if self._key_template is None:
-            return await self._s3_client.list_files(self._prefix, file_pattern="")
+        template = self._key_template
+        if template is None:
+            return await self._list_all()
+        try:
+            keys = await self._list_partitions(template, window)
+        except (BotoCoreError, ClientError, OSError) as exc:
+            reason = f"failed ({exc})"
+        else:
+            if keys:
+                return keys
+            reason = f"found no {self._key_suffix} files"
+        logger.warning(
+            "Template '%s' listing of '%s' for %s..%s %s; listing the whole prefix "
+            "instead",
+            template,
+            self._prefix,
+            window.start.isoformat(),
+            window.end.isoformat(),
+            reason,
+        )
+        return await self._list_all()
+
+    async def _list_all(self) -> list[str]:
+        keys = await self._s3_client.list_files(self._prefix, file_pattern="")
+        return self._keep_input_files(keys)
+
+    async def _list_partitions(self, template: str, window: ListingWindow) -> list[str]:
         expanded = [
             join_s3_prefix(self._prefix, part)
-            for part in expand_time_prefixes(self._key_template, window)
+            for part in expand_time_prefixes(template, window)
         ]
         prefixes = await self._resolve_wildcards(expanded)
-        keys = await self._list_prefixes(prefixes)
+        keys = self._keep_input_files(await self._list_prefixes(prefixes))
         logger.info(
-            "Listed %d keys under %d partition prefixes of '%s' for %s..%s",
+            "Listed %d %s files under %d partition prefixes of '%s' for %s..%s",
             len(keys),
+            self._key_suffix,
             len(prefixes),
             self._prefix,
             window.start.isoformat(),
             window.end.isoformat(),
         )
         return keys
+
+    def _keep_input_files(self, keys: list[str]) -> list[str]:
+        return sorted(k for k in keys if k.lower().endswith(self._key_suffix))
 
     async def _resolve_wildcards(self, prefixes: list[str]) -> list[str]:
         """Replace each ``*`` segment by the folders that exist at that level."""
