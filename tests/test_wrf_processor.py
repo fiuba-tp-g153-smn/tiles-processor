@@ -100,12 +100,14 @@ class TestMultibandFloatWriter:
 
 @requires_gdal_cli
 class TestMultibandWarpEquivalence:
-    """One multiband tps warp + per-band split == N separate per-field warps.
+    """One multiband tps warp + per-band split ~= N separate per-field warps.
 
     The whole point of the A4 change is that warping the primary + secondary
     float fields together (they share GCPs, dtype, nodata and warp params) and
-    splitting the result yields bytes identical to warping each field on its
-    own — just far cheaper (one tps solve instead of N+1).
+    splitting the result yields the same values as warping each field on its
+    own — just far cheaper (one tps solve instead of N+1). Only NaN holes
+    differ: GDAL masks each band separately in a multiband warp, so a hole
+    shrinks to sit inside the footprint a single-band warp blanks.
     """
 
     @staticmethod
@@ -158,7 +160,14 @@ class TestMultibandWarpEquivalence:
             sep_arr, sep_crs, sep_t = self._read_band(sep_path)
             split_arr, split_crs, split_t = self._read_band(split_path)
             assert sep_arr.shape == split_arr.shape
-            assert np.array_equal(sep_arr, split_arr, equal_nan=True)
+            sep_nan, split_nan = np.isnan(sep_arr), np.isnan(split_arr)
+            both = ~sep_nan & ~split_nan
+            assert np.array_equal(sep_arr[both], split_arr[both])
+            # A single-band warp blanks a NaN source cell's whole footprint; the
+            # multiband warp masks each band separately and fills the hole's edge
+            # from valid neighbours, so its NaN hole sits inside the old one.
+            assert split_nan.any()
+            assert not (split_nan & ~sep_nan).any()
             assert sep_crs == split_crs
             assert sep_t.almost_equals(split_t)
 

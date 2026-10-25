@@ -428,8 +428,9 @@ class WrfProcessor(ImageProcessor):
             # params, so the expensive thin-plate-spline solve + per-pixel
             # mapping runs ONCE over a stacked multiband raster instead of once
             # per field (the old primary + N secondary warps). Each band is then
-            # split out into its own single-band COG — pixel-identical to
-            # warping separately. Bilinear keeps NaN/finite transitions clean.
+            # split out into its own single-band COG — same values as warping
+            # separately, though NaN holes come out slightly smaller (GDAL masks
+            # each band separately). Bilinear keeps NaN/finite transitions clean.
             cog_path = work_dir / f"{work_unit.image_id}_cog.tif"
             with self._time_stage("cog"):
                 warped_stack_path, secondary_vars = self._warp_float_stack(
@@ -952,8 +953,9 @@ class WrfProcessor(ImageProcessor):
 
         Uses ``gdal_translate -b N -of COG`` with the same creation options the
         primary/secondary COGs used when each was warped separately, so every
-        output band is pixel-identical to the old per-field pipeline and a valid
-        COG. NaN nodata carried on the source band is preserved.
+        output band is a valid COG with the same values as the old per-field
+        pipeline (NaN holes may be slightly smaller, as the multiband warp masks
+        each band separately). NaN nodata carried on the source band is preserved.
         """
         tmp_path = output_path.parent / f"{uuid.uuid4()}.tif"
         cmd = [
