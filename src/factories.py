@@ -208,6 +208,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
                 produce_every_minutes=config.GLM_PRODUCE_EVERY_MINUTES,
                 safety_lag_seconds=config.GLM_SAFETY_LAG_SECONDS,
                 target_windows=config.GLM_TARGET_WINDOWS,
+                max_age_minutes=config.GLM_MAX_AGE_MINUTES,
             )
         )
 
@@ -252,6 +253,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
                         wrf_config,
                         wrf_repository,
                         target_runs=config.WRF_TARGET_RUNS,
+                        max_age_hours=config.WRF_MAX_AGE_HOURS,
                     )
                 )
 

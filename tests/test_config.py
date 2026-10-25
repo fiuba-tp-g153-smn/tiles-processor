@@ -648,9 +648,13 @@ class TestConfig:
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
             "sources": {
                 "goes19-abi": {"target_images": 30, "max_hours_back": 8},
-                "goes19-glm": {"safety_lag_seconds": 45, "target_windows": 12},
+                "goes19-glm": {
+                    "safety_lag_seconds": 45,
+                    "target_windows": 12,
+                    "max_age_minutes": 120,
+                },
                 "radar-sinarame": {"target_images": 6},
-                "wrf-arg4k": {"target_runs": 5},
+                "wrf-arg4k": {"target_runs": 5, "max_age_hours": 12},
             },
         }
         path = tmp_path / "settings.json"
@@ -661,8 +665,10 @@ class TestConfig:
             assert config.GOES_MAX_HOURS_BACK == 8
             assert config.GLM_SAFETY_LAG_SECONDS == 45
             assert config.GLM_TARGET_WINDOWS == 12
+            assert config.GLM_MAX_AGE_MINUTES == 120
             assert config.RADAR_TARGET_IMAGES == 6
             assert config.WRF_TARGET_RUNS == 5
+            assert config.WRF_MAX_AGE_HOURS == 12
 
     def test_discovery_knobs_absent_are_none(self, temp_settings_file, env_vars):
         """Unset knobs are None so the data source keeps its class-constant default."""
@@ -673,7 +679,9 @@ class TestConfig:
             assert config.RADAR_MAX_AGE_MINUTES is None
             assert config.INTA_MAX_AGE_MINUTES is None
             assert config.WRF_TARGET_RUNS is None
+            assert config.WRF_MAX_AGE_HOURS is None
             assert config.GLM_SAFETY_LAG_SECONDS is None
+            assert config.GLM_MAX_AGE_MINUTES is None
 
     def test_discovery_knob_rejects_zero_and_non_int(self, tmp_path, env_vars):
         """A target count below 1 fails fast, naming the JSON path."""

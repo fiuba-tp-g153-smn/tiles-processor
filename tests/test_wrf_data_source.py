@@ -1,8 +1,8 @@
 """Tests for WrfDataSource using a mock WrfFileRepository.
 
-Mirrors tests/test_radar_data_source.py: the discovery cap is count-based
-(newest TARGET_RUNS init_tags) over the post-dedup candidate set, so older runs
-drain backward over successive cycles instead of being permanently ignored.
+Discovery keeps runs that started within the max age window, then caps them
+to the newest TARGET_RUNS init_tags before dedup, so a run already processed
+never lets an older one through.
 """
 
 from datetime import datetime, timezone
@@ -18,13 +18,14 @@ from models.wrf_config import WRF_PRODUCT_CONFIGS, parse_wrf_filename
 COLMAX_CONFIG = WRF_PRODUCT_CONFIGS["colmax"]  # skip_f000=False (F000 kept)
 PRECIP_CONFIG = WRF_PRODUCT_CONFIGS["precipitacion-1h"]  # skip_f000=True (F000 dropped)
 
-# init_tags in chronological (== lexicographic) order, oldest first.
+# init_tags in chronological (== lexicographic) order, oldest first: the 6-hourly
+# cadence of the real feed, all within the 24 h window of the 12:00 discovery.
 RUNS_OLD_TO_NEW = [
-    "20260530_000000",
-    "20260530_120000",
-    "20260531_000000",
     "20260531_120000",
+    "20260531_180000",
     "20260601_000000",
+    "20260601_060000",
+    "20260601_120000",
 ]
 
 
@@ -91,8 +92,8 @@ async def test_target_runs_override_caps_to_newest_n():
 
 
 @pytest.mark.asyncio
-async def test_dedup_lets_older_runs_drain_backward():
-    """Newest 3 runs already processed → the next-oldest runs surface (paced)."""
+async def test_processed_runs_do_not_let_older_runs_through():
+    """Newest 3 runs already processed → nothing; older runs are never shown."""
     files = [wrf_file(run, f) for run in RUNS_OLD_TO_NEW for f in range(3)]
     existing = {
         image_id("colmax", run, f) for run in RUNS_OLD_TO_NEW[-3:] for f in range(3)
@@ -101,8 +102,56 @@ async def test_dedup_lets_older_runs_drain_backward():
 
     images = await source.discover_images(make_discovery_config(existing=existing))
 
-    assert init_tags_of(images) == set(RUNS_OLD_TO_NEW[:2])
-    assert len(images) == 2 * 3
+    assert images == []
+
+
+@pytest.mark.asyncio
+async def test_partially_processed_run_resumes_its_missing_steps():
+    """The cap counts runs, not steps: a half-done newest run keeps its slot."""
+    files = [wrf_file(RUNS_OLD_TO_NEW[-1], f) for f in range(3)]
+    existing = {image_id("colmax", RUNS_OLD_TO_NEW[-1], 0)}
+    source = WrfDataSource(COLMAX_CONFIG, make_repo(files))
+
+    images = await source.discover_images(make_discovery_config(existing=existing))
+
+    assert fnums_of(images) == {1, 2}
+
+
+@pytest.mark.asyncio
+async def test_runs_older_than_max_age_are_skipped():
+    """Discovery at 12:00 with the 24 h default keeps runs from 12:00 the day before."""
+    files = [
+        wrf_file("20260531_120000", 0),
+        wrf_file("20260531_060000", 0),
+        wrf_file("20260520_000000", 0),
+    ]
+    source = WrfDataSource(COLMAX_CONFIG, make_repo(files))
+
+    images = await source.discover_images(make_discovery_config())
+
+    assert init_tags_of(images) == {"20260531_120000"}
+
+
+@pytest.mark.asyncio
+async def test_old_runs_do_not_take_slots_of_the_cap():
+    """With only stale runs besides the newest, the cap does not reach back."""
+    files = [wrf_file(run, 0) for run in ("20260601_060000", "20260520_000000")]
+    source = WrfDataSource(COLMAX_CONFIG, make_repo(files), max_age_hours=12)
+
+    images = await source.discover_images(make_discovery_config())
+
+    assert init_tags_of(images) == {"20260601_060000"}
+
+
+@pytest.mark.asyncio
+async def test_unparseable_init_tag_is_skipped():
+    """An init_tag that is not a real date is dropped, not raised."""
+    files = [wrf_file("20261332_000000", 0), wrf_file("20260601_000000", 0)]
+    source = WrfDataSource(COLMAX_CONFIG, make_repo(files))
+
+    images = await source.discover_images(make_discovery_config())
+
+    assert init_tags_of(images) == {"20260601_000000"}
 
 
 @pytest.mark.asyncio
