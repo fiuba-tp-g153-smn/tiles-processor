@@ -221,6 +221,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
                     repository,
                     config.RADAR_STATION_FILTER,
                     target_images=config.RADAR_TARGET_IMAGES,
+                    max_age_minutes=config.RADAR_MAX_AGE_MINUTES,
                 )
             )
 

@@ -50,6 +50,7 @@ class TestCreateDataSourceRegistry:
         config.GOES_TARGET_IMAGES = None
         config.GOES_MAX_HOURS_BACK = None
         config.RADAR_TARGET_IMAGES = None
+        config.RADAR_MAX_AGE_MINUTES = None
         config.INTA_TARGET_IMAGES = None
         config.WRF_TARGET_RUNS = None
         config.GLM_SAFETY_LAG_SECONDS = None

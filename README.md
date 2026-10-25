@@ -327,6 +327,7 @@ input, product toggles, retention, and tuning live together.
         "rhohv": true, "kdp": true, "vrad": true
       },
       "target_images": 12,
+      "max_age_minutes": 150,
       "zoom_levels": "4-9",
       "light_queue": "all",
       "retention_days": 1
@@ -420,11 +421,14 @@ input, product toggles, retention, and tuning live together.
 - **`sources.<name>.products`**: Enable/disable individual products without a rebuild.
 - **Per-source discovery/cadence knobs** (all optional — omitting one keeps the
   source's built-in default): `goes19-abi.target_images` /
-  `goes19-abi.max_hours_back`, `radar-sinarame.target_images`,
-  `wrf-arg4k.target_runs`, `goes19-glm.safety_lag_seconds` /
-  `goes19-glm.target_windows`. They cap how much each source publishes per tick and how
-  far back discovery looks. Counts must be integers ≥ 1; `max_hours_back` /
-  `safety_lag_seconds` may be 0.
+  `goes19-abi.max_hours_back`, `radar-sinarame.target_images` /
+  `radar-sinarame.max_age_minutes`, `wrf-arg4k.target_runs`,
+  `goes19-glm.safety_lag_seconds` / `goes19-glm.target_windows`. They cap how much
+  each source publishes per tick and how far back discovery looks. Counts must be
+  integers ≥ 1; `max_hours_back` / `safety_lag_seconds` may be 0.
+  `max_age_minutes` (default 150) drops radar scans whose filename timestamp is
+  older than that, so the backlog is never processed or reprocessed once its
+  tiles expire.
 - **`sources.<name>.zoom_levels`**: gdal2tiles zoom range as a `"MIN-MAX"` string
   (e.g. `"3-7"`; radar defaults to `"4-9"`, WRF to `"4-6"`). Zoom depth is the
   biggest driver of tile count / S3 storage / tiling time. Defaults match the
