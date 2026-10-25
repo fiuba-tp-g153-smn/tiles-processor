@@ -266,6 +266,55 @@ class MetricsExport(BaseModel):
     }
 
 
+class TimelinePayload(BaseModel):
+    """Columnar finished jobs for the dashboard timeline (``/api/timeline``).
+
+    Documentation only: the endpoint serializes the dict from
+    ``metrics_api.timeline_codec`` directly. Rows are sorted by start time and
+    every per-row array has one entry per job.
+    """
+
+    v: int = Field(description="Format version (currently 1)")
+    t0: int | None = Field(
+        description="Epoch ms of the earliest start (null when there are no jobs)"
+    )
+    types: list[str] = Field(description="Distinct job types")
+    labels: list[str | None] = Field(
+        description="Product label per entry of `types` (from its latest job)"
+    )
+    outcomes: list[str] = Field(description="Distinct outcomes")
+    workers: list[str | None] = Field(description="Distinct worker hosts")
+    id: list[int] = Field(
+        description="Job ids: first absolute, then the difference from the previous"
+    )
+    type: list[int] = Field(description="Per job: index into `types`")
+    outcome: list[int] = Field(description="Per job: index into `outcomes`")
+    worker: list[int] = Field(description="Per job: index into `workers`")
+    start: list[int] = Field(
+        description="Start in ms: first relative to `t0`, then from the previous start"
+    )
+    dur: list[int] = Field(description="finished_at - started_at, in ms")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "v": 1,
+                "t0": 1780531200000,
+                "types": ["goes19_abi_c13", "radar_sinarame_dbzh"],
+                "labels": ["GOES-19 ABI c13 · Cloud Tops", "Radar RMA12 DBZH"],
+                "outcomes": ["success", "dlq"],
+                "workers": ["worker1", "worker2"],
+                "id": [1287, 1, 1],
+                "type": [0, 1, 0],
+                "outcome": [0, 1, 0],
+                "worker": [0, 1, 0],
+                "start": [0, 412, 3071],
+                "dur": [44310, 3000, 42100],
+            }
+        }
+    }
+
+
 class ImportResult(BaseModel):
     """Outcome of an import (``POST /api/import``)."""
 

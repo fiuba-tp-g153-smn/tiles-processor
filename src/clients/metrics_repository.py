@@ -189,6 +189,32 @@ class MetricsRepository:
             ).fetchall()
         return [self._job_to_dict(row) for row in rows]
 
+    def timeline_rows(self, since: str, before: str | None = None) -> list[sqlite3.Row]:
+        """Finished jobs in ``since <= finished_at < before``, timeline columns only.
+
+        Reads just what the dashboard timeline draws (no stage timings, errors
+        or per-row JSON), via the ``finished_at`` index. Unbounded within the
+        window: callers must always pass ``since``.
+        """
+        query = (
+            "SELECT id, job_type, product_label, outcome, worker_host, "
+            "started_at, finished_at FROM job_metrics WHERE finished_at >= ?"
+        )
+        params: list[Any] = [since]
+        if before:
+            query += " AND finished_at < ?"
+            params.append(before)
+        with self._connect() as conn:
+            return conn.execute(query, params).fetchall()
+
+    def get_job(self, job_id: int) -> dict[str, Any] | None:
+        """One finished job by id, shaped like a ``recent_jobs`` row (None if absent)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM job_metrics WHERE id = ?", (job_id,)
+            ).fetchone()
+        return self._job_to_dict(row) if row else None
+
     def timing_series(
         self, bucket: str = "hour", since: str | None = None
     ) -> list[dict[str, Any]]:

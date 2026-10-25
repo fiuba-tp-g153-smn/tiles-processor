@@ -36,8 +36,10 @@ from metrics_api.schemas import (
     MetricsExport,
     RootStatus,
     ThroughputBucket,
+    TimelinePayload,
     TimingSeriesPoint,
 )
+from metrics_api.timeline_codec import encode_timeline
 from db.migrate import ensure_migrations
 
 logger = logging.getLogger(__name__)
@@ -324,6 +326,57 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
             since=effective_since,
             before=before,
         )
+
+    @app.get(
+        "/api/jobs/{job_id}",
+        response_model=JobRecord,
+        tags=["metrics"],
+        summary="One finished job by id",
+        description="The full record of one job, as returned by `/api/jobs`.",
+        responses={404: {"description": "No job with that id."}},
+    )
+    def api_job(job_id: int) -> dict:
+        job = repo.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        return job
+
+    @app.get(
+        "/api/timeline",
+        responses={
+            200: {"model": TimelinePayload, "description": "Columnar jobs."},
+            422: {"description": "No time window (`hours`, `since`) was given."},
+        },
+        tags=["metrics"],
+        summary="Finished jobs for the timeline (compact, columnar)",
+        description=(
+            "Every job finished in the window, with only the fields the "
+            "dashboard timeline draws, as parallel arrays (see the schema). "
+            "A window is required: there is no row cap."
+        ),
+    )
+    def api_timeline(
+        hours: int | None = _hours,
+        since: str | None = Query(
+            None,
+            description="ISO8601 lower bound (finished_at >= since); overrides `hours`.",
+            examples=["2026-06-01T00:00:00+00:00"],
+        ),
+        before: str | None = Query(
+            None,
+            description="ISO8601 upper bound (finished_at < before).",
+            examples=["2026-06-08T00:00:00+00:00"],
+        ),
+    ) -> Response:
+        effective_since = since or _since_from_hours(hours)
+        if not effective_since:
+            raise HTTPException(
+                status_code=422, detail="A time window is required: hours or since"
+            )
+        # Raw orjson Response (no response_model), like /api/export: the payload
+        # is already JSON-native and skipping Pydantic is most of the speedup.
+        payload = encode_timeline(repo.timeline_rows(effective_since, before))
+        return Response(orjson.dumps(payload), media_type="application/json")
 
     @app.get(
         "/api/throughput",

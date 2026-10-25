@@ -144,6 +144,71 @@ def test_jobs_limit_zero_with_window_is_unbounded(client):
     assert captured["since"] == since
 
 
+_ALL_SEEDED = {"since": "2026-06-01T00:00:00+00:00"}
+
+
+def test_timeline_returns_columnar_payload(client):
+    r = client.get("/api/timeline", params=_ALL_SEEDED)
+    assert r.status_code == 200
+    data = r.json()
+
+    assert data["v"] == 1
+    assert set(data["types"]) == {"goes19_abi_c13", "radar_sinarame_dbzh"}
+    assert set(data["outcomes"]) == {"success", "dlq"}
+    for key in ("id", "type", "outcome", "worker", "start", "dur"):
+        assert len(data[key]) == 4
+    assert data["start"][0] == 0  # first start is relative to t0
+    assert data["dur"][0] == 44_000  # seeded jobs run 00:00 -> 00:44
+
+
+def test_timeline_since_before_window(client):
+    data = client.get(
+        "/api/timeline",
+        params={
+            "since": "2026-06-04T01:00:00+00:00",
+            "before": "2026-06-04T05:00:00+00:00",
+        },
+    ).json()
+    assert len(data["id"]) == 2  # finished 01:00:44 and 02:00:44
+
+
+def test_timeline_hours_window_can_be_empty(client):
+    # Seeded rows are dated 2026-06-04, outside a 1h lookback.
+    data = client.get("/api/timeline?hours=1").json()
+    assert data["t0"] is None
+    assert data["id"] == []
+
+
+@pytest.mark.parametrize("query", ["", "?hours=0", "?before=2026-06-05T00:00:00Z"])
+def test_timeline_requires_a_window(client, query):
+    assert client.get(f"/api/timeline{query}").status_code == 422
+
+
+def test_timeline_is_gzip_compressed_when_large(client, tmp_path):
+    # The columnar body is ~20 B/job: 30 more seed batches push it past the
+    # middleware's 1 KB threshold.
+    for _ in range(30):
+        _seed(tmp_path / "metrics.db")
+    r = client.get(
+        "/api/timeline", params=_ALL_SEEDED, headers={"Accept-Encoding": "gzip"}
+    )
+    assert r.headers.get("content-encoding") == "gzip"
+    assert len(r.json()["id"]) == 124
+
+
+def test_job_by_id_returns_full_record(client):
+    job_id = client.get("/api/jobs?limit=1").json()[0]["id"]
+    r = client.get(f"/api/jobs/{job_id}")
+    assert r.status_code == 200
+    job = r.json()
+    assert job["id"] == job_id
+    assert "stage_timings" in job and "error_message" in job
+
+
+def test_job_by_id_unknown_is_404(client):
+    assert client.get("/api/jobs/999999").status_code == 404
+
+
 def test_summary_groups_by_type(client):
     s = client.get("/api/summary").json()
     by_type = {x["job_type"]: x for x in s}
@@ -290,6 +355,11 @@ def test_swagger_and_openapi_available(client):
     spec = client.get("/openapi.json").json()
     assert "/api/export" in spec["paths"]
     assert "/api/import" in spec["paths"]
+    assert "/api/jobs/{job_id}" in spec["paths"]
+    timeline = spec["paths"]["/api/timeline"]["get"]["responses"]["200"]
+    assert (
+        "TimelinePayload" in timeline["content"]["application/json"]["schema"]["$ref"]
+    )
     # the import path documents the 409 mismatch response
     assert "409" in spec["paths"]["/api/import"]["post"]["responses"]
 

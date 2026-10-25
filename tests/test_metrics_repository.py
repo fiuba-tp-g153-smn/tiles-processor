@@ -226,6 +226,55 @@ def test_recent_jobs_before_bounds_window(tmp_path):
     assert [j["image_id"] for j in window] == ["img2", "img1"]
 
 
+def test_timeline_rows_respects_half_open_window(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    for i in range(5):  # finished at 00:00..00:04
+        repo.record(
+            _make_metrics(f"img{i}", finished_at=f"2026-06-04T00:0{i}:00+00:00")
+        )
+
+    since_only = repo.timeline_rows("2026-06-04T00:03:00+00:00")
+    window = repo.timeline_rows(
+        "2026-06-04T00:01:00+00:00", before="2026-06-04T00:03:00+00:00"
+    )
+
+    assert len(since_only) == 2
+    assert sorted(r["finished_at"] for r in window) == [
+        "2026-06-04T00:01:00+00:00",
+        "2026-06-04T00:02:00+00:00",
+    ]
+
+
+def test_timeline_rows_selects_only_timeline_columns(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    repo.record(_make_metrics())
+
+    (row,) = repo.timeline_rows("2026-01-01T00:00:00+00:00")
+
+    assert set(row.keys()) == {
+        "id",
+        "job_type",
+        "product_label",
+        "outcome",
+        "worker_host",
+        "started_at",
+        "finished_at",
+    }
+
+
+def test_get_job_returns_full_record_or_none(tmp_path):
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    repo.record(_make_metrics("img1"))
+    job_id = repo.recent_jobs(limit=1)[0]["id"]
+
+    job = repo.get_job(job_id)
+
+    assert job is not None
+    assert job["image_id"] == "img1"
+    assert job["stage_timings"] == {"georef": 3.2, "tiling": 19.3}
+    assert repo.get_job(job_id + 1) is None
+
+
 def test_concurrent_writes_do_not_collide(tmp_path):
     """Simulate several workers writing concurrently to one WAL database.
 
