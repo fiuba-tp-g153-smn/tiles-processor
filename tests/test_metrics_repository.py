@@ -140,6 +140,29 @@ def test_summary_keeps_idle_types_in_window(tmp_path):
     assert summary[0]["job_type"] == "type_a"
 
 
+def test_summary_idle_types_use_their_newest_row(tmp_path):
+    """Idle types across several job types report their newest label and run."""
+    repo = MetricsRepository(tmp_path / "metrics.db")
+    for job_type in ("type_c", "type_a", "type_b"):  # out of order on purpose
+        for hour, label in ((0, "old"), (2, "new"), (1, "mid")):
+            repo.record(
+                _make_metrics(
+                    f"{job_type}-{hour}",
+                    finished_at=f"2026-06-04T0{hour}:00:00+00:00",
+                    job_type=job_type,
+                    product_label=f"{job_type} {label}",
+                )
+            )
+
+    summary = repo.summary(since="2026-06-05T00:00:00+00:00")  # all idle
+    by_type = {s["job_type"]: s for s in summary}
+
+    assert set(by_type) == {"type_a", "type_b", "type_c"}
+    for job_type, entry in by_type.items():
+        assert entry["product_label"] == f"{job_type} new"
+        assert entry["last_finished"] == "2026-06-04T02:00:00+00:00"
+
+
 def test_summary_all_time_window_is_unchanged(tmp_path):
     """With no window, every type is present from real rows — no padded duplicates."""
     repo = MetricsRepository(tmp_path / "metrics.db")

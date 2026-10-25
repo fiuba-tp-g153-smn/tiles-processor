@@ -205,8 +205,10 @@ def create_app(config: Config) -> FastAPI:  # pylint: disable=too-many-locals
     )
 
     # Compress large JSON bodies (the all-time export gzips ~10x); only kicks in
-    # above the size threshold so small responses are untouched.
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    # above the size threshold so small responses are untouched. Level 6, not
+    # Starlette's default 9: on production data it is ~4.5x faster (7d timeline
+    # 563 -> 124 ms) for output within ~1% of the size.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
     # Uvicorn's per-request access log is disabled (run_metrics_api); instead emit
     # one consolidated line per dashboard poll (the ~6 simultaneous requests).

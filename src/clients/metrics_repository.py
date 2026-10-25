@@ -23,6 +23,24 @@ logger = logging.getLogger(__name__)
 # Outcome values aggregated into per-type counts (see models.job_metrics).
 _OUTCOMES = ("success", "error", "dlq", "requeued", "skipped")
 
+# Distinct job types via an index skip-scan (one lookup per type on
+# idx_metrics_type_finished), each with its newest row's label and finish time.
+_KNOWN_TYPES_SQL = """
+WITH RECURSIVE types(name) AS (
+    SELECT MIN(job_type) FROM job_metrics
+    UNION ALL
+    SELECT (SELECT MIN(job_type) FROM job_metrics WHERE job_type > types.name)
+    FROM types WHERE types.name IS NOT NULL
+)
+SELECT
+    name AS job_type,
+    (SELECT product_label FROM job_metrics WHERE job_type = types.name
+     ORDER BY finished_at DESC LIMIT 1) AS product_label,
+    (SELECT MAX(finished_at) FROM job_metrics WHERE job_type = types.name)
+        AS last_finished
+FROM types WHERE name IS NOT NULL
+"""
+
 
 class MetricsRepository:
     """Read/write access to the ``job_metrics`` table."""
@@ -225,7 +243,11 @@ class MetricsRepository:
         the timing-evolution, p95-trend and per-stage stacked-area charts.
         """
         width = {"day": 10, "10min": 15}.get(bucket, 13)
-        clauses = ["outcome = 'success'"]
+        # The unary ``+`` keeps SQLite off ``idx_metrics_outcome``: ~93% of rows
+        # are successes, so that index scans nearly the whole table, yet the
+        # planner prefers it even after ANALYZE. Filtering on the time index
+        # instead is ~7x faster for 24h on production data.
+        clauses = ["+outcome = 'success'"]
         params: list[Any] = []
         if since:
             clauses.append("finished_at >= ?")
@@ -366,15 +388,15 @@ class MetricsRepository:
     def _known_types(self) -> list[tuple[str, str | None, str]]:
         """Every job_type ever recorded, with its latest label and last-run time.
 
-        A single ``MAX(finished_at)`` makes the bare ``product_label`` come from
-        that same (most recent) row in SQLite, so the label stays current. Backed
-        by the ``(job_type, finished_at)`` index.
+        Runs on every summary call, so it must not read the whole table: a plain
+        ``GROUP BY job_type`` walks all ~1M index entries (~300 ms). Instead
+        ``_KNOWN_TYPES_SQL`` hops from one distinct type to the next through the
+        ``(job_type, finished_at)`` index and reads each type's newest row
+        directly (~0.2 ms). The label comes from that newest row, so it stays
+        current.
         """
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT job_type, product_label, MAX(finished_at) AS last_finished "
-                "FROM job_metrics GROUP BY job_type"
-            ).fetchall()
+            rows = conn.execute(_KNOWN_TYPES_SQL).fetchall()
         return [
             (row["job_type"], row["product_label"], row["last_finished"])
             for row in rows
