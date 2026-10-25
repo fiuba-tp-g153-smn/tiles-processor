@@ -393,43 +393,46 @@ zookeeper = ["kazoo"]
 
 [[package]]
 name = "arm-pyart"
-version = "1.19.5"
+version = "2.3.0"
 description = "Py-ART: Python ARM Radar Toolkit"
 optional = false
-python-versions = ">=3.9"
+python-versions = ">=3.11"
 groups = ["main"]
 files = [
-    {file = "arm_pyart-1.19.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:9ebaf9cd701ce46b2b9a88524e2b836a7dddda36b2e89655d75ccab437d43d57"},
-    {file = "arm_pyart-1.19.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:0a24805fc2025a4c88a119ad40e34b7de7089073d449db97efdd720cfc4461fd"},
-    {file = "arm_pyart-1.19.5-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c319803d5992eaf86a767e15ee1e844ff9724edc8a7f216645cc0f2a7708b534"},
-    {file = "arm_pyart-1.19.5-cp310-cp310-win_amd64.whl", hash = "sha256:25b18b346d275d071288e24e281d9890fc8e9bcb9fdb1624bf383f41ee2bb000"},
-    {file = "arm_pyart-1.19.5-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:cd0b2cd92d98be69821b46ddf7c441d48ac6f4e503bd9e99c957a60b7fe95749"},
-    {file = "arm_pyart-1.19.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:0a9cec45dda9f2d7b40360abdc2ac947446029ea5f28d819053c77bbe75f44ae"},
-    {file = "arm_pyart-1.19.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fe8de4d52664e1ff2760786b1ce6ed4a9553e660a5ae7ece764afe6a57ea3e20"},
-    {file = "arm_pyart-1.19.5-cp311-cp311-win_amd64.whl", hash = "sha256:a8ccc59d81885fd6cd0c4534f23c7f9160adb600eab36b62c30ccba409e0cb1c"},
-    {file = "arm_pyart-1.19.5-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:94686d40842b8393c14a0d5b3641eead2ba6c460df89a6c64d0bf28428c78d38"},
-    {file = "arm_pyart-1.19.5-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:8668ee382e9e3ed0acda5e856859c6a3015f68781103cd9e6c743e6441218d5e"},
-    {file = "arm_pyart-1.19.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a1d549772591312b0abde83c20a2fe7da8e0caeb6ee1c935028eae67a87417c5"},
-    {file = "arm_pyart-1.19.5-cp312-cp312-win_amd64.whl", hash = "sha256:4b5525045af48ca3fe127372141a086ecf6638cb08a240cbb8191b2693ea0af3"},
-    {file = "arm_pyart-1.19.5.tar.gz", hash = "sha256:0b69e9d562f4464ef5c24324be585c999e8df0926bf0b25e34ea85f74c939d42"},
+    {file = "arm_pyart-2.3.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:9b40303fff1c0ebf6f862a9210b75b8705f6d093f556cc0d0ec8bd785839f9b3"},
+    {file = "arm_pyart-2.3.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:177ff8cbbba523ef57ffe754522b3e534c751ccf3e68f3be69929052cfe6b961"},
+    {file = "arm_pyart-2.3.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f553af493a31be895b9cba31471c835231bbdaaed42a0352f2dc55ee78b314d2"},
+    {file = "arm_pyart-2.3.0-cp311-cp311-win_amd64.whl", hash = "sha256:320613dcb42b73389a1203b8d584015264d5606935cb97beff041bf99e37d6d6"},
+    {file = "arm_pyart-2.3.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:38cc24c63e9165ed82114b8d13be59cefd0da3dd7fd9476cacb236bf20f92384"},
+    {file = "arm_pyart-2.3.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:fe7e26669bdac301088aaab6f9d270ebb45518e02f74debef592ae0669cf5d39"},
+    {file = "arm_pyart-2.3.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6d910b12a5a6760d5d0cacc7ea840ec7fa5fabe9068ddea3e2e78aab23880063"},
+    {file = "arm_pyart-2.3.0-cp312-cp312-win_amd64.whl", hash = "sha256:b737a5241d0518023b4b6c195af6f246c9c06d3fdc672c36464d827ea15e77bf"},
+    {file = "arm_pyart-2.3.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:931a5a9d23c8e7d55c715118e20bd7a1d757ece5a121a6c9433d171279ceb98a"},
+    {file = "arm_pyart-2.3.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:c786cc2c7436f472620695c826b03ee1ca0bff34ab8b5d755134f70ee266d121"},
+    {file = "arm_pyart-2.3.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0ebfe75509a42b1ad6dab3de75647816918396c90a28d69532e7a0594b63f5dd"},
+    {file = "arm_pyart-2.3.0-cp313-cp313-win_amd64.whl", hash = "sha256:48a4ac77f62f0a3db2fb2867ab336a6d058f8e8222e39c9649900c6b788f9fc7"},
+    {file = "arm_pyart-2.3.0-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:a95c54d10ecda8d22c6ca6d6d7b89da6d9398ba70799bec40846a439741d21fa"},
+    {file = "arm_pyart-2.3.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:a84e36e0eabeffb9daccab29565975c2be3b8f8fc083d48851d5b4d0e8ee2676"},
+    {file = "arm_pyart-2.3.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a88d2d3005889d13857d0d2d30ab3f3536bdb881098629c33d12c375d2ac21bf"},
+    {file = "arm_pyart-2.3.0-cp314-cp314-win_amd64.whl", hash = "sha256:ca12bd8c5036dacd4904e1fb52c2c209b5cde253c70bdd5e9553589f2aa8db5d"},
+    {file = "arm_pyart-2.3.0.tar.gz", hash = "sha256:413b522005f64c10aacef388a7ba68789d245c524df8fa0bb676d96605b6dc7c"},
 ]
 
 [package.dependencies]
-cartopy = "*"
-cftime = "*"
-fsspec = "*"
-matplotlib = "*"
-mda-xdrlib = "*"
-netCDF4 = "*"
-numpy = "*"
-open_radar_data = "*"
-pandas = "*"
-pint = "*"
-pooch = "*"
-s3fs = "*"
-scipy = "*"
+cartopy = ">=0.22.0"
+cftime = ">=1.5.2"
+fsspec = ">=2021.11.0"
+matplotlib = ">=3.5.0"
+netcdf4 = ">=1.7.2"
+numpy = ">=1.21.2"
+open-radar-data = ">=0.5.0"
+pandas = ">=1.3.4"
+pint = ">=0.18.0"
+pooch = ">=1.5.2"
+s3fs = ">=2021.11.0"
+scipy = ">=1.7.3"
 xarray = ">=2024.10.0"
-xradar = ">=0.8.0"
+xradar = ">=0.12.0"
 
 [[package]]
 name = "astroid"
@@ -2445,21 +2448,6 @@ files = [
 ]
 
 [[package]]
-name = "mda-xdrlib"
-version = "0.2.0"
-description = "Stand-alone XDRLIB module (from cpython 3.10.8)"
-optional = false
-python-versions = ">=3.7"
-groups = ["main"]
-files = [
-    {file = "mda_xdrlib-0.2.0-py3-none-any.whl", hash = "sha256:0d1757b339f5db2d017a89ddaae06a82cd7a2cce26b8063df9f52b64e933fb47"},
-    {file = "mda_xdrlib-0.2.0.tar.gz", hash = "sha256:f26f7158a83c32b96d15b530fce2cbc1190c4b7024e41faa4ab3e3db74e272af"},
-]
-
-[package.extras]
-testing = ["pytest"]
-
-[[package]]
 name = "multidict"
 version = "6.9.1"
 description = "multidict implementation"
@@ -4065,14 +4053,14 @@ use-chardet-on-py3 = ["chardet (>=3.0.2,<8)"]
 
 [[package]]
 name = "rioxarray"
-version = "0.21.0"
+version = "0.22.0"
 description = "geospatial xarray extension powered by rasterio"
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "rioxarray-0.21.0-py3-none-any.whl", hash = "sha256:f8793822f09ab7de3a82ffe711beff4cdf313a860ff86df0942f3385374ac562"},
-    {file = "rioxarray-0.21.0.tar.gz", hash = "sha256:a292d96f4d6412c05ff09629b72523ae2e9c42598183f5e9c555fc368f867c0f"},
+    {file = "rioxarray-0.22.0-py3-none-any.whl", hash = "sha256:db0aa55cd36a95060968f2e6574107829def29d43a563560b90bc642d0bd6a3b"},
+    {file = "rioxarray-0.22.0.tar.gz", hash = "sha256:3f55f23a632ffd9eff13463634227f4afbbcf298947536e161f6cf2ce88d4373"},
 ]
 
 [package.dependencies]
@@ -4080,7 +4068,7 @@ numpy = ">=2"
 packaging = "*"
 pyproj = ">=3.3"
 rasterio = ">=1.4.3"
-xarray = ">=2024.7.0,<2025.12"
+xarray = ">=2026.2"
 
 [package.extras]
 all = ["scipy"]
@@ -5631,29 +5619,30 @@ files = [
 
 [[package]]
 name = "xarray"
-version = "2025.11.0"
+version = "2026.9.0"
 description = "N-D labeled arrays and datasets in Python"
 optional = false
 python-versions = ">=3.11"
 groups = ["main"]
 files = [
-    {file = "xarray-2025.11.0-py3-none-any.whl", hash = "sha256:986893b995de4a948429356a3897d78e634243c1cac242bd59d03832b9d72dd1"},
-    {file = "xarray-2025.11.0.tar.gz", hash = "sha256:d7a4aa4500edbfd60676b1613db97da309ab144cac0bcff0cbf483c61c662af1"},
+    {file = "xarray-2026.9.0-py3-none-any.whl", hash = "sha256:fe349fa871628b1a0a5217af3fe1283a2862d5485156e6eda354fffb81c3bb7c"},
+    {file = "xarray-2026.9.0.tar.gz", hash = "sha256:6abc69694c22fa1f0fb2f357ff4e41d88beb4477ed71091f944b7dbf67ed54fe"},
 ]
 
 [package.dependencies]
 numpy = ">=1.26"
-packaging = ">=24.1"
+packaging = ">=24.2"
 pandas = ">=2.2"
 
 [package.extras]
-accel = ["bottleneck", "flox (>=0.9)", "numba (>=0.62)", "numbagg (>=0.8)", "opt_einsum", "scipy (>=1.13)"]
+accel = ["bottleneck", "flox (>=0.10)", "numba (>=0.62)", "numbagg (>=0.9,!=0.9.5)", "opt_einsum", "scipy (>=1.15)"]
+arrow = ["pyarrow"]
 complete = ["xarray[accel,etc,io,parallel,viz]"]
 etc = ["sparse (>=0.15)"]
-io = ["cftime", "fsspec", "h5netcdf", "netCDF4 (>=1.6.0)", "pooch", "pydap", "scipy (>=1.13)", "zarr (>=2.18)"]
+io = ["cftime", "fsspec", "h5netcdf[h5py] (>=1.8.0)", "netCDF4 (>=1.6.0)", "pooch", "pydap", "scipy (>=1.15)", "zarr (>=3.0)"]
 parallel = ["dask[complete]"]
-types = ["pandas-stubs", "scipy-stubs", "types-PyYAML", "types-Pygments", "types-colorama", "types-decorator", "types-defusedxml", "types-docutils", "types-networkx", "types-openpyxl", "types-pexpect", "types-psutil", "types-pycurl", "types-python-dateutil", "types-pytz", "types-requests", "types-setuptools"]
-viz = ["cartopy (>=0.23)", "matplotlib (>=3.8)", "nc-time-axis", "seaborn"]
+types = ["pandas-stubs", "scipy-stubs", "types-PyYAML", "types-Pygments", "types-colorama", "types-decorator", "types-defusedxml", "types-docutils", "types-gevent", "types-networkx", "types-openpyxl", "types-pexpect", "types-psutil", "types-pycurl", "types-pysocks", "types-python-dateutil", "types-pytz", "types-requests", "types-setuptools", "types-xlrd"]
+viz = ["cartopy (>=0.24)", "matplotlib (>=3.10)", "nc-time-axis", "seaborn"]
 
 [[package]]
 name = "xmltodict"
@@ -5672,14 +5661,14 @@ test = ["pytest", "pytest-cov"]
 
 [[package]]
 name = "xradar"
-version = "0.11.1"
+version = "0.13.0"
 description = "Xradar includes all the tools to get your weather radar into the xarray data model."
 optional = false
-python-versions = ">=3.10"
+python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "xradar-0.11.1-py3-none-any.whl", hash = "sha256:904b4cdefec9863bd2d93ac59dd6802719a07d1fe918df7751627291f2f0b345"},
-    {file = "xradar-0.11.1.tar.gz", hash = "sha256:788e850305ca3fedd8e2fa566bdd220f122d3baea157a2d6a7f033153af451f7"},
+    {file = "xradar-0.13.0-py3-none-any.whl", hash = "sha256:485cfb65b391651d42a765333fd2cc506e7f113d6b2d67b5bd0f252b4575e720"},
+    {file = "xradar-0.13.0.tar.gz", hash = "sha256:3bb0f4b433702b0abf55f81aeb125bffc6769062794c0896850e9ddf59800b1e"},
 ]
 
 [package.dependencies]
@@ -5692,11 +5681,11 @@ netCDF4 = "*"
 numpy = "*"
 pyproj = "*"
 scipy = "*"
-xarray = ">=2024.10.0"
+xarray = ">=2026.4.0"
 xmltodict = "*"
 
 [package.extras]
-dev = ["black", "boto3", "cartopy", "cffconvert", "coverage", "diff-cover", "fsspec", "isort", "myst-parser", "nbconvert", "nbsphinx", "notebook", "open_radar_data", "pip", "pre-commit", "pydata-sphinx-theme", "pytest", "pytest-cov", "pytest-xdist", "ruff", "s3fs", "sphinx", "sphinx-copybutton", "sphinx-favicon", "twine", "wheel", "zarr (>=2,<3)"]
+dev = ["black", "boto3", "cartopy", "cffconvert", "coverage", "diff-cover", "fsspec", "isort", "linkify-it-py", "myst-nb", "nbconvert", "notebook", "open_radar_data (>=0.9.0)", "pip", "pre-commit", "pydata-sphinx-theme", "pytest", "pytest-cov", "pytest-xdist", "ruff", "s3fs", "sphinx", "sphinx-copybutton", "sphinx-favicon", "twine", "wheel", "zarr (>=3)"]
 
 [[package]]
 name = "yarl"
@@ -5854,4 +5843,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12.3"
-content-hash = "6f69de5b5d5e930ff83de3f9bcd4c6658730da23e2d31bfdd9f1d8bbcc127355"
+content-hash = "02ca37e84666cca66d836fdd6c03332255a4b03ef240d6037dc8ece7a2cc249f"

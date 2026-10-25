@@ -37,8 +37,6 @@ WORKDIR /app
 # Copy the virtual environment from the builder stage
 COPY --from=builder /app/.venv ./.venv
 
-RUN .venv/bin/pip install --no-cache-dir --upgrade arm-pyart
-
 # Copy project source code
 COPY src/ ./src/
 COPY settings.json ./settings.json
