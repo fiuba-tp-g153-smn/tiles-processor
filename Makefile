@@ -26,20 +26,19 @@ up:
 down:
 	docker compose down
 	docker compose -f docker-compose-dev.yaml down --remove-orphans
-	docker compose -f docker-compose-beta-1.yaml -f docker-compose-beta-1.override.yaml down --remove-orphans
+	docker compose -f docker-compose-beta-1.yaml down --remove-orphans
 
 prod:
 	docker compose up --build
 
 # The beta-1 light preset: fewer workers and the lower-throughput tuning in
-# docker-compose-beta-1.yaml, with settings-beta-1.json mounted over
-# settings.json by the override. Both files are required — the base alone would
-# run the preset's topology against the normal settings.
+# docker-compose-beta-1.yaml, which mounts settings-beta-1.json over
+# settings.json.
 beta1:
-	docker compose -f docker-compose-beta-1.yaml -f docker-compose-beta-1.override.yaml up --build
+	docker compose -f docker-compose-beta-1.yaml up --build
 
 beta1-down:
-	docker compose -f docker-compose-beta-1.yaml -f docker-compose-beta-1.override.yaml down --remove-orphans
+	docker compose -f docker-compose-beta-1.yaml down --remove-orphans
 
 test:
 	@mkdir -p reports .cache/pip

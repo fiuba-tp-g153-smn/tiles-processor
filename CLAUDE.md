@@ -10,7 +10,7 @@
 
 ```bash
 make up / make down / make test / make prod / make clean
-make beta1              # beta-1 light preset (needs BOTH beta compose files)
+make beta1              # beta-1 light preset
 
 pytest tests/test_config.py -v          # single file
 pytest tests/ -k "test_health"          # pattern match

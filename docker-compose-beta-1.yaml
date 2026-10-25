@@ -16,8 +16,11 @@
 # target containing '${' and aborts the deployment.
 #
 # No defaults on purpose. A missing path for a local source must stop Compose.
+#
+# settings-beta-1.json is mounted over the settings.json baked into the image.
 x-input-volumes: &input-volumes
   - ./data:/app/data
+  - ./settings-beta-1.json:/app/settings.json:ro
   - ${GOES19_GLM_INPUT_DIR}:/app/data/goes19-glm:ro
   - ${RADAR_SINARAME_INPUT_DIR}:/app/data/radar-sinarame:ro
   - ${RADAR_INTA_INPUT_DIR}:/app/data/radar-inta:ro
@@ -26,6 +29,7 @@ x-input-volumes: &input-volumes
 # metrics-api serves the progress database only; it reads no source data.
 x-service-volumes: &service-volumes
   - ./data:/app/data
+  - ./settings-beta-1.json:/app/settings.json:ro
 
 services:
   # RabbitMQ message broker for the work queue
