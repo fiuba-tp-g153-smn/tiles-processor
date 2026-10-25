@@ -270,6 +270,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.RADAR_TARGET_IMAGES: int | None = self._opt_int(
             _radar.get("target_images"), "sources.radar.target_images"
         )
+        self.RADAR_MAX_AGE_MINUTES: int | None = self._opt_int(
+            _radar.get("max_age_minutes"), "sources.radar-sinarame.max_age_minutes"
+        )
         self.RADAR_ZOOM: ZoomLevels = parse_zoom_levels(
             _radar.get("zoom_levels"), "sources.radar.zoom_levels", default="4-9"
         )
@@ -287,6 +290,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         )
         self.INTA_TARGET_IMAGES: int | None = self._opt_int(
             _inta.get("target_images"), "sources.radar-inta.target_images"
+        )
+        self.INTA_MAX_AGE_MINUTES: int | None = self._opt_int(
+            _inta.get("max_age_minutes"), "sources.radar-inta.max_age_minutes"
         )
         self.INTA_ZOOM: ZoomLevels = parse_zoom_levels(
             _inta.get("zoom_levels"), "sources.radar-inta.zoom_levels", default="4-9"

@@ -159,3 +159,44 @@ async def test_output_prefix_is_the_inta_namespace(rainbow_header):
     )
     images = await source.discover_images(make_discovery_config())
     assert images[0].output_prefix == "tiles/radar/inta"
+
+
+@pytest.mark.asyncio
+async def test_scans_older_than_max_age_are_skipped(rainbow_header):
+    # Discovery runs at 15:10; the default window is 150 min (back to 12:40).
+    files = [
+        "/data/2026052112400000dBZ.vol",
+        "/data/2026052112395900dBZ.vol",
+        "/data/2026052015100400dBZ.vol",
+    ]
+    source = IntaRadarDataSource(DBZH, "dBZ", make_repo(rainbow_header, files))
+    images = await source.discover_images(make_discovery_config())
+    assert [img.image_id for img in images] == ["PAR_dbzh_20260521T124000Z"]
+
+
+@pytest.mark.asyncio
+async def test_old_scans_never_have_their_header_read(rainbow_header):
+    # The age cut is what keeps an S3 backlog from costing a GET per tick.
+    files = ["/data/2026052115000400dBZ.vol", "/data/2026052109000400dBZ.vol"]
+    repo = make_repo(rainbow_header, files)
+    source = IntaRadarDataSource(DBZH, "dBZ", repo)
+    await source.discover_images(make_discovery_config())
+    repo.read_header.assert_awaited_once_with("/data/2026052115000400dBZ.vol")
+
+
+@pytest.mark.asyncio
+async def test_max_age_is_configurable(rainbow_header):
+    files = ["/data/2026052115000400dBZ.vol", "/data/2026052114300400dBZ.vol"]
+    source = IntaRadarDataSource(
+        DBZH, "dBZ", make_repo(rainbow_header, files), max_age_minutes=20
+    )
+    images = await source.discover_images(make_discovery_config())
+    assert [img.image_id for img in images] == ["PAR_dbzh_20260521T150004Z"]
+
+
+@pytest.mark.asyncio
+async def test_impossible_date_skips_only_that_file(rainbow_header):
+    files = ["/data/2026132115000400dBZ.vol", "/data/2026052115000400dBZ.vol"]
+    source = IntaRadarDataSource(DBZH, "dBZ", make_repo(rainbow_header, files))
+    images = await source.discover_images(make_discovery_config())
+    assert [img.image_id for img in images] == ["PAR_dbzh_20260521T150004Z"]

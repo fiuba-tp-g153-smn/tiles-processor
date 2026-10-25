@@ -44,6 +44,7 @@
       },
       "stations": { "whitelist": ["RMA1", "RMA2", "RMA8"] },
       "target_images": 12,
+      "max_age_minutes": 150,
       "zoom_levels": "4-9",
       "light_queue": "all",
       "retention_days": 1

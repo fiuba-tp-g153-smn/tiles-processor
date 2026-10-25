@@ -670,6 +670,8 @@ class TestConfig:
             config = Config(settings_path=temp_settings_file)
             assert config.GOES_TARGET_IMAGES is None
             assert config.RADAR_TARGET_IMAGES is None
+            assert config.RADAR_MAX_AGE_MINUTES is None
+            assert config.INTA_MAX_AGE_MINUTES is None
             assert config.WRF_TARGET_RUNS is None
             assert config.GLM_SAFETY_LAG_SECONDS is None
 
@@ -684,6 +686,39 @@ class TestConfig:
         path.write_text(json.dumps(settings))
         with mock.patch.dict(os.environ, env_vars, clear=True):
             with pytest.raises(ValueError, match="sources.radar.target_images"):
+                Config(settings_path=path)
+
+    def test_radar_max_age_reads_settings(self, tmp_path, env_vars):
+        """Each radar network reads its own sources.<name>.max_age_minutes."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {
+                "radar-sinarame": {"max_age_minutes": 90},
+                "radar-inta": {"max_age_minutes": 60},
+            },
+        }
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=path)
+            assert config.RADAR_MAX_AGE_MINUTES == 90
+            assert config.INTA_MAX_AGE_MINUTES == 60
+
+    @pytest.mark.parametrize("value", [0, "150"])
+    def test_radar_max_age_rejects_invalid(self, tmp_path, env_vars, value):
+        """A non-integer or below-1 value fails fast, naming the JSON path."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {"radar-sinarame": {"max_age_minutes": value}},
+        }
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(
+                ValueError, match="sources.radar-sinarame.max_age_minutes"
+            ):
                 Config(settings_path=path)
 
     def test_zoom_levels_parse_from_sources(self, tmp_path, env_vars):
