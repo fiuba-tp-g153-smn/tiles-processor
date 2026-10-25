@@ -116,6 +116,9 @@ class InputSourceConfig:
     s3_secret_key: str | None = None
     s3_region: str | None = None
     s3_addressing_style: str = "path"
+    # Date-partition folders below s3_prefix (see models.s3_key_template), so
+    # discovery lists only the window it keeps; None lists the whole prefix.
+    s3_key_template: str | None = None
 
     @property
     def is_s3(self) -> bool:

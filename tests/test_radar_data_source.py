@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from data_sources.base import DiscoveryConfig
 from data_sources.radar import RadarDataSource
+from models.listing_window import ListingWindow
 from models.radar_config import RADAR_PRODUCT_CONFIGS, RadarStationFilter
 
 DBZH_CONFIG = RADAR_PRODUCT_CONFIGS["dbzh"]
@@ -266,3 +267,17 @@ async def test_discover_images_skips_unparseable_timestamp():
     source = RadarDataSource(DBZH_CONFIG, make_repo(files))
     images = await source.discover_images(make_discovery_config())
     assert [img.image_id for img in images] == ["RMA1_dbzh_20260114T170000Z"]
+
+
+@pytest.mark.asyncio
+async def test_discover_images_asks_repository_for_the_max_age_window():
+    """The window lets an S3 repository share one listing across products."""
+    repo = make_repo([])
+    source = RadarDataSource(DBZH_CONFIG, repo, max_age_minutes=20)
+    await source.discover_images(make_discovery_config())
+    repo.list_files.assert_awaited_once_with(
+        ListingWindow(
+            datetime(2026, 1, 14, 16, 40, tzinfo=timezone.utc),
+            datetime(2026, 1, 14, 17, 0, tzinfo=timezone.utc),
+        )
+    )

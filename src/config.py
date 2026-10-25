@@ -26,12 +26,16 @@ from models.radar_config import (
     RADAR_PRODUCT_CONFIGS,
     RadarStationFilter,
 )
+from models.s3_key_template import validate_key_template
 from models.wrf_config import WRF_PRODUCT_CONFIGS
 from models.zoom_config import ZoomLevels, parse_zoom_levels
 
 # Module-level so the parsing helpers can warn during __init__, before
 # log_config() runs. log_config() used to bind its own local copy of this.
 logger = logging.getLogger(__name__)
+
+# Sources whose S3 repository honours input.s3_key_template.
+_KEY_TEMPLATE_SOURCES = ("radar-sinarame", "radar-inta")
 
 
 def _describe_input_dir(src: InputSourceConfig) -> str:
@@ -519,6 +523,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             s3_secret_key=secret_key,
             s3_region=inp.get("s3_region") or None,
             s3_addressing_style=Config._parse_addressing_style(inp, json_key),
+            s3_key_template=Config._parse_key_template(inp, json_key),
         )
         Config._validate_input_endpoint(source, inp, json_key)
         return source
@@ -652,6 +657,29 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
                 f"{list(ADDRESSING_STYLES)}, got '{style}'"
             )
         return style
+
+    @staticmethod
+    def _parse_key_template(inp: Dict[str, Any], json_key: str) -> str | None:
+        """Read and validate ``input.s3_key_template``; unset means None.
+
+        Rejected on sources that would ignore it, so a template put on the
+        wrong source fails at startup instead of silently listing everything.
+        """
+        template = inp.get("s3_key_template") or None
+        if template is None:
+            return None
+        if json_key not in _KEY_TEMPLATE_SOURCES:
+            raise ValueError(
+                f"sources.{json_key}.input.s3_key_template is only supported by "
+                f"{' and '.join(_KEY_TEMPLATE_SOURCES)}"
+            )
+        try:
+            validate_key_template(template)
+        except ValueError as exc:
+            raise ValueError(
+                f"sources.{json_key}.input.s3_key_template: {exc}"
+            ) from exc
+        return template
 
     @staticmethod
     def _validate_input_endpoint(
@@ -872,6 +900,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         logger.info("GOES19_GLM_INPUT_DIR: %s", self.GOES19_GLM_INPUT_DIR)
         for name, src in (
             ("RADAR", self.RADAR_INPUT),
+            ("INTA", self.INTA_INPUT),
             ("GOES19_GLM", self.GOES19_GLM_INPUT),
             ("WRF", self.WRF_INPUT),
             ("GOES19", self.GOES19_INPUT),
@@ -883,7 +912,8 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
             # host:port form is used — log both so misconfigurations are visible.
             logger.info(
                 "%s_INPUT: mode=%s dir=%s (from %s, %s) bucket=%s endpoint=%s "
-                "url=%s prefix=%s region=%s addressing=%s credentials=%s",
+                "url=%s prefix=%s key_template=%s region=%s addressing=%s "
+                "credentials=%s",
                 name,
                 src.mode,
                 src.input_dir,
@@ -893,6 +923,7 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
                 src.s3_endpoint,
                 src.endpoint_url,
                 src.s3_prefix,
+                src.s3_key_template,
                 src.s3_region,
                 src.s3_addressing_style,
                 "set" if src.s3_access_key else "anonymous",

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
 from data_sources.radar_repository import RadarFileRepository
+from models.listing_window import ListingWindow
 from models.radar_config import (
     RadarProductConfig,
     RadarStationFilter,
@@ -105,7 +106,10 @@ class RadarDataSource(DataSource):
         Returns:
             List of ImageInfo for files needing processing
         """
-        source_uris = await self._repository.list_files()
+        cutoff = config.current_time - self._max_age
+        source_uris = await self._repository.list_files(
+            ListingWindow(cutoff, config.current_time)
+        )
 
         if not source_uris:
             logger.warning("[%s] No H5 files found by repository", self.source_id)
@@ -114,7 +118,6 @@ class RadarDataSource(DataSource):
         new_images = []
         skipped_disabled_radar = 0
         skipped_too_old = 0
-        cutoff = config.current_time - self._max_age
 
         for source_uri in source_uris:
             filepath = Path(source_uri)

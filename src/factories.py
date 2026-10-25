@@ -102,14 +102,22 @@ def _create_inta_repository(config: Config) -> IntaRadarFileRepository:
     src = config.INTA_INPUT
     if not src.is_s3:
         return LocalIntaRadarFileRepository(Path(src.input_dir))
-    return S3IntaRadarFileRepository(_create_input_s3_client(src), prefix=src.s3_prefix)
+    return S3IntaRadarFileRepository(
+        _create_input_s3_client(src),
+        prefix=src.s3_prefix,
+        key_template=src.s3_key_template,
+    )
 
 
 def _create_radar_repository(config: Config) -> RadarFileRepository:
     src = config.RADAR_INPUT
     if not src.is_s3:
         return LocalRadarFileRepository(Path(src.input_dir))
-    return S3RadarFileRepository(_create_input_s3_client(src), prefix=src.s3_prefix)
+    return S3RadarFileRepository(
+        _create_input_s3_client(src),
+        prefix=src.s3_prefix,
+        key_template=src.s3_key_template,
+    )
 
 
 def _create_goes19_glm_repository(config: Config) -> Goes19GlmFileRepository:

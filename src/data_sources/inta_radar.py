@@ -8,6 +8,7 @@ from pathlib import Path
 
 from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
 from data_sources.inta_radar_repository import IntaRadarFileRepository
+from models.listing_window import ListingWindow
 from models.radar_config import (
     INTA_STOP_RANGE_KM,
     RadarProductConfig,
@@ -120,14 +121,16 @@ class IntaRadarDataSource(DataSource):
         reads the header of the survivors to resolve station and scan range,
         then drops anything already processed or in progress.
         """
-        source_uris = await self._repository.list_files()
+        cutoff = config.current_time - self._max_age
+        source_uris = await self._repository.list_files(
+            ListingWindow(cutoff, config.current_time)
+        )
         if not source_uris:
             logger.warning("[%s] No .vol files found by repository", self.source_id)
             return []
 
         candidates = self._drop_old_scans(
-            [uri for uri in source_uris if self._matches_variable(uri)],
-            config.current_time - self._max_age,
+            [uri for uri in source_uris if self._matches_variable(uri)], cutoff
         )
         if not candidates:
             return []

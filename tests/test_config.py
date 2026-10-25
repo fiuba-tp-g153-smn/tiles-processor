@@ -387,6 +387,50 @@ class TestConfig:
                 },
             )
 
+    def test_key_template_is_read_for_radar_sources(self, tmp_path, env_vars):
+        config = self._config_with_input(
+            tmp_path,
+            env_vars,
+            "radar-inta",
+            {
+                "mode": "s3",
+                "s3_bucket": "radar-input",
+                "s3_key_template": "*/{yyyy}{mm}{dd}/",
+            },
+        )
+
+        assert config.INTA_INPUT.s3_key_template == "*/{yyyy}{mm}{dd}/"
+        assert config.RADAR_INPUT.s3_key_template is None
+
+    def test_key_template_with_unknown_placeholder_fails_fast(self, tmp_path, env_vars):
+        with pytest.raises(ValueError, match="s3_key_template.*unknown placeholder"):
+            self._config_with_input(
+                tmp_path,
+                env_vars,
+                "radar-sinarame",
+                {
+                    "mode": "s3",
+                    "s3_bucket": "radar-input",
+                    "s3_key_template": "{yyyy}/{month}/",
+                },
+            )
+
+    def test_key_template_on_a_source_that_ignores_it_fails_fast(
+        self, tmp_path, env_vars
+    ):
+        """A template that would be silently ignored is a misconfiguration."""
+        with pytest.raises(ValueError, match="only supported by radar"):
+            self._config_with_input(
+                tmp_path,
+                env_vars,
+                "wrf-arg4k",
+                {
+                    "mode": "s3",
+                    "s3_bucket": "wrf-input",
+                    "s3_key_template": "{yyyy}/",
+                },
+            )
+
     def test_ecmwf_and_gfs_default_to_their_upstream_apis(self, tmp_path, env_vars):
         """The two API-backed sources keep their production default."""
         config = self._config_with_input(

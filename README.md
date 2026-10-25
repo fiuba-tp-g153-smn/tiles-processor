@@ -394,6 +394,14 @@ input, product toggles, retention, and tuning live together.
   - `s3_prefix` — key prefix the layout is rooted at (a trailing `/` is added if
     missing). Supported by every source, GOES-19 included, so a mirror can keep
     NOAA's `ABI-L1b-RadF/YYYY/JJJ/HH/` tree under a folder of its own.
+  - `s3_key_template` (`radar-sinarame` and `radar-inta` only) — the date
+    partitions below `s3_prefix`, e.g. `"{yyyy}/{mm}/{dd}/{HH}/"` or
+    `"*/{yyyy}{mm}{dd}/"`, so discovery lists only the partitions inside its
+    `max_age_minutes` window instead of a bucket's whole history. Placeholders
+    are `{yyyy}`, `{mm}`, `{dd}`, `{jjj}` and `{HH}`, filled from the scan time
+    in UTC; a `*` segment matches any one folder (typically one per radar).
+    Unset, the whole prefix is listed. Either way the products of a source
+    share one listing per tick.
   - `s3_region` — needed only for an authenticated bucket outside `us-east-1`;
     botocore signs for `us-east-1` when it is unset.
   - `s3_addressing_style` — `path` (default; what SeaweedFS/MinIO/RustFS need),

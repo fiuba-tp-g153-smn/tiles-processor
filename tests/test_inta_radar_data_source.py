@@ -7,6 +7,7 @@ import pytest
 
 from data_sources.base import DiscoveryConfig
 from data_sources.inta_radar import IntaRadarDataSource
+from models.listing_window import ListingWindow
 from models.radar_config import RadarStationFilter, get_inta_product_config
 
 DBZH = get_inta_product_config("dBZ")
@@ -200,3 +201,26 @@ async def test_impossible_date_skips_only_that_file(rainbow_header):
     source = IntaRadarDataSource(DBZH, "dBZ", make_repo(rainbow_header, files))
     images = await source.discover_images(make_discovery_config())
     assert [img.image_id for img in images] == ["PAR_dbzh_20260521T150004Z"]
+
+
+@pytest.mark.asyncio
+async def test_asks_repository_for_the_max_age_window(rainbow_header):
+    repo = make_repo(rainbow_header, [])
+    source = IntaRadarDataSource(DBZH, "dBZ", repo, max_age_minutes=20)
+    await source.discover_images(make_discovery_config())
+    repo.list_files.assert_awaited_once_with(
+        ListingWindow(
+            datetime(2026, 5, 21, 14, 50, tzinfo=timezone.utc),
+            datetime(2026, 5, 21, 15, 10, tzinfo=timezone.utc),
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_old_scans_never_get_a_header_read(rainbow_header):
+    """Each header read is a ranged GET in S3 mode; history must not pay one."""
+    files = ["/data/2026052109000400dBZ.vol", "/data/2026052115000400dBZ.vol"]
+    repo = make_repo(rainbow_header, files)
+    source = IntaRadarDataSource(DBZH, "dBZ", repo)
+    await source.discover_images(make_discovery_config())
+    repo.read_header.assert_awaited_once_with("/data/2026052115000400dBZ.vol")

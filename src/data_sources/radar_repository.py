@@ -8,6 +8,8 @@ from pathlib import Path
 
 from clients.s3_client import S3Client
 from data_sources.s3_repository_utils import strip_s3_scheme
+from data_sources.s3_windowed_lister import S3WindowedKeyLister
+from models.listing_window import ListingWindow
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +18,12 @@ class RadarFileRepository(ABC):
     """Interface for radar file storage backends."""
 
     @abstractmethod
-    async def list_files(self) -> list[str]:
-        """Return source URIs for all .H5 files."""
+    async def list_files(self, window: ListingWindow | None = None) -> list[str]:
+        """Return source URIs for the .H5 files.
+
+        ``window`` lets a backend skip what discovery would drop for age; the
+        result may still hold older files, so callers keep filtering by time.
+        """
 
     @abstractmethod
     async def download(self, source_uri: str, dest_path: Path) -> Path:
@@ -37,7 +43,7 @@ class LocalRadarFileRepository(RadarFileRepository):
     def __init__(self, input_dir: Path) -> None:
         self._input_dir = input_dir
 
-    async def list_files(self) -> list[str]:
+    async def list_files(self, window: ListingWindow | None = None) -> list[str]:
         if not self._input_dir.exists():
             logger.warning(
                 "Radar input dir does not exist, treating as empty: %s",
@@ -75,16 +81,19 @@ class S3RadarFileRepository(RadarFileRepository):
     """Reads H5 files from an S3 bucket mirroring the local folder layout.
 
     Lists recursively under the configured prefix (a superset of the local
-    flat + one-subdir-level rule); URIs are plain S3 keys so the basename
-    parsing in discovery keeps working.
+    flat + one-subdir-level rule), or only the date partitions ``key_template``
+    names; URIs are plain S3 keys so the basename parsing in discovery keeps
+    working. Listings are shared per window (see ``S3WindowedKeyLister``).
     """
 
-    def __init__(self, s3_client: S3Client, prefix: str = "") -> None:
+    def __init__(
+        self, s3_client: S3Client, prefix: str = "", key_template: str | None = None
+    ) -> None:
         self._s3_client = s3_client
-        self._prefix = prefix
+        self._lister = S3WindowedKeyLister(s3_client, prefix, key_template)
 
-    async def list_files(self) -> list[str]:
-        keys = await self._s3_client.list_files(self._prefix, file_pattern="")
+    async def list_files(self, window: ListingWindow | None = None) -> list[str]:
+        keys = await self._lister.list_keys(window)
         return sorted(k for k in keys if k.lower().endswith(".h5"))
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
