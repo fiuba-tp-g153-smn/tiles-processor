@@ -86,6 +86,7 @@ def _config_with_every_product_on():
         "RADAR_TARGET_IMAGES",
         "RADAR_MAX_AGE_MINUTES",
         "INTA_TARGET_IMAGES",
+        "INTA_MAX_AGE_MINUTES",
         "WRF_TARGET_RUNS",
         "GLM_SAFETY_LAG_SECONDS",
         "GLM_TARGET_WINDOWS",

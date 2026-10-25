@@ -671,6 +671,7 @@ class TestConfig:
             assert config.GOES_TARGET_IMAGES is None
             assert config.RADAR_TARGET_IMAGES is None
             assert config.RADAR_MAX_AGE_MINUTES is None
+            assert config.INTA_MAX_AGE_MINUTES is None
             assert config.WRF_TARGET_RUNS is None
             assert config.GLM_SAFETY_LAG_SECONDS is None
 
@@ -688,16 +689,21 @@ class TestConfig:
                 Config(settings_path=path)
 
     def test_radar_max_age_reads_settings(self, tmp_path, env_vars):
-        """sources.radar-sinarame.max_age_minutes reaches RADAR_MAX_AGE_MINUTES."""
+        """Each radar network reads its own sources.<name>.max_age_minutes."""
         settings = {
             "timezone": "UTC",
             "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
-            "sources": {"radar-sinarame": {"max_age_minutes": 90}},
+            "sources": {
+                "radar-sinarame": {"max_age_minutes": 90},
+                "radar-inta": {"max_age_minutes": 60},
+            },
         }
         path = tmp_path / "settings.json"
         path.write_text(json.dumps(settings))
         with mock.patch.dict(os.environ, env_vars, clear=True):
-            assert Config(settings_path=path).RADAR_MAX_AGE_MINUTES == 90
+            config = Config(settings_path=path)
+            assert config.RADAR_MAX_AGE_MINUTES == 90
+            assert config.INTA_MAX_AGE_MINUTES == 60
 
     @pytest.mark.parametrize("value", [0, "150"])
     def test_radar_max_age_rejects_invalid(self, tmp_path, env_vars, value):

@@ -52,6 +52,7 @@ class TestCreateDataSourceRegistry:
         config.RADAR_TARGET_IMAGES = None
         config.RADAR_MAX_AGE_MINUTES = None
         config.INTA_TARGET_IMAGES = None
+        config.INTA_MAX_AGE_MINUTES = None
         config.WRF_TARGET_RUNS = None
         config.GLM_SAFETY_LAG_SECONDS = None
         config.GLM_TARGET_WINDOWS = None

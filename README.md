@@ -337,6 +337,7 @@ input, product toggles, retention, and tuning live together.
       "stations": "all",
       "products": { "dbzh": true, "zdr": true, "rhohv": true, "kdp": true },
       "target_images": 12,
+      "max_age_minutes": 150,
       "zoom_levels": "4-9",
       "light_queue": "all",
       "retention_days": 1
@@ -422,7 +423,8 @@ input, product toggles, retention, and tuning live together.
 - **Per-source discovery/cadence knobs** (all optional — omitting one keeps the
   source's built-in default): `goes19-abi.target_images` /
   `goes19-abi.max_hours_back`, `radar-sinarame.target_images` /
-  `radar-sinarame.max_age_minutes`, `wrf-arg4k.target_runs`,
+  `radar-sinarame.max_age_minutes`, `radar-inta.target_images` /
+  `radar-inta.max_age_minutes`, `wrf-arg4k.target_runs`,
   `goes19-glm.safety_lag_seconds` / `goes19-glm.target_windows`. They cap how much
   each source publishes per tick and how far back discovery looks. Counts must be
   integers ≥ 1; `max_hours_back` / `safety_lag_seconds` may be 0.

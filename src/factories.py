@@ -238,6 +238,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
                     inta_repository,
                     config.INTA_STATION_FILTER,
                     target_images=config.INTA_TARGET_IMAGES,
+                    max_age_minutes=config.INTA_MAX_AGE_MINUTES,
                 )
             )
 
