@@ -88,6 +88,7 @@ def _config_with_every_product_on():
         "INTA_TARGET_IMAGES",
         "INTA_MAX_AGE_MINUTES",
         "WRF_TARGET_RUNS",
+        "WRF_MAX_AGE_HOURS",
         "GLM_SAFETY_LAG_SECONDS",
         "GLM_TARGET_WINDOWS",
     ):

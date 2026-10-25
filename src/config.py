@@ -307,6 +307,9 @@ class Config:  # pylint: disable=too-many-instance-attributes,invalid-name
         self.WRF_TARGET_RUNS: int | None = self._opt_int(
             _wrf.get("target_runs"), "sources.wrf.target_runs"
         )
+        self.WRF_MAX_AGE_HOURS: int | None = self._opt_int(
+            _wrf.get("max_age_hours"), "sources.wrf-arg4k.max_age_hours"
+        )
         self.WRF_ZOOM: ZoomLevels = parse_zoom_levels(
             _wrf.get("zoom_levels"), "sources.wrf.zoom_levels", default="4-6"
         )

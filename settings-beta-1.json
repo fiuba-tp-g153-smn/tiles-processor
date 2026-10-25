@@ -64,6 +64,7 @@
         "granizo": false
       },
       "target_runs": 3,
+      "max_age_hours": 24,
       "zoom_levels": "4-6",
       "barb_zoom_strides": { "2": 150, "4": 38, "6": 16, "8": 9 },
       "light_queue": "all",

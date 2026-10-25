@@ -346,6 +346,7 @@ input, product toggles, retention, and tuning live together.
       "input": { "mode": "local" },
       "products": { "colmax": true, "granizo": true },
       "target_runs": 3,
+      "max_age_hours": 24,
       "light_queue": "all",
       "retention_days": 2
     },
@@ -424,13 +425,16 @@ input, product toggles, retention, and tuning live together.
   source's built-in default): `goes19-abi.target_images` /
   `goes19-abi.max_hours_back`, `radar-sinarame.target_images` /
   `radar-sinarame.max_age_minutes`, `radar-inta.target_images` /
-  `radar-inta.max_age_minutes`, `wrf-arg4k.target_runs`,
+  `radar-inta.max_age_minutes`, `wrf-arg4k.target_runs` /
+  `wrf-arg4k.max_age_hours`,
   `goes19-glm.safety_lag_seconds` / `goes19-glm.target_windows`. They cap how much
   each source publishes per tick and how far back discovery looks. Counts must be
   integers ≥ 1; `max_hours_back` / `safety_lag_seconds` may be 0.
   `max_age_minutes` (default 150) drops radar scans whose filename timestamp is
   older than that, so the backlog is never processed or reprocessed once its
-  tiles expire.
+  tiles expire. `wrf-arg4k.max_age_hours` (default 24) does the same for WRF
+  runs by their init time, and `target_runs` counts runs before dedup, so an
+  already-processed run never lets an older one through.
 - **`sources.<name>.zoom_levels`**: gdal2tiles zoom range as a `"MIN-MAX"` string
   (e.g. `"3-7"`; radar defaults to `"4-9"`, WRF to `"4-6"`). Zoom depth is the
   biggest driver of tile count / S3 storage / tiling time. Defaults match the

@@ -54,6 +54,7 @@ class TestCreateDataSourceRegistry:
         config.INTA_TARGET_IMAGES = None
         config.INTA_MAX_AGE_MINUTES = None
         config.WRF_TARGET_RUNS = None
+        config.WRF_MAX_AGE_HOURS = None
         config.GLM_SAFETY_LAG_SECONDS = None
         config.GLM_TARGET_WINDOWS = None
         config.ENABLE_ECMWF_PRECIPITATION = tp

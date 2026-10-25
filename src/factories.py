@@ -252,6 +252,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
                         wrf_config,
                         wrf_repository,
                         target_runs=config.WRF_TARGET_RUNS,
+                        max_age_hours=config.WRF_MAX_AGE_HOURS,
                     )
                 )
 

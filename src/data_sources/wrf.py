@@ -1,5 +1,6 @@
 """WRF-ARG4K data source — discovers FIELD2D NetCDF files via a repository."""
 
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from pathlib import Path
 
@@ -25,21 +26,28 @@ class WrfDataSource(DataSource):
     with ``skip_f000=True`` (1h-accumulation products lacking pp01H at init).
     """
 
-    # Máximo de corridas (init_tags) a publicar por ciclo: las más recientes.
-    # Análogo a RadarDataSource.TARGET_IMAGES = 12 — acota la ráfaga por conteo
-    # (no por reloj, así un snapshot estático sigue drenando) y deja que el dedup
-    # arrastre corridas viejas hacia atrás en ciclos sucesivos.
+    # Máximo de corridas (init_tags) a publicar: las más recientes, contadas
+    # antes del dedup para que una corrida ya procesada no ceda su lugar a una
+    # más vieja. data-service muestra las últimas 3 (inits_to_keep).
     TARGET_RUNS = 3  # default; overridable via settings.json
+
+    # Corridas cada 6 h, más un par de horas hasta que se escriben: la tercera
+    # más nueva empieza ~20 h atrás. Lo anterior no se muestra nunca.
+    MAX_AGE_HOURS = 24  # default; overridable via settings.json
 
     def __init__(
         self,
         product_config: WrfProductConfig,
         repository: WrfFileRepository,
         target_runs: int | None = None,
+        max_age_hours: int | None = None,
     ):
         self._product_config = product_config
         self._repository = repository
         self._target_runs = target_runs if target_runs is not None else self.TARGET_RUNS
+        self._max_age = timedelta(
+            hours=max_age_hours if max_age_hours is not None else self.MAX_AGE_HOURS
+        )
 
     @property
     def source_id(self) -> str:
@@ -55,7 +63,12 @@ class WrfDataSource(DataSource):
         return self._product_config
 
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
-        """Discover unprocessed WRF forecast steps for this product."""
+        """Discover unprocessed WRF forecast steps for this product.
+
+        Only steps of the newest ``target_runs`` runs that started within the
+        max age window are considered; the cap is taken before dedup, so a run
+        already processed never lets an older one through.
+        """
         source_uris = await self._repository.list_files()
         if not source_uris:
             logger.warning(
@@ -63,11 +76,41 @@ class WrfDataSource(DataSource):
             )
             return []
 
-        candidates: list[tuple[str, ImageInfo]] = []  # (init_tag, image)
+        steps = self._recent_steps(source_uris, config.current_time - self._max_age)
+        runs_newest_first = sorted({init for init, _, _ in steps}, reverse=True)
+        allowed = set(runs_newest_first[: self._target_runs])
+
+        target = [
+            self._to_image_info(uri, image_id)
+            for init, uri, image_id in steps
+            if init in allowed
+            and image_id not in config.existing_tilesets
+            and image_id not in config.in_progress_images
+        ]
+
+        logger.info(
+            "[%s] %d step(s) across %d recent run(s); publishing %d new from "
+            "newest %d run(s)",
+            self.source_id,
+            len(steps),
+            len(runs_newest_first),
+            len(target),
+            self._target_runs,
+        )
+        return target
+
+    def _recent_steps(
+        self, source_uris: list[str], cutoff: datetime
+    ) -> list[tuple[str, str, str]]:
+        """(init_tag, source_uri, image_id) of every step whose run started at or
+        after ``cutoff``. Malformed names and skipped F000 steps are dropped."""
+        steps: list[tuple[str, str, str]] = []
+        too_old = 0
         for source_uri in source_uris:
             filename = Path(source_uri).name
             try:
                 parsed = parse_wrf_filename(filename)
+                init_time = _parse_init_time(parsed["init_tag"])
             except ValueError as e:
                 logger.debug("Skipping file with invalid name: %s (%s)", filename, e)
                 continue
@@ -76,49 +119,33 @@ class WrfDataSource(DataSource):
             # la variable no existe en la hora de inicialización. El resto sí.
             if parsed["fnum"] == 0 and self._product_config.skip_f000:
                 continue
+            if init_time < cutoff:
+                too_old += 1
+                continue
 
             image_id = (
                 f"{self._product_config.product_id}_"
                 f"{parsed['init_tag']}_{parsed['fxxx']}"
             )
+            steps.append((parsed["init_tag"], source_uri, image_id))
 
-            if image_id in config.existing_tilesets:
-                logger.debug("Skipping %s (already processed)", image_id)
-                continue
-            if image_id in config.in_progress_images:
-                logger.debug("Skipping %s (in progress)", image_id)
-                continue
-
-            candidates.append(
-                (
-                    parsed["init_tag"],
-                    ImageInfo(
-                        image_id=image_id,
-                        source_uri=source_uri,
-                        data_source_id=self.source_id,
-                        processor_id=self.processor_id,
-                        output_prefix=self._product_config.s3_tiles_prefix,
-                    ),
-                )
+        if too_old:
+            logger.info(
+                "[%s] Skipped %d files from runs older than %d h",
+                self.source_id,
+                too_old,
+                self._max_age // timedelta(hours=1),
             )
+        return steps
 
-        # Quedarse con las TARGET_RUNS corridas más nuevas, calculado sobre el
-        # conjunto POST-dedup (igual que RadarDataSource): así las corridas
-        # viejas drenan hacia atrás en ciclos sucesivos en vez de ignorarse para
-        # siempre. init_tag "YYYYMMDD_HH0000" ordena cronológicamente como string.
-        runs_newest_first = sorted({init for init, _ in candidates}, reverse=True)
-        allowed = set(runs_newest_first[: self._target_runs])
-        target = [img for init, img in candidates if init in allowed]
-
-        logger.info(
-            "[%s] %d new step(s) across %d run(s); publishing %d from newest %d run(s)",
-            self.source_id,
-            len(candidates),
-            len({init for init, _ in candidates}),
-            len(target),
-            self._target_runs,
+    def _to_image_info(self, source_uri: str, image_id: str) -> ImageInfo:
+        return ImageInfo(
+            image_id=image_id,
+            source_uri=source_uri,
+            data_source_id=self.source_id,
+            processor_id=self.processor_id,
+            output_prefix=self._product_config.s3_tiles_prefix,
         )
-        return target
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
         """Copy WRF FIELD2D NetCDF file to the worker's work directory."""
@@ -130,3 +157,8 @@ class WrfDataSource(DataSource):
             dest,
         )
         return dest
+
+
+def _parse_init_time(init_tag: str) -> datetime:
+    """Parse a WRF init_tag (``20260601_000000``, UTC)."""
+    return datetime.strptime(init_tag, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
