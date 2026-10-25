@@ -267,6 +267,53 @@ async def test_download_parses_manifest_and_delegates_to_repository(tmp_path):
     assert called_dest == dest
 
 
+@pytest.mark.asyncio
+async def test_skips_windows_older_than_max_age():
+    # Discovery at 18:31 with the 270 min default reaches back to 14:01, so the
+    # 14:10 window is the oldest that still fits and 14:00 is left out.
+    files = []
+    for minute in (0, 10):
+        files += _ten_consecutive_minutes(
+            datetime(2026, 3, 2, 14, minute, tzinfo=timezone.utc)
+        )
+    source = _make_source(StubRepository(files))
+
+    images = await source.discover_images(
+        _discovery_config(
+            current_time=datetime(2026, 3, 2, 18, 31, tzinfo=timezone.utc)
+        )
+    )
+
+    assert [img.image_id for img in images] == ["20260611410000"]
+
+
+@pytest.mark.asyncio
+async def test_stalled_feed_publishes_nothing():
+    # The folder stopped rotating a day ago: nothing in it is worth showing.
+    window_start = datetime(2026, 3, 2, 14, 0, tzinfo=timezone.utc)
+    source = _make_source(StubRepository(_ten_consecutive_minutes(window_start)))
+
+    images = await source.discover_images(
+        _discovery_config(current_time=window_start + timedelta(days=1))
+    )
+
+    assert images == []
+
+
+@pytest.mark.asyncio
+async def test_max_age_is_configurable():
+    window_start = datetime(2026, 3, 2, 14, 0, tzinfo=timezone.utc)
+    source = _make_source(
+        StubRepository(_ten_consecutive_minutes(window_start)), max_age_minutes=5
+    )
+
+    images = await source.discover_images(
+        _discovery_config(current_time=window_start + timedelta(minutes=11))
+    )
+
+    assert images == []
+
+
 def test_constructor_validates_periods():
     repo = StubRepository([])
     with pytest.raises(ValueError, match="accum_minutes"):

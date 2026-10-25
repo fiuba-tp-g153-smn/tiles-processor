@@ -27,6 +27,7 @@
       "input": { "mode": "local" },
       "products": { "fed": true, "toe": true, "mfa": true },
       "target_windows": 24,
+      "max_age_minutes": 270,
       "accum_minutes": 10,
       "produce_every_minutes": 10,
       "safety_lag_seconds": 30,
@@ -45,6 +46,7 @@
       },
       "stations": "all",
       "target_images": 12,
+      "max_age_minutes": 150,
       "zoom_levels": "4-9",
       "light_queue": "all",
       "retention_days": 1
@@ -61,6 +63,7 @@
       },
       "stations": "all",
       "target_images": 12,
+      "max_age_minutes": 150,
       "zoom_levels": "4-9",
       "light_queue": "all",
       "retention_days": 1
@@ -80,6 +83,7 @@
         "granizo": true
       },
       "target_runs": 3,
+      "max_age_hours": 24,
       "zoom_levels": "4-6",
       "barb_zoom_strides": { "2": 150, "4": 38, "6": 16, "8": 9 },
       "light_queue": "all",

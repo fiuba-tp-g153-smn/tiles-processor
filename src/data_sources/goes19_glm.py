@@ -33,12 +33,16 @@ class Goes19GlmDataSource(DataSource):
         whose start timestamps fall inside ``[anchor, anchor + accum_minutes)``.
       * Its end is in the past with at least ``safety_lag_seconds`` of margin,
         so we don't race upstream producers still writing the last minute.
+      * It started within ``max_age_minutes`` of the discovery time, so a
+        stalled feed or leftover files never publish windows nobody shows.
       * It has not been processed yet (``existing_tilesets``) and is not
         already in flight (``in_progress_images``).
     """
 
     DEFAULT_TARGET_WINDOWS = 24
     DEFAULT_SAFETY_LAG_SECONDS = 30
+    # The visualizer animates up to 24 ten-minute windows (~240 min), plus margin.
+    DEFAULT_MAX_AGE_MINUTES = 270
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
@@ -49,6 +53,7 @@ class Goes19GlmDataSource(DataSource):
         produce_every_minutes: int,
         safety_lag_seconds: int | None = None,
         target_windows: int | None = None,
+        max_age_minutes: int | None = None,
     ) -> None:
         if accum_minutes <= 0:
             raise ValueError("accum_minutes must be positive")
@@ -70,6 +75,13 @@ class Goes19GlmDataSource(DataSource):
             if target_windows is not None
             else self.DEFAULT_TARGET_WINDOWS
         )
+        self._max_age = timedelta(
+            minutes=(
+                max_age_minutes
+                if max_age_minutes is not None
+                else self.DEFAULT_MAX_AGE_MINUTES
+            )
+        )
 
     @property
     def source_id(self) -> str:
@@ -90,7 +102,9 @@ class Goes19GlmDataSource(DataSource):
             logger.warning("[%s] No GLM files found by repository", self.source_id)
             return []
 
-        windows = self._group_into_windows(source_uris)
+        windows = self._group_into_windows(
+            source_uris, cutoff=config.current_time - self._max_age
+        )
 
         complete = self._select_complete_ready_windows(
             windows, current_time=config.current_time
@@ -142,10 +156,18 @@ class Goes19GlmDataSource(DataSource):
         )
         return await self._repository.download_to_dir(files, dest_path)
 
-    def _group_into_windows(self, source_uris: list[str]) -> dict[datetime, list[str]]:
-        """Bucket files by the anchor of every overlapping window they belong to."""
+    def _group_into_windows(
+        self, source_uris: list[str], cutoff: datetime
+    ) -> dict[datetime, list[str]]:
+        """Bucket files by the anchor of every overlapping window they belong to.
+
+        Files that start before ``cutoff`` are dropped first: a window anchored
+        at or after the cutoff only holds files starting after it, so this never
+        changes a recent window, and older ones are left incomplete and skipped.
+        """
         windows: dict[datetime, list[str]] = defaultdict(list)
         accum = timedelta(minutes=self._accum_minutes)
+        too_old = 0
 
         for uri in source_uris:
             try:
@@ -155,9 +177,19 @@ class Goes19GlmDataSource(DataSource):
                 continue
 
             file_start = parts.start_dt
+            if file_start < cutoff:
+                too_old += 1
+                continue
             for anchor in self._anchors_covering(file_start, accum):
                 windows[anchor].append(uri)
 
+        if too_old:
+            logger.info(
+                "[%s] Skipped %d files older than %d min",
+                self.source_id,
+                too_old,
+                self._max_age // timedelta(minutes=1),
+            )
         return windows
 
     def _anchors_covering(

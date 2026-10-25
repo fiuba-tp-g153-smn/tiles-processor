@@ -2,6 +2,7 @@
 
 import asyncio
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from models.radar_config import (
 from models.rainbow_header import (
     RainbowHeaderError,
     parse_inta_filename,
+    parse_inta_timestamp,
     parse_rainbow_header,
 )
 
@@ -46,18 +48,21 @@ class IntaRadarDataSource(DataSource):
     # Scans arrive every 10 minutes, so 12 covers ~2 hours — enough for the
     # visualizer's longest playback window with margin.
     TARGET_IMAGES = 12
+    MAX_AGE_MINUTES = 150
 
     # Header reads are network-bound in S3 mode; cap the fan-out the way the
     # rest of the pipeline bounds concurrent I/O.
     HEADER_CONCURRENCY = 16
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         product_config: RadarProductConfig,
         rainbow_variable: str,
         repository: IntaRadarFileRepository,
         station_filter: RadarStationFilter | None = None,
+        *,
         target_images: int | None = None,
+        max_age_minutes: int | None = None,
     ):
         """
         Initialize an INTA data source for a specific product.
@@ -70,6 +75,9 @@ class IntaRadarDataSource(DataSource):
                 every station
             target_images: Max images published per station per tick; ``None``
                 uses TARGET_IMAGES
+            max_age_minutes: Scans whose filename timestamp is older than this
+                (relative to the discovery time) are skipped; ``None`` uses
+                MAX_AGE_MINUTES
         """
         self._product_config = product_config
         self._rainbow_variable = rainbow_variable
@@ -77,6 +85,11 @@ class IntaRadarDataSource(DataSource):
         self._station_filter = station_filter
         self._target_images = (
             target_images if target_images is not None else self.TARGET_IMAGES
+        )
+        self._max_age = timedelta(
+            minutes=(
+                max_age_minutes if max_age_minutes is not None else self.MAX_AGE_MINUTES
+            )
         )
 
     @property
@@ -103,16 +116,19 @@ class IntaRadarDataSource(DataSource):
         """
         Discover new .vol files for this source's variable.
 
-        Filters by filename variable first (cheap, no I/O), then reads the
-        header of the survivors to resolve station and scan range, then drops
-        anything already processed or in progress.
+        Filters by filename variable and scan age first (cheap, no I/O), then
+        reads the header of the survivors to resolve station and scan range,
+        then drops anything already processed or in progress.
         """
         source_uris = await self._repository.list_files()
         if not source_uris:
             logger.warning("[%s] No .vol files found by repository", self.source_id)
             return []
 
-        candidates = [uri for uri in source_uris if self._matches_variable(uri)]
+        candidates = self._drop_old_scans(
+            [uri for uri in source_uris if self._matches_variable(uri)],
+            config.current_time - self._max_age,
+        )
         if not candidates:
             return []
 
@@ -215,6 +231,24 @@ class IntaRadarDataSource(DataSource):
             return False
         return parsed["variable"] == self._rainbow_variable
 
+    def _drop_old_scans(self, source_uris: list[str], cutoff: datetime) -> list[str]:
+        """Keep scans at or after ``cutoff``, before any header is read.
+
+        Only the last couple of hours are ever shown; an older scan would cost a
+        header read per tick (a GET in S3 mode) and be processed for nothing, or
+        reprocessed once its tiles expire. A name whose digits are not a real
+        date is dropped too, rather than failing the whole tick.
+        """
+        recent = [uri for uri in source_uris if _scan_time(uri) >= cutoff]
+        if len(recent) < len(source_uris):
+            logger.info(
+                "[%s] Skipped %d files older than %d min",
+                self.source_id,
+                len(source_uris) - len(recent),
+                self._max_age // timedelta(minutes=1),
+            )
+        return recent
+
     async def _read_headers(self, source_uris: list[str]) -> list[tuple[str, object]]:
         """Read each file's Rainbow header, bounded by a semaphore.
 
@@ -245,3 +279,13 @@ class IntaRadarDataSource(DataSource):
             station_images.sort(key=lambda img: img.image_id, reverse=True)
             capped.extend(station_images[: self._target_images])
         return capped
+
+
+def _scan_time(source_uri: str) -> datetime:
+    """Scan time (UTC) from an INTA filename; ``datetime.min`` if not a real date."""
+    timestamp = parse_inta_filename(Path(source_uri).name)["timestamp"]
+    try:
+        return parse_inta_timestamp(timestamp)
+    except ValueError:
+        logger.debug("Skipping file with invalid timestamp: %s", source_uri)
+        return datetime.min.replace(tzinfo=timezone.utc)

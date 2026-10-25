@@ -1,6 +1,7 @@
 """Weather Radar data source - discovers H5 files via a repository."""
 
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from pathlib import Path
 
@@ -33,12 +34,15 @@ class RadarDataSource(DataSource):
     # Análogo a Goes19AbiDataSource.TARGET_IMAGES = 26 (24 + 2 margen).
     TARGET_IMAGES = 12
 
-    def __init__(
+    MAX_AGE_MINUTES = 150
+
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         product_config: RadarProductConfig,
         repository: RadarFileRepository,
         station_filter: RadarStationFilter | None = None,
         target_images: int | None = None,
+        max_age_minutes: int | None = None,
     ):
         """
         Initialize Radar data source for a specific product.
@@ -53,12 +57,20 @@ class RadarDataSource(DataSource):
                 filter allows pass.
             target_images: Max images published per radar station per tick;
                 ``None`` uses TARGET_IMAGES.
+            max_age_minutes: Scans whose filename timestamp is older than this
+                (relative to the discovery time) are skipped; ``None`` uses
+                MAX_AGE_MINUTES.
         """
         self._product_config = product_config
         self._repository = repository
         self._station_filter = station_filter
         self._target_images = (
             target_images if target_images is not None else self.TARGET_IMAGES
+        )
+        self._max_age = timedelta(
+            minutes=(
+                max_age_minutes if max_age_minutes is not None else self.MAX_AGE_MINUTES
+            )
         )
 
     @property
@@ -83,8 +95,9 @@ class RadarDataSource(DataSource):
         Filters files by:
         1. Product (variable) matching this source's product_id
         2. Subvolume matching this source's expected subvolume
-        3. Not already processed (not in existing_tilesets)
-        4. Not in progress
+        3. Scan time within the max age window
+        4. Not already processed (not in existing_tilesets)
+        5. Not in progress
 
         Args:
             config: Discovery configuration
@@ -100,6 +113,8 @@ class RadarDataSource(DataSource):
 
         new_images = []
         skipped_disabled_radar = 0
+        skipped_too_old = 0
+        cutoff = config.current_time - self._max_age
 
         for source_uri in source_uris:
             filepath = Path(source_uri)
@@ -130,6 +145,15 @@ class RadarDataSource(DataSource):
             # Ejemplo: RMA12_0315_02_DBZH_*.H5 se ignora porque DBZH
             # espera subvolume="01".
             if parsed["subvolume"] != self._product_config.subvolume:
+                continue
+
+            try:
+                scan_time = _parse_scan_time(parsed["timestamp"])
+            except ValueError:
+                logger.debug("Skipping file with invalid timestamp: %s", filepath)
+                continue
+            if scan_time < cutoff:
+                skipped_too_old += 1
                 continue
 
             # Build image_id: radar_id/product/timestamp. Keyed on product_id
@@ -177,6 +201,13 @@ class RadarDataSource(DataSource):
                 self.source_id,
                 skipped_disabled_radar,
             )
+        if skipped_too_old:
+            logger.info(
+                "[%s] Skipped %d files older than %d min",
+                self.source_id,
+                skipped_too_old,
+                self._max_age // timedelta(minutes=1),
+            )
 
         logger.info(
             "[%s] Found %d new files, publishing %d (limit %d, from %d total H5 files)",
@@ -211,3 +242,8 @@ class RadarDataSource(DataSource):
             dest_with_ext,
         )
         return dest_with_ext
+
+
+def _parse_scan_time(timestamp: str) -> datetime:
+    """Parse a SINARAME filename timestamp (``20260114T170328Z``, UTC)."""
+    return datetime.strptime(timestamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)

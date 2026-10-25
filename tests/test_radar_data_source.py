@@ -85,7 +85,7 @@ async def test_discover_images_empty_repo():
 @pytest.mark.asyncio
 async def test_discover_images_respects_target_limit():
     # Generate 20 files — should return at most TARGET_IMAGES (12)
-    files = [f"/data/RMA1_0315_01_DBZH_20260114T{i:06d}Z.H5" for i in range(20)]
+    files = [f"/data/RMA1_0315_01_DBZH_20260114T1659{i:02d}Z.H5" for i in range(20)]
     source = RadarDataSource(DBZH_CONFIG, make_repo(files))
     images = await source.discover_images(make_discovery_config())
     assert len(images) <= RadarDataSource.TARGET_IMAGES
@@ -96,10 +96,10 @@ async def test_discover_images_caps_per_radar_location():
     # Two radar locations, each with more files than TARGET_IMAGES
     limit = RadarDataSource.TARGET_IMAGES
     rma1_files = [
-        f"/data/RMA1_0315_01_DBZH_20260114T{i:06d}Z.H5" for i in range(limit + 5)
+        f"/data/RMA1_0315_01_DBZH_20260114T1659{i:02d}Z.H5" for i in range(limit + 5)
     ]
     rma2_files = [
-        f"/data/RMA2_0315_01_DBZH_20260114T{i:06d}Z.H5" for i in range(limit + 5)
+        f"/data/RMA2_0315_01_DBZH_20260114T1659{i:02d}Z.H5" for i in range(limit + 5)
     ]
     source = RadarDataSource(DBZH_CONFIG, make_repo(rma1_files + rma2_files))
     images = await source.discover_images(make_discovery_config())
@@ -174,7 +174,7 @@ async def test_no_station_filter_discovers_all_stations():
 @pytest.mark.asyncio
 async def test_target_images_override_caps_per_radar():
     # An injected target_images overrides the class-constant TARGET_IMAGES cap.
-    files = [f"/data/RMA1_0315_01_DBZH_20260114T{i:06d}Z.H5" for i in range(10)]
+    files = [f"/data/RMA1_0315_01_DBZH_20260114T1659{i:02d}Z.H5" for i in range(10)]
     source = RadarDataSource(DBZH_CONFIG, make_repo(files), target_images=2)
     images = await source.discover_images(make_discovery_config())
     assert len(images) == 2
@@ -218,3 +218,51 @@ async def test_download_delegates_to_repository(tmp_path):
     result = await source.download("/data/file.H5", tmp_path / "out")
     repo.download.assert_called_once_with("/data/file.H5", tmp_path / "out")
     assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_discover_images_skips_scans_older_than_max_age():
+    # Discovery runs at 17:00; the default window is 150 min (back to 14:30).
+    files = [
+        "/data/RMA1_0315_01_DBZH_20260114T143000Z.H5",
+        "/data/RMA1_0315_01_DBZH_20260114T142959Z.H5",
+        "/data/RMA1_0315_01_DBZH_20260113T170000Z.H5",
+    ]
+    source = RadarDataSource(DBZH_CONFIG, make_repo(files))
+    images = await source.discover_images(make_discovery_config())
+    assert [img.image_id for img in images] == ["RMA1_dbzh_20260114T143000Z"]
+
+
+@pytest.mark.asyncio
+async def test_discover_images_max_age_is_configurable():
+    files = [
+        "/data/RMA1_0315_01_DBZH_20260114T165000Z.H5",
+        "/data/RMA1_0315_01_DBZH_20260114T163000Z.H5",
+    ]
+    source = RadarDataSource(DBZH_CONFIG, make_repo(files), max_age_minutes=20)
+    images = await source.discover_images(make_discovery_config())
+    assert [img.image_id for img in images] == ["RMA1_dbzh_20260114T165000Z"]
+
+
+@pytest.mark.asyncio
+async def test_discover_images_age_filter_runs_before_target_cap():
+    # Twenty in-window scans are already processed; the old backlog must not
+    # backfill the cap once the recent ones are deduplicated away.
+    recent = [f"20260114T16{m:02d}00Z" for m in range(0, 60, 3)]
+    old = [f"20260114T10{m:02d}00Z" for m in range(0, 60, 3)]
+    files = [f"/data/RMA1_0315_01_DBZH_{ts}.H5" for ts in recent + old]
+    existing = {f"RMA1_dbzh_{ts}" for ts in recent}
+    source = RadarDataSource(DBZH_CONFIG, make_repo(files))
+    images = await source.discover_images(make_discovery_config(existing=existing))
+    assert images == []
+
+
+@pytest.mark.asyncio
+async def test_discover_images_skips_unparseable_timestamp():
+    files = [
+        "/data/RMA1_0315_01_DBZH_garbage.H5",
+        "/data/RMA1_0315_01_DBZH_20260114T170000Z.H5",
+    ]
+    source = RadarDataSource(DBZH_CONFIG, make_repo(files))
+    images = await source.discover_images(make_discovery_config())
+    assert [img.image_id for img in images] == ["RMA1_dbzh_20260114T170000Z"]

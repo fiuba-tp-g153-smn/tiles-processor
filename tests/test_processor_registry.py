@@ -84,10 +84,14 @@ def _config_with_every_product_on():
         "GOES_TARGET_IMAGES",
         "GOES_MAX_HOURS_BACK",
         "RADAR_TARGET_IMAGES",
+        "RADAR_MAX_AGE_MINUTES",
         "INTA_TARGET_IMAGES",
+        "INTA_MAX_AGE_MINUTES",
         "WRF_TARGET_RUNS",
+        "WRF_MAX_AGE_HOURS",
         "GLM_SAFETY_LAG_SECONDS",
         "GLM_TARGET_WINDOWS",
+        "GLM_MAX_AGE_MINUTES",
     ):
         setattr(config, knob, None)
     config.GLM_ACCUM_MINUTES = 10
