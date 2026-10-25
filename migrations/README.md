@@ -15,9 +15,9 @@ Each is an **independent history** (its own `versions/`, `env.py` and
 The repositories (`MetricsRepository`, `ProgressTracker`) no longer create their
 own schema — Alembic is the single source of truth. Migrations are applied by:
 
-- **production / compose:** the one-shot `migrate` service runs
-  `python3 src/main.py migrate` (→ `upgrade head` for both DBs) before the
-  producer / workers / dashboard start (`depends_on … service_completed_successfully`);
+- **production / compose:** producer, workers and metrics API each call
+  `ensure_migrations` at startup. A POSIX `flock` on the shared volume serializes
+  `upgrade head` for both stores. Compose defines no one-shot `migrate` service;
 - **locally:** `python3 src/main.py migrate`;
 - **tests:** the `migrated_dbs` fixture in `tests/conftest.py`.
 

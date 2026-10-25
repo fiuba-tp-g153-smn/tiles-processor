@@ -55,8 +55,8 @@ tilesets are never re-queued.
 | Component            | Technology                  | Role                                                   |
 | -------------------- | --------------------------- | ------------------------------------------------------ |
 | **Language**         | Python 3.12                 | Application runtime                                    |
-| **Message broker**   | RabbitMQ 4.2.4              | Work queue with DLQ, AMQP protocol                     |
-| **Object storage**   | SeaweedFS 4.17              | S3-compatible tile storage with built-in TTL via filer |
+| **Message broker**   | RabbitMQ 4.3.7              | Work queue with DLQ, AMQP protocol                     |
+| **Object storage**   | SeaweedFS 4.48              | S3-compatible tile storage with built-in TTL via filer |
 | **Geospatial I/O**   | GDAL / rasterio / rioxarray | CRS reprojection, GeoTIFF writing, `gdal2tiles`        |
 | **Scientific data**  | xarray / h5py / arm-pyart   | NetCDF/HDF5 reading, radar processing                  |
 | **Async I/O**        | asyncio / aioboto3          | Non-blocking S3 and network operations                 |
@@ -286,8 +286,6 @@ MinIO Console: `http://localhost:9001`
 | `RABBITMQ_DLQ`                           | Dead-letter queue name                                  | Required |
 | `RABBITMQ_DLX`                           | Dead-letter exchange name                               | Required |
 | `JOB_TTL_MINUTES`                        | Max age of a queued job before discard                  | Required |
-| `SEAWEEDFS_FILER_ENDPOINT`               | SeaweedFS Filer endpoint (optional)                     | —        |
-| `SEAWEEDFS_TILE_TTL`                     | TTL for uploaded tiles (e.g. `30d`)                     | `1m`     |
 | `HEALTH_PORT`                            | Port for `/health` and `/ready` endpoints               | `8080`   |
 
 ## Settings Configuration (`settings.json`)
@@ -430,7 +428,10 @@ input, product toggles, retention, and tuning live together.
   cache (`grib/ecmwf-ifs`, `grib/gfs`), so a cache prefix can be used
   as an input prefix directly. GRIBs read from a folder or bucket are validated
   exactly as the HTTP path validates them.
-- **`sources.<name>.products`**: Enable/disable individual products without a rebuild.
+- **`sources.<name>.products`**: Enable/disable individual products. Production
+  copies `settings.json` into the image, so changing it requires a rebuild.
+  Beta-1 mounts `settings-beta-1.json`; restart its producer/workers/metrics
+  after changing that file. A settings change does not change worker count.
 - **Per-source discovery/cadence knobs** (all optional — omitting one keeps the
   source's built-in default): `goes19-abi.target_images` /
   `goes19-abi.max_hours_back`, `radar-sinarame.target_images` /
