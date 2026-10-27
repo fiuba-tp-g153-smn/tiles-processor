@@ -1,4 +1,4 @@
-"""INTA radar data source - discovers Rainbow5 .vol files via a repository."""
+"""INTA radar data source - discovers Rainbow5 .vol/.azi files via a repository."""
 
 import asyncio
 from collections import defaultdict
@@ -10,7 +10,7 @@ from data_sources.base import DataSource, ImageInfo, DiscoveryConfig
 from data_sources.inta_radar_repository import IntaRadarFileRepository
 from models.listing_window import ListingWindow
 from models.radar_config import (
-    INTA_STOP_RANGE_KM,
+    IntaScanSpec,
     RadarProductConfig,
     RadarStationFilter,
 )
@@ -28,22 +28,24 @@ class IntaRadarDataSource(DataSource):
     """
     Data source for the INTA radars (Anguil, Paraná, Pergamino).
 
-    These deliver Rainbow5 volumes rather than the SINARAME ODIM-HDF5, so they
+    These deliver Rainbow5 files rather than the SINARAME ODIM-HDF5, so they
     need their own reader and their own discovery. What they do *not* need is
     their own products: the moments are the same physical variables, so each
-    source is configured with a ``RadarProductConfig`` derived from the
-    SINARAME one — same PyART field, same palette — differing only in the S3
-    prefix that puts it in the INTA namespace.
+    source publishes a ``RadarProductConfig`` derived from the SINARAME one —
+    same PyART field, same palette — differing only in the S3 prefix that puts
+    it in the INTA namespace. Which files feed it is an ``IntaScanSpec``: the
+    variable and extension in the name, and the range in the header.
 
     Two things can only be learned from inside the file, so discovery reads a
     bounded header window per candidate:
 
-    1. **The station.** Files are named ``{RADAR}{YYYYMMDDHHMMSS}{NN}{VAR}.vol``
+    1. **The station.** Files are named ``{RADAR}{YYYYMMDDHHMMSS}{NN}{VAR}.{EXT}``
        but the radar token is only present in production — the SMN's sample
        files omit it. The header carries it either way.
     2. **The scan range.** Anguil and Pergamino interleave 120 km volumes with
        the 240 km ones in the same folder, distinguishable by nothing else.
-       Only the 240 km scans are published (see ``INTA_STOP_RANGE_KM``).
+       Volumes are published only at 240 km and ``.azi`` PPIs only beyond it
+       (see ``IntaScanSpec.accepts_range``).
     """
 
     # Scans arrive every 10 minutes, so 12 covers ~2 hours — enough for the
@@ -57,8 +59,7 @@ class IntaRadarDataSource(DataSource):
 
     def __init__(  # pylint: disable=too-many-arguments
         self,
-        product_config: RadarProductConfig,
-        rainbow_variable: str,
+        spec: IntaScanSpec,
         repository: IntaRadarFileRepository,
         station_filter: RadarStationFilter | None = None,
         *,
@@ -69,8 +70,8 @@ class IntaRadarDataSource(DataSource):
         Initialize an INTA data source for a specific product.
 
         Args:
-            product_config: The product config this variable is published as
-            rainbow_variable: Rainbow5 data type in the filename (e.g. "dBZ")
+            spec: Which files this source discovers (variable, extension and
+                range) and the product they are published as
             repository: Repository for listing, header-reading and downloading
             station_filter: Decides which stations to discover; ``None`` means
                 every station
@@ -80,8 +81,8 @@ class IntaRadarDataSource(DataSource):
                 (relative to the discovery time) are skipped; ``None`` uses
                 MAX_AGE_MINUTES
         """
-        self._product_config = product_config
-        self._rainbow_variable = rainbow_variable
+        self._spec = spec
+        self._product_config = spec.product_config
         self._repository = repository
         self._station_filter = station_filter
         self._target_images = (
@@ -109,13 +110,13 @@ class IntaRadarDataSource(DataSource):
         return self._product_config
 
     @property
-    def rainbow_variable(self) -> str:
-        """The Rainbow5 data type this source discovers."""
-        return self._rainbow_variable
+    def spec(self) -> IntaScanSpec:
+        """The files this source discovers and the product they feed."""
+        return self._spec
 
     async def discover_images(self, config: DiscoveryConfig) -> list[ImageInfo]:
         """
-        Discover new .vol files for this source's variable.
+        Discover new files for this source's variable and extension.
 
         Filters by filename variable and scan age first (cheap, no I/O), then
         reads the header of the survivors to resolve station and scan range,
@@ -126,7 +127,7 @@ class IntaRadarDataSource(DataSource):
             ListingWindow(cutoff, config.current_time)
         )
         if not source_uris:
-            logger.warning("[%s] No .vol files found by repository", self.source_id)
+            logger.warning("[%s] No INTA files found by repository", self.source_id)
             return []
 
         candidates = self._drop_old_scans(
@@ -137,7 +138,7 @@ class IntaRadarDataSource(DataSource):
 
         new_images: list[ImageInfo] = []
         skipped_disabled_radar = 0
-        skipped_short_range = 0
+        skipped_out_of_range = 0
         unreadable = 0
 
         for source_uri, header in await self._read_headers(candidates):
@@ -147,8 +148,8 @@ class IntaRadarDataSource(DataSource):
 
             # Anguil/Pergamino mix 120 km volumes into the same folder; they
             # would render under the same product with a different footprint.
-            if header.stop_range_km != INTA_STOP_RANGE_KM:
-                skipped_short_range += 1
+            if not self._spec.accepts_range(header.stop_range_km):
+                skipped_out_of_range += 1
                 continue
 
             if self._station_filter is not None and not self._station_filter.allows(
@@ -183,12 +184,11 @@ class IntaRadarDataSource(DataSource):
 
         target_images = self._cap_per_station(new_images)
 
-        if skipped_short_range:
+        if skipped_out_of_range:
             logger.info(
-                "[%s] Skipped %d files from scans shorter than %.0f km",
+                "[%s] Skipped %d files whose range does not match this product",
                 self.source_id,
-                skipped_short_range,
-                INTA_STOP_RANGE_KM,
+                skipped_out_of_range,
             )
         if skipped_disabled_radar:
             logger.info(
@@ -205,7 +205,7 @@ class IntaRadarDataSource(DataSource):
 
         logger.info(
             "[%s] Found %d new files, publishing %d (limit %d, from %d total "
-            ".vol files)",
+            "INTA files)",
             self.source_id,
             len(new_images),
             len(target_images),
@@ -215,7 +215,7 @@ class IntaRadarDataSource(DataSource):
         return target_images
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
-        """Copy a .vol file to the worker's temp directory for processing."""
+        """Copy an INTA file to the worker's temp directory for processing."""
         dest_with_ext = await self._repository.download(source_uri, dest_path)
         logger.info(
             "[%s] Downloaded %s to %s",
@@ -226,15 +226,19 @@ class IntaRadarDataSource(DataSource):
         return dest_with_ext
 
     def _matches_variable(self, source_uri: str) -> bool:
-        """True when the filename parses and names this source's .vol variable."""
+        """True when the filename names this source's variable and extension.
+
+        ``dBZ`` comes both as a .vol volume and as an .azi PPI, so the variable
+        alone would let one product's source pick up the other's files.
+        """
         try:
             parsed = parse_inta_filename(Path(source_uri).name)
         except ValueError as exc:
             logger.debug("Skipping file with invalid name: %s (%s)", source_uri, exc)
             return False
         return (
-            parsed["variable"] == self._rainbow_variable
-            and parsed["extension"] == ".vol"
+            parsed["variable"] == self._spec.rainbow_variable
+            and parsed["extension"] == self._spec.extension
         )
 
     def _drop_old_scans(self, source_uris: list[str], cutoff: datetime) -> list[str]:

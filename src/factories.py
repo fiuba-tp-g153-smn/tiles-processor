@@ -72,7 +72,7 @@ from models.input_source_config import InputSourceConfig
 from models.radar_config import (
     INTA_RAINBOW_TO_PRODUCT,
     RADAR_PRODUCT_CONFIGS,
-    get_inta_product_config,
+    get_inta_scan_spec,
 )
 from models.wrf_config import WRF_PRODUCT_CONFIGS
 
@@ -242,8 +242,7 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
         for rainbow_variable in INTA_RAINBOW_TO_PRODUCT:
             registry.register(
                 IntaRadarDataSource(
-                    get_inta_product_config(rainbow_variable),
-                    rainbow_variable,
+                    get_inta_scan_spec(rainbow_variable, ".vol"),
                     inta_repository,
                     config.INTA_STATION_FILTER,
                     target_images=config.INTA_TARGET_IMAGES,

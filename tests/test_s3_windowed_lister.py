@@ -181,8 +181,8 @@ async def test_fallback_listing_is_shared_for_the_window():
 
 @pytest.mark.asyncio
 async def test_template_with_only_other_file_types_falls_back():
-    """INTA folders also hold .azi products; those are not radar volumes."""
-    s3_client = template_s3(["inta/x.azi"], full_keys=["radar/2026102514000400dBZ.vol"])
+    """INTA folders also hold rendered .png previews; those are not inputs."""
+    s3_client = template_s3(["inta/x.png"], full_keys=["radar/2026102514000400dBZ.vol"])
     lister = S3WindowedKeyLister(s3_client, "radar/", TEMPLATE, key_suffix=".vol")
 
     assert await lister.list_keys(TICK) == ["radar/2026102514000400dBZ.vol"]
@@ -274,12 +274,22 @@ async def test_sinarame_repository_shares_listing_and_keeps_h5_only():
 
 
 @pytest.mark.asyncio
-async def test_inta_repository_shares_listing_and_keeps_vol_only():
-    s3_client = make_s3(["inta/x.azi", "inta/2026102514000400dBZ.vol"])
+async def test_inta_repository_shares_listing_and_keeps_vol_and_azi():
+    s3_client = make_s3(
+        ["inta/x.png", "inta/2026102514000400dBZ.vol", "inta/2026102514072200dBZ.azi"]
+    )
     repo = S3IntaRadarFileRepository(s3_client, prefix="inta/")
 
-    for _ in range(4):
+    for _ in range(5):
         files = await repo.list_files(TICK)
 
-    assert files == ["inta/2026102514000400dBZ.vol"]
+    assert files == ["inta/2026102514000400dBZ.vol", "inta/2026102514072200dBZ.azi"]
     s3_client.list_files.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_several_suffixes_are_kept_in_any_case():
+    s3_client = make_s3(["inta/a.vol", "inta/b.AZI", "inta/c.png", "inta/d.VOL"])
+    lister = S3WindowedKeyLister(s3_client, "inta/", key_suffix=(".vol", ".azi"))
+
+    assert await lister.list_keys(None) == ["inta/a.vol", "inta/b.AZI", "inta/d.VOL"]

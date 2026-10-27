@@ -1,4 +1,4 @@
-"""INTA radar file repository — abstracts .vol listing, header reads and download."""
+"""INTA radar file repository — abstracts .vol/.azi listing, header reads and download."""
 
 import asyncio
 import logging
@@ -10,9 +10,12 @@ from clients.s3_client import S3Client
 from data_sources.s3_repository_utils import strip_s3_scheme
 from data_sources.s3_windowed_lister import S3WindowedKeyLister
 from models.listing_window import ListingWindow
+from models.radar_config import INTA_SCAN_SPECS
 from models.rainbow_header import HEADER_WINDOW_BYTES
 
 logger = logging.getLogger(__name__)
+
+INTA_EXTENSIONS = tuple(sorted({spec.extension for spec in INTA_SCAN_SPECS}))
 
 
 class IntaRadarFileRepository(ABC):
@@ -25,7 +28,7 @@ class IntaRadarFileRepository(ABC):
 
     @abstractmethod
     async def list_files(self, window: ListingWindow | None = None) -> list[str]:
-        """Return source URIs for the .vol files.
+        """Return source URIs for the .vol and .azi files.
 
         ``window`` lets a backend skip what discovery would drop for age; the
         result may still hold older files, so callers keep filtering by time.
@@ -37,18 +40,22 @@ class IntaRadarFileRepository(ABC):
 
     @abstractmethod
     async def download(self, source_uri: str, dest_path: Path) -> Path:
-        """Download/copy file to dest_path; return final path (.vol extension)."""
+        """Download/copy file to dest_path; return the final path.
+
+        The source's extension is kept (lowercased), so a long-range ``.azi``
+        stays recognizable in the worker's temp dir and its logs.
+        """
 
 
 class LocalIntaRadarFileRepository(IntaRadarFileRepository):
-    """Reads .vol files from a local directory.
+    """Reads .vol and .azi files from a local directory.
 
     Supports the same two layouts as the SINARAME repository:
       - Flat:   <input_dir>/*.vol
       - Nested: <input_dir>/PAR/*.vol (or any subdirectory)
 
-    Only ``.vol`` is globbed: the feed also ships ``.azi`` products, which are
-    not volumetric and must never reach the processor.
+    Which product a file feeds is decided by discovery, from its variable,
+    extension and header range.
     """
 
     def __init__(self, input_dir: Path) -> None:
@@ -67,13 +74,12 @@ class LocalIntaRadarFileRepository(IntaRadarFileRepository):
         # Both cases are globbed because the layout is case-sensitive on Linux;
         # the set collapses the duplicate a case-insensitive filesystem would
         # otherwise return twice.
-        files.update(self._input_dir.glob("*.vol"))
-        files.update(self._input_dir.glob("*.VOL"))
-
-        for subdir in self._input_dir.iterdir():
-            if subdir.is_dir():
-                files.update(subdir.glob("*.vol"))
-                files.update(subdir.glob("*.VOL"))
+        folders = [self._input_dir]
+        folders.extend(d for d in self._input_dir.iterdir() if d.is_dir())
+        for folder in folders:
+            for extension in INTA_EXTENSIONS:
+                files.update(folder.glob(f"*{extension}"))
+                files.update(folder.glob(f"*{extension.upper()}"))
 
         return [str(f.absolute()) for f in sorted(files)]
 
@@ -89,14 +95,14 @@ class LocalIntaRadarFileRepository(IntaRadarFileRepository):
         source_path = Path(source_uri)
         if not source_path.exists():
             raise FileNotFoundError(f"INTA radar file not found: {source_uri}")
-        dest_with_ext = dest_path.with_suffix(".vol")
+        dest_with_ext = dest_path.with_suffix(source_path.suffix.lower())
         dest_with_ext.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(shutil.copy2, source_path, dest_with_ext)
         return dest_with_ext
 
 
 class S3IntaRadarFileRepository(IntaRadarFileRepository):
-    """Reads .vol files from an S3 bucket mirroring the local folder layout.
+    """Reads .vol and .azi files from an S3 bucket mirroring the local layout.
 
     Lists recursively under the configured prefix (a superset of the local
     flat + one-subdir-level rule), or only the date partitions ``key_template``
@@ -109,7 +115,7 @@ class S3IntaRadarFileRepository(IntaRadarFileRepository):
     ) -> None:
         self._s3_client = s3_client
         self._lister = S3WindowedKeyLister(
-            s3_client, prefix, key_template, key_suffix=".vol"
+            s3_client, prefix, key_template, key_suffix=INTA_EXTENSIONS
         )
 
     async def list_files(self, window: ListingWindow | None = None) -> list[str]:
@@ -122,7 +128,7 @@ class S3IntaRadarFileRepository(IntaRadarFileRepository):
         )
 
     async def download(self, source_uri: str, dest_path: Path) -> Path:
-        dest_with_ext = dest_path.with_suffix(".vol")
+        dest_with_ext = dest_path.with_suffix(Path(source_uri).suffix.lower())
         dest_with_ext.parent.mkdir(parents=True, exist_ok=True)
         await self._s3_client.download_to_file(
             strip_s3_scheme(source_uri, self._s3_client.bucket_name), dest_with_ext
