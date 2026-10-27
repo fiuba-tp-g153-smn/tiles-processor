@@ -70,9 +70,8 @@ from models.gfs_config import (
 from models.ecmwf_config import EcmwfProductConfig
 from models.input_source_config import InputSourceConfig
 from models.radar_config import (
-    INTA_RAINBOW_TO_PRODUCT,
+    INTA_SCAN_SPECS,
     RADAR_PRODUCT_CONFIGS,
-    get_inta_product_config,
 )
 from models.wrf_config import WRF_PRODUCT_CONFIGS
 
@@ -234,16 +233,15 @@ def create_data_source_registry(config: Optional[Config] = None) -> DataSourceRe
                 )
             )
 
-    # Register INTA radar data sources, one per mapped Rainbow variable. They
-    # share SINARAME's products and palettes; only the reader, the discovery and
-    # the S3 namespace differ.
+    # Register INTA radar data sources, one per scan spec (the .vol moments and
+    # the long-range .azi reflectivity). They share SINARAME's products and
+    # palettes; only the reader, the discovery and the S3 namespace differ.
     if config is not None:
         inta_repository = _create_inta_repository(config)
-        for rainbow_variable in INTA_RAINBOW_TO_PRODUCT:
+        for spec in INTA_SCAN_SPECS:
             registry.register(
                 IntaRadarDataSource(
-                    get_inta_product_config(rainbow_variable),
-                    rainbow_variable,
+                    spec,
                     inta_repository,
                     config.INTA_STATION_FILTER,
                     target_images=config.INTA_TARGET_IMAGES,

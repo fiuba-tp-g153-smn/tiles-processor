@@ -1,4 +1,6 @@
-"""Tests for Rainbow5 (.vol) header and filename parsing."""
+"""Tests for Rainbow5 (.vol / .azi) header and filename parsing."""
+
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +11,8 @@ from models.rainbow_header import (
     parse_inta_timestamp,
     parse_rainbow_header,
 )
+
+INTA_FIXTURES = Path(__file__).parent / "fixtures" / "inta"
 
 
 def test_parses_identity_and_geometry(rainbow_header):
@@ -77,6 +81,50 @@ def test_parse_filename_both_conventions(filename, radar_id, timestamp, variable
     assert parsed["radar_id"] == radar_id
     assert parsed["timestamp"] == timestamp
     assert parsed["variable"] == variable
+    assert parsed["extension"] == ".vol"
+
+
+@pytest.mark.parametrize(
+    "filename,radar_id,timestamp",
+    [
+        ("2026091501072200dBZ.azi", "", "20260915T010722Z"),
+        ("ANG2026091501072200dBZ.azi", "ANG", "20260915T010722Z"),
+    ],
+)
+def test_parse_long_range_azi_filename(filename, radar_id, timestamp):
+    parsed = parse_inta_filename(filename)
+    assert parsed["radar_id"] == radar_id
+    assert parsed["timestamp"] == timestamp
+    assert parsed["variable"] == "dBZ"
+    assert parsed["extension"] == ".azi"
+
+
+@pytest.mark.parametrize(
+    "filename", ["2026091501072200dBZ.AZI", "PAR2026061920000300dBZ.VOL"]
+)
+def test_extension_is_matched_in_any_case_and_lowercased(filename):
+    # The local repository globs both cases, so the parser must accept both.
+    assert parse_inta_filename(filename)["extension"] == filename[-4:].lower()
+
+
+@pytest.mark.parametrize(
+    "station,filename,stop_range_km,scan_name",
+    [
+        ("ANG", "2026091501072200dBZ.azi", 480.0, "AZI_480_Z.azi"),
+        ("PER", "2026091501074200dBZ.azi", 400.0, "SMN_400.azi"),
+    ],
+)
+def test_real_azi_header_reports_long_range(
+    station, filename, stop_range_km, scan_name
+):
+    # Real files, not the synthetic preamble: the .azi header is laid out like
+    # the .vol one, and the whole file is shorter than the read window.
+    path = INTA_FIXTURES / station / filename
+    window = path.read_bytes()[:HEADER_WINDOW_BYTES]
+    header = parse_rainbow_header(window)
+    assert header.radar_id == station
+    assert header.stop_range_km == pytest.approx(stop_range_km)
+    assert header.scan_name == scan_name
 
 
 def test_timestamp_matches_the_radar_tileset_format():
@@ -91,8 +139,8 @@ def test_timestamp_matches_the_radar_tileset_format():
 @pytest.mark.parametrize(
     "filename",
     [
-        # .azi products are not volumetric and must never be ingested.
-        "2026091501472600dBZ.azi",
+        "2026091501472600dBZ.vol.bak",
+        "2026091501472600dBZ.png",
         "OneDrive_1_9-18-2026.zip",
         "RMA1_0315_01_DBZH_20260114T170328Z.H5",
         "garbage.vol",

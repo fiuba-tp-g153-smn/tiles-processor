@@ -1,4 +1,4 @@
-"""Rainbow5 (.vol) header parsing for the INTA radars.
+"""Rainbow5 (.vol / .azi) header parsing for the INTA radars.
 
 Rainbow5 files are an XML preamble followed by binary blobs. Everything needed
 to identify and route a scan lives in that preamble, so it can be read without
@@ -27,18 +27,19 @@ _SCAN_NAME_RE = re.compile(rb'<scan name="([^"]*)"')
 _STOP_RANGE_RE = re.compile(rb"<stoprange>([^<]*)</stoprange>")
 _NUMELE_RE = re.compile(rb"<numele>([^<]*)</numele>")
 
-# ``{RADAR}{YYYYMMDDHHMMSS}{NN}{VARIABLE}.vol`` — the radar token is absent in
-# the sample files and present in production; NN is a sequence number that
-# follows the 14-digit timestamp. Only ``.vol`` matches: the folders also hold
-# ``.azi`` products, which are not volumetric and must never be ingested.
+# ``{RADAR}{YYYYMMDDHHMMSS}{NN}{VARIABLE}.{vol|azi}`` — the radar token is
+# absent in the sample files and present in production; NN is a sequence number
+# that follows the 14-digit timestamp. ``.vol`` are the multi-sweep volumes,
+# ``.azi`` the single-sweep long-range PPIs; the extension matches in any case,
+# like the repository's globs.
 _FILENAME_RE = re.compile(
     r"^(?P<radar>[A-Za-z]*)(?P<timestamp>\d{14})(?P<sequence>\d{2})"
-    r"(?P<variable>[A-Za-z]+)\.vol$"
+    r"(?P<variable>[A-Za-z]+)\.(?P<extension>(?i:vol|azi))$"
 )
 
 
 class RainbowHeaderError(ValueError):
-    """Raised when a .vol file carries no parsable Rainbow5 header."""
+    """Raised when a Rainbow5 file carries no parsable header."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +53,8 @@ class RainbowHeader:
         longitude: Antenna longitude in degrees.
         altitude_m: Antenna altitude in metres.
         stop_range_km: Maximum range of the scan. The discriminant between the
-            240 km volumes this pipeline publishes and the 120 km ones ANG and
-            PER interleave in the same folder.
+            240 km volumes this pipeline publishes, the 120 km ones ANG and PER
+            interleave in the same folder, and the long-range ``.azi`` PPIs.
         elevation_count: Number of sweeps in the volume.
         scan_name: Scan strategy (``VOL_240_ALL``, ``SMN_120``, …). Carried for
             logging: ``stop_range_km`` is what decisions are made on, since the
@@ -71,7 +72,7 @@ class RainbowHeader:
 
 
 def parse_rainbow_header(window: bytes) -> RainbowHeader:
-    """Parse a Rainbow5 preamble out of the leading bytes of a .vol file.
+    """Parse a Rainbow5 preamble out of the leading bytes of a file.
 
     Args:
         window: Head of the file, at least ``HEADER_WINDOW_BYTES`` long.
@@ -106,16 +107,16 @@ def parse_rainbow_header(window: bytes) -> RainbowHeader:
 
 
 def parse_inta_filename(filename: str) -> dict[str, str]:
-    """Split an INTA .vol filename into its parts.
+    """Split an INTA .vol / .azi filename into its parts.
 
     The radar token is optional (empty string when absent) because only the
     production naming carries it; callers identify the station from the header.
     ``timestamp`` is normalized to the ``YYYYMMDDTHHMMSSZ`` form the rest of the
     pipeline — and the visualizer's tileset parser — already speaks.
+    ``extension`` is lowercased (``.vol`` / ``.azi``).
 
     Raises:
-        ValueError: The name does not follow the INTA convention (``.azi``
-            products and anything else are rejected here).
+        ValueError: The name does not follow the INTA convention.
     """
     match = _FILENAME_RE.match(filename)
     if match is None:
@@ -127,6 +128,7 @@ def parse_inta_filename(filename: str) -> dict[str, str]:
         "timestamp": f"{raw[:8]}T{raw[8:]}Z",
         "sequence": match.group("sequence"),
         "variable": match.group("variable"),
+        "extension": f".{match.group('extension').lower()}",
     }
 
 

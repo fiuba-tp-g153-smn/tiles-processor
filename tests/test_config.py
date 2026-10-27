@@ -757,6 +757,27 @@ class TestConfig:
             assert config.RADAR_MAX_AGE_MINUTES == 90
             assert config.INTA_MAX_AGE_MINUTES == 60
 
+    def test_inta_long_range_product_reads_settings(self, tmp_path, env_vars):
+        """dbzh-450km is an INTA toggle like the volume products; off if absent."""
+        settings = {
+            "timezone": "UTC",
+            "bounds": {"minx": -90, "miny": -60, "maxx": -30, "maxy": -15},
+            "sources": {"radar-inta": {"products": {"dbzh-450km": True}}},
+        }
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(settings))
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=path)
+            assert config.ENABLED_INTA_PRODUCTS["dbzh-450km"] is True
+            assert config.ENABLED_INTA_PRODUCTS["dbzh"] is False
+
+    def test_committed_settings_enable_inta_long_range(self, env_vars):
+        """The baked-in settings.json publishes dbzh-450km for INTA."""
+        settings_path = Path(__file__).parent.parent / "settings.json"
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            config = Config(settings_path=settings_path)
+            assert config.ENABLED_INTA_PRODUCTS["dbzh-450km"] is True
+
     @pytest.mark.parametrize("value", [0, "150"])
     def test_radar_max_age_rejects_invalid(self, tmp_path, env_vars, value):
         """A non-integer or below-1 value fails fast, naming the JSON path."""

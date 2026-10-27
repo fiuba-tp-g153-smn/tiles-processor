@@ -26,10 +26,13 @@ class S3WindowedKeyLister:  # pylint: disable=too-few-public-methods
 
     With ``key_template`` set (see ``s3_key_template``) only the partitions
     the window overlaps are listed first. If that listing fails or holds no
-    file with ``key_suffix`` — a template that does not match the bucket, or
+    file ending in ``key_suffix`` — a template that does not match the bucket, or
     folders named in another timezone — the whole prefix is listed instead and
     a warning says so, so a wrong template costs one extra listing rather than
     every radar file.
+
+    ``key_suffix`` is one suffix or a tuple of them, matched in any case — the
+    same contract as ``str.endswith`` (INTA ships ``.vol`` and ``.azi``).
     """
 
     LIST_CONCURRENCY = 8
@@ -40,12 +43,14 @@ class S3WindowedKeyLister:  # pylint: disable=too-few-public-methods
         prefix: str = "",
         key_template: str | None = None,
         *,
-        key_suffix: str,
+        key_suffix: str | tuple[str, ...],
     ) -> None:
         self._s3_client = s3_client
         self._prefix = prefix
         self._key_template = key_template
-        self._key_suffix = key_suffix.lower()
+        suffixes = (key_suffix,) if isinstance(key_suffix, str) else key_suffix
+        self._key_suffixes = tuple(suffix.lower() for suffix in suffixes)
+        self._suffix_label = "/".join(self._key_suffixes)
         self._lock = asyncio.Lock()
         self._cached_window: ListingWindow | None = None
         self._cached_keys: list[str] = []
@@ -74,7 +79,7 @@ class S3WindowedKeyLister:  # pylint: disable=too-few-public-methods
         else:
             if keys:
                 return keys
-            reason = f"found no {self._key_suffix} files"
+            reason = f"found no {self._suffix_label} files"
         logger.warning(
             "Template '%s' listing of '%s' for %s..%s %s; listing the whole prefix "
             "instead",
@@ -100,7 +105,7 @@ class S3WindowedKeyLister:  # pylint: disable=too-few-public-methods
         logger.info(
             "Listed %d %s files under %d partition prefixes of '%s' for %s..%s",
             len(keys),
-            self._key_suffix,
+            self._suffix_label,
             len(prefixes),
             self._prefix,
             window.start.isoformat(),
@@ -109,7 +114,7 @@ class S3WindowedKeyLister:  # pylint: disable=too-few-public-methods
         return keys
 
     def _keep_input_files(self, keys: list[str]) -> list[str]:
-        return sorted(k for k in keys if k.lower().endswith(self._key_suffix))
+        return sorted(k for k in keys if k.lower().endswith(self._key_suffixes))
 
     async def _resolve_wildcards(self, prefixes: list[str]) -> list[str]:
         """Replace each ``*`` segment by the folders that exist at that level."""

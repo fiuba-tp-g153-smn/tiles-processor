@@ -57,6 +57,7 @@
       },
       "products": {
         "dbzh": true,
+        "dbzh-450km": true,
         "zdr": true,
         "rhohv": true,
         "kdp": true

@@ -3,8 +3,11 @@
 import pytest
 
 from models.radar_config import (
+    INTA_PRODUCT_CONFIGS,
+    INTA_SCAN_SPECS,
     RADAR_PRODUCT_CONFIGS,
     RadarStationFilter,
+    get_inta_scan_spec,
     get_radar_product_config_for_file,
     parse_radar_filename,
 )
@@ -112,6 +115,58 @@ def test_resolves_product_from_variable_and_subvolume(filename, expected):
 def test_unknown_variable_subvolume_pair_raises():
     with pytest.raises(ValueError, match="No radar product"):
         get_radar_product_config_for_file("DBZH", "07")
+
+
+def test_inta_variable_extension_pairs_are_unique():
+    # get_inta_scan_spec resolves on this pair, so a duplicate would silently
+    # route a file to whichever spec is listed first.
+    pairs = [(s.rainbow_variable, s.extension) for s in INTA_SCAN_SPECS]
+    assert len(pairs) == len(set(pairs))
+
+
+@pytest.mark.parametrize(
+    "variable,extension,expected",
+    [
+        ("dBZ", ".vol", "dbzh"),
+        ("dBZ", ".azi", "dbzh-450km"),
+        ("dBZ", ".AZI", "dbzh-450km"),
+        ("RhoHV", ".vol", "rhohv"),
+    ],
+)
+def test_inta_product_comes_from_variable_and_extension(variable, extension, expected):
+    assert get_inta_scan_spec(variable, extension).product_id == expected
+
+
+@pytest.mark.parametrize("variable,extension", [("dBuZ", ".vol"), ("ZDR", ".azi")])
+def test_unmapped_inta_pair_raises(variable, extension):
+    with pytest.raises(ValueError, match="not mapped"):
+        get_inta_scan_spec(variable, extension)
+
+
+@pytest.mark.parametrize(
+    "extension,stop_range_km,accepted",
+    [
+        (".vol", 240.0, True),
+        (".vol", 120.0, False),
+        (".vol", 480.0, False),
+        (".azi", 480.0, True),
+        (".azi", 400.0, True),
+        (".azi", 240.0, False),
+        (".azi", 120.0, False),
+    ],
+)
+def test_inta_spec_accepts_only_its_own_range(extension, stop_range_km, accepted):
+    spec = get_inta_scan_spec("dBZ", extension)
+    assert spec.accepts_range(stop_range_km) is accepted
+
+
+def test_inta_long_range_product_is_published_in_the_inta_namespace():
+    config = get_inta_scan_spec("dBZ", ".azi").product_config
+    assert config is INTA_PRODUCT_CONFIGS["dbzh-450km"]
+    assert config.s3_tiles_prefix == "tiles/radar/inta"
+    assert config.s3_cog_prefix == "cog/radar/inta"
+    # Same moment and palette as the SINARAME long-range product.
+    assert config.variable == RADAR_PRODUCT_CONFIGS["dbzh-450km"].variable
 
 
 def test_every_radar_product_config_declares_a_palette_or_stays_off():
