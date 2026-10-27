@@ -1,10 +1,10 @@
-"""INTA radar processor - reads Rainbow5 volumes, reuses the SINARAME pipeline."""
+"""INTA radar processor - reads Rainbow5 files, reuses the SINARAME pipeline."""
 
 from logging import getLogger
 from pathlib import Path
 
 from exceptions import UnprocessableInputError
-from models.radar_config import get_inta_product_config
+from models.radar_config import get_inta_scan_spec
 from models.radar_scan import ScanIdentity
 from models.rainbow_header import (
     HEADER_WINDOW_BYTES,
@@ -65,11 +65,15 @@ class IntaRadarProcessor(RadarProcessor):
     Processor for the INTA radars (Anguil, Paraná, Pergamino).
 
     The INTA feed differs from SINARAME only in how a scan is identified and
-    read: Rainbow5 volumes instead of ODIM-HDF5. Both carry the same physical
+    read: Rainbow5 files instead of ODIM-HDF5. Both carry the same physical
     moments on a comparable geometry — 240 km of range, and 0.5°/0.9°/1.3° as
     the first three sweeps, matching ``SWEEPS`` exactly — so everything from the
     polar-to-cartesian mapping onwards is inherited unchanged, palettes
     included. Only the S3 prefix differs, and that rides on the product config.
+
+    The long-range ``.azi`` PPIs go through the same path: the grid follows
+    each scan's own range, and with a single sweep only ``elev0`` is produced,
+    like SINARAME's ``dbzh-450km``.
     """
 
     @property
@@ -84,10 +88,15 @@ class IntaRadarProcessor(RadarProcessor):
         (``PAR2026…dBZ.vol``) but the SMN's own samples are not
         (``2026…dBZ.vol``). The header carries it either way, so it is the only
         thing that works for both.
+
+        The product comes from the variable *and* the extension: ``dBZ`` is
+        both a 240 km ``.vol`` volume and a long-range ``.azi`` PPI.
         """
         path = Path(source_uri)
         parsed = parse_inta_filename(path.name)
-        product_config = get_inta_product_config(parsed["variable"])
+        product_config = get_inta_scan_spec(
+            parsed["variable"], parsed["extension"]
+        ).product_config
 
         return ScanIdentity(
             radar_id=self._read_radar_id(path, fallback=parsed["radar_id"]),
@@ -97,7 +106,7 @@ class IntaRadarProcessor(RadarProcessor):
         )
 
     def _read_radar(self, scan_path: Path):
-        """Read a Rainbow5 volume using PyART."""
+        """Read a Rainbow5 volume or PPI using PyART."""
         import pyart  # pylint: disable=import-outside-toplevel
 
         _patch_rainbow_slice_defaults()
@@ -112,7 +121,7 @@ class IntaRadarProcessor(RadarProcessor):
             # A volume this reader cannot decode is bad input, not a bug worth
             # retrying through the DLQ.
             raise UnprocessableInputError(
-                f"Unreadable Rainbow5 volume {scan_path.name}: {exc}"
+                f"Unreadable Rainbow5 file {scan_path.name}: {exc}"
             ) from exc
 
         logger.info(

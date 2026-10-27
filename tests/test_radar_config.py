@@ -7,7 +7,6 @@ from models.radar_config import (
     INTA_SCAN_SPECS,
     RADAR_PRODUCT_CONFIGS,
     RadarStationFilter,
-    get_inta_product_config,
     get_inta_scan_spec,
     get_radar_product_config_for_file,
     parse_radar_filename,
@@ -168,10 +167,6 @@ def test_inta_long_range_product_is_published_in_the_inta_namespace():
     assert config.s3_cog_prefix == "cog/radar/inta"
     # Same moment and palette as the SINARAME long-range product.
     assert config.variable == RADAR_PRODUCT_CONFIGS["dbzh-450km"].variable
-
-
-def test_inta_volume_lookup_never_resolves_to_the_long_range_product():
-    assert get_inta_product_config("dBZ").product_id == "dbzh"
 
 
 def test_every_radar_product_config_declares_a_palette_or_stays_off():

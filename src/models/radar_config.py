@@ -275,12 +275,6 @@ INTA_SCAN_SPECS = (
     IntaScanSpec("dBZ", ".azi", "dbzh-450km", long_range=True),
 )
 
-INTA_RAINBOW_TO_PRODUCT = {
-    spec.rainbow_variable: spec.product_id
-    for spec in INTA_SCAN_SPECS
-    if spec.extension == ".vol"
-}
-
 INTA_PRODUCT_CONFIGS = {
     spec.product_id: replace(
         RADAR_PRODUCT_CONFIGS[spec.product_id],
@@ -311,16 +305,6 @@ def get_inta_scan_spec(rainbow_variable: str, extension: str) -> IntaScanSpec:
         f"Rainbow variable '{rainbow_variable}' in '{extension}' files is not "
         f"mapped to a radar product. Mapped: {mapped}"
     )
-
-
-def get_inta_product_config(rainbow_variable: str) -> RadarProductConfig:
-    """Resolve the product a Rainbow5 ``.vol`` data type is published as.
-
-    Raises:
-        ValueError: The data type has no mapping (an unsupported or diagnostic
-            moment such as ``dBuZ``).
-    """
-    return get_inta_scan_spec(rainbow_variable, ".vol").product_config
 
 
 def get_radar_product_config(product_id: str) -> RadarProductConfig:
