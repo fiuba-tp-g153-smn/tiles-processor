@@ -226,13 +226,16 @@ class IntaRadarDataSource(DataSource):
         return dest_with_ext
 
     def _matches_variable(self, source_uri: str) -> bool:
-        """True when the filename parses and names this source's variable."""
+        """True when the filename parses and names this source's .vol variable."""
         try:
             parsed = parse_inta_filename(Path(source_uri).name)
         except ValueError as exc:
             logger.debug("Skipping file with invalid name: %s (%s)", source_uri, exc)
             return False
-        return parsed["variable"] == self._rainbow_variable
+        return (
+            parsed["variable"] == self._rainbow_variable
+            and parsed["extension"] == ".vol"
+        )
 
     def _drop_old_scans(self, source_uris: list[str], cutoff: datetime) -> list[str]:
         """Keep scans at or after ``cutoff``, before any header is read.

@@ -223,16 +223,6 @@ RADAR_PRODUCT_CONFIGS = {
 # keeps that inheritance literal: a palette or field fix on the SINARAME config
 # lands on both networks.
 
-# Rainbow5 data type -> product id. The "u"-prefixed types (dBuZ, uPhiDP) are
-# the uncorrected, unfiltered variants: diagnostic rather than display data, so
-# they are deliberately unmapped.
-INTA_RAINBOW_TO_PRODUCT = {
-    "dBZ": "dbzh",
-    "ZDR": "zdr",
-    "RhoHV": "rhohv",
-    "KDP": "kdp",
-}
-
 # Only the 240 km volumes are published. Anguil and Pergamino interleave 120 km
 # scans (VOL_120_ZVW / SMN_120) in the same folder, distinguishable only by the
 # file header. Publishing both under one product would make the layer's extent
@@ -240,30 +230,97 @@ INTA_RAINBOW_TO_PRODUCT = {
 # scans are filtered out — the analogue of SINARAME's subvolume filter.
 INTA_STOP_RANGE_KM = 240.0
 
+
+@dataclass(frozen=True, slots=True)
+class IntaScanSpec:
+    """Which INTA file is published as which product.
+
+    The Rainbow5 data type alone is ambiguous — ``dBZ`` comes both as a 240 km
+    ``.vol`` volume and as a single-sweep long-range ``.azi`` PPI — so a file is
+    identified by the (variable, extension) pair, the INTA analogue of
+    SINARAME's (variable, subvolume).
+
+    Attributes:
+        rainbow_variable: Rainbow5 data type in the filename (``dBZ``).
+        extension: Lowercase file extension, ``.vol`` or ``.azi``.
+        product_id: The product the file is published as.
+        long_range: The scan must reach past ``INTA_STOP_RANGE_KM`` instead of
+            stopping exactly at it. Each site sets its own long-range extent
+            (e.g. ANG 480 km, PER 400 km), so it is a threshold rather than a
+            fixed range.
+    """
+
+    rainbow_variable: str
+    extension: str
+    product_id: str
+    long_range: bool = False
+
+    def accepts_range(self, stop_range_km: float) -> bool:
+        """True when a scan of this range belongs to this product."""
+        if self.long_range:
+            return stop_range_km > INTA_STOP_RANGE_KM
+        return stop_range_km == INTA_STOP_RANGE_KM
+
+    @property
+    def product_config(self) -> RadarProductConfig:
+        """The INTA-namespaced config this file is published with."""
+        return INTA_PRODUCT_CONFIGS[self.product_id]
+
+
+INTA_SCAN_SPECS = (
+    IntaScanSpec("dBZ", ".vol", "dbzh"),
+    IntaScanSpec("ZDR", ".vol", "zdr"),
+    IntaScanSpec("RhoHV", ".vol", "rhohv"),
+    IntaScanSpec("KDP", ".vol", "kdp"),
+    IntaScanSpec("dBZ", ".azi", "dbzh-450km", long_range=True),
+)
+
+INTA_RAINBOW_TO_PRODUCT = {
+    spec.rainbow_variable: spec.product_id
+    for spec in INTA_SCAN_SPECS
+    if spec.extension == ".vol"
+}
+
 INTA_PRODUCT_CONFIGS = {
-    product_id: replace(
-        RADAR_PRODUCT_CONFIGS[product_id],
+    spec.product_id: replace(
+        RADAR_PRODUCT_CONFIGS[spec.product_id],
         s3_tiles_prefix="tiles/radar/inta",
         s3_cog_prefix="cog/radar/inta",
     )
-    for product_id in INTA_RAINBOW_TO_PRODUCT.values()
+    for spec in INTA_SCAN_SPECS
 }
 
 
+def get_inta_scan_spec(rainbow_variable: str, extension: str) -> IntaScanSpec:
+    """Resolve the spec an INTA file is published under.
+
+    Args:
+        rainbow_variable: Rainbow5 data type in the filename (``dBZ``).
+        extension: File extension, any case (``.vol``, ``.AZI``).
+
+    Raises:
+        ValueError: The pair has no mapping (an unsupported or diagnostic
+            moment such as ``dBuZ``, or a variable not shipped in that format).
+    """
+    key = (rainbow_variable, extension.lower())
+    for spec in INTA_SCAN_SPECS:
+        if (spec.rainbow_variable, spec.extension) == key:
+            return spec
+    mapped = sorted((s.rainbow_variable, s.extension) for s in INTA_SCAN_SPECS)
+    raise ValueError(
+        f"Rainbow variable '{rainbow_variable}' in '{extension}' files is not "
+        f"mapped to a radar product. Mapped: {mapped}"
+    )
+
+
 def get_inta_product_config(rainbow_variable: str) -> RadarProductConfig:
-    """Resolve the product a Rainbow5 data type is published as.
+    """Resolve the product a Rainbow5 ``.vol`` data type is published as.
 
     Raises:
         ValueError: The data type has no mapping (an unsupported or diagnostic
             moment such as ``dBuZ``).
     """
-    product_id = INTA_RAINBOW_TO_PRODUCT.get(rainbow_variable)
-    if product_id is None:
-        raise ValueError(
-            f"Rainbow variable '{rainbow_variable}' is not mapped to a radar "
-            f"product. Mapped: {sorted(INTA_RAINBOW_TO_PRODUCT)}"
-        )
-    return INTA_PRODUCT_CONFIGS[product_id]
+    return get_inta_scan_spec(rainbow_variable, ".vol").product_config
 
 
 def get_radar_product_config(product_id: str) -> RadarProductConfig:
