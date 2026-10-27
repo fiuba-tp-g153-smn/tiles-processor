@@ -34,7 +34,9 @@ Distributed Python system for processing GOES-19 satellite data from NOAA S3 —
 - **GLM Time of Event (TOE)** and **Multi-Flash Aggregation (MFA).** Further GLM-derived products.
 - **Radar.** Dual-pol products (`dbzh`, `zdr`, `rhohv`, `kdp`, `vrad`) from local H5 files, plus
   **`dbzh-450km`** — the same 0.55° reflectivity read from the long-range subvolume 04
-  (~445 km reach, single sweep) and published as its own product.
+  (~445 km reach, single sweep) and published as its own product. The INTA radars publish
+  `dbzh`, `zdr`, `rhohv`, `kdp` from Rainbow5 volumes, plus `dbzh-450km` from their
+  long-range `.azi` PPIs.
 
 **Queue.** The producer publishes `WorkUnit` messages to RabbitMQ; each worker takes
 one image at a time (prefetch=1), acks manually, and failures go to a dead-letter queue.
@@ -334,7 +336,9 @@ input, product toggles, retention, and tuning live together.
     "radar-inta": {
       "input": { "mode": "local" },
       "stations": "all",
-      "products": { "dbzh": true, "zdr": true, "rhohv": true, "kdp": true },
+      "products": {
+        "dbzh": true, "dbzh-450km": true, "zdr": true, "rhohv": true, "kdp": true
+      },
       "target_images": 12,
       "max_age_minutes": 150,
       "zoom_levels": "4-9",
@@ -418,7 +422,7 @@ input, product toggles, retention, and tuning live together.
   |---|---|
   | `goes19-abi` | `ABI-L1b-RadF/YYYY/JJJ/HH/OR_ABI-...nc` |
   | `radar-sinarame` | `*.H5`, or `<subdir>/*.H5` |
-  | `radar-inta` | `*.vol`, or `<subdir>/*.vol` (`.azi` products are ignored) |
+  | `radar-inta` | `*.vol` / `*.azi`, or `<subdir>/*.vol` / `<subdir>/*.azi` |
   | `goes19-glm` | `CG_GLM-L2-GLMF-*.nc`, or `<subdir>/CG_GLM-...nc` |
   | `wrf-arg4k` | `WRF_ARG4K.FCST_L0_FIELD2D.*.nc`, or `<subdir>/...nc` |
   | `ecmwf-ifs` | `<product>/<YYYYMMDDTHHmmZ>.grib` (`<product>` = `total-precipitation`, `mean-sea-level-pressure`) |
@@ -481,7 +485,7 @@ input, product toggles, retention, and tuning live together.
   deliver Rainbow5 `.vol` volumes instead of SINARAME's ODIM-HDF5. They reuse the same
   product ids, palettes and elevations — the geometry matches, 240 km of range with
   0.5°/0.9°/1.3° as the first three sweeps — and publish under their own
-  `tiles/radar/inta/` namespace. Three things are specific to this feed:
+  `tiles/radar/inta/` namespace. Four things are specific to this feed:
 
   - **The station is read from the file, not its name.** Production files are prefixed
     (`PAR2026…dBZ.vol`) but the SMN's samples are not (`2026…dBZ.vol`); the XML header
@@ -491,7 +495,16 @@ input, product toggles, retention, and tuning live together.
     (`VOL_120_ZVW` / `SMN_120`) in the same folder, distinguishable only by the header.
     Publishing both under one product would make the layer's footprint jump between two
     extents as the user scrubs through time.
-  - **Variables map onto SINARAME's**: `dBZ→dbzh`, `ZDR→zdr`, `RhoHV→rhohv`, `KDP→kdp`.
+  - **Long-range reflectivity comes as `.azi`, not as a volume.** Each radar also ships
+    a single low-elevation reflectivity PPI (`…dBZ.azi`), published as `dbzh-450km`
+    (`elev0` only). The extent is set per site — e.g. Anguil's `AZI_480_Z` reaches
+    480 km and Pergamino's `SMN_400` 400 km, both at 0.3° with 1 km gates — so the
+    "450" is nominal: it reuses SINARAME's product id, palette and visualizer layer.
+    A file's product comes from its variable *and* extension, since `dBZ` exists in
+    both formats; `.vol` is accepted only at exactly 240 km and `.azi` only beyond
+    240 km, whatever the station.
+  - **Variables map onto SINARAME's**: `dBZ→dbzh`, `ZDR→zdr`, `RhoHV→rhohv`, `KDP→kdp`
+    (`.vol`), and `dBZ→dbzh-450km` (`.azi`).
     The `u`-prefixed types (`dBuZ`, `uPhiDP`) are uncorrected diagnostics and are not
     mapped. `V` is left out: the Nyquist here is ±6.65 m/s against the VRAD palette's
     ±40, so it would render almost monochrome without a dedicated palette.
