@@ -34,7 +34,7 @@ x-service-volumes: &service-volumes
 services:
   # RabbitMQ message broker for the work queue
   rabbitmq:
-    image: rabbitmq:4.3.7-management
+    image: rabbitmq:4.3.8-management
     container_name: tiles-processor-rabbitmq
     ports:
       - "${RABBITMQ_PORT}:5672"      # AMQP protocol
